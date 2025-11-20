@@ -1,19 +1,47 @@
 # macOS
 .DS_Store
 
+# Environment / Secrets
+.env
+.env.*
+*.env
+*.env.local
+.envrc
+.venv/
+venv/
+.python-version
+pip-wheel-metadata/
+
 # Python
 __pycache__/
 *.py[cod]
 *.pyo
 *.pyd
-.env
-.venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.pyre/
+.coverage
+coverage.xml
+htmlcov/
 
 # Node / Frontend
 node_modules/
 dist/
 build/
 coverage/
+.vite/
+*.tsbuildinfo
+.eslintcache
+
+# Uploaded / generated data
+storage/
+uploads/
+backend/storage/
+backend/uploads/
+*.sqlite
+*.sqlite3
+*.db
 
 # Logs & temps
 *.log
