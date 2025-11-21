@@ -10,6 +10,9 @@ class DatasetRead(BaseModel):
     models.Dataset과 필드 이름/타입을 맞춤.
     """
     id: int
+    source_id: str
+    workspace_id: Optional[str] = None
+    
     filename: str
     storage_path: str
     encoding: Optional[str] = None
@@ -38,9 +41,44 @@ class DatasetUploadResponse(BaseModel):
     - 업로드된 데이터셋의 기본 메타 정보
     """
     id: int
+    source_id: str
+    workspace_id: Optional[str] = None
+    
     filename: str
     encoding: Optional[str] = None
     delimiter: Optional[str] = None
     filesize: Optional[int] = None
     extra_metadata: Optional[Dict[str, Any]] = None
     uploaded_at: datetime
+    
+    class Config:
+        orm_mode = True
+    
+    
+class DatasetListItem(BaseModel):
+    """
+    데이터 소스 목록 조회용 한 줄 요약 아이템.
+    리스트 화면에서 필요한 최소 정보만 노출.
+    """
+    id: int
+    source_id: str
+    workspace_id: Optional[str] = None
+
+    filename: str
+    filesize: Optional[int] = None
+    encoding: Optional[str] = None
+    delimiter: Optional[str] = None
+    uploaded_at: datetime
+
+    class Config:
+        orm_mode = True
+
+
+class DatasetListResponse(BaseModel):
+    """
+    데이터 소스 목록 응답
+    - total: 워크스페이스(또는 전체) 기준 전체 개수
+    - items: 현재 페이지의 데이터 소스 리스트
+    """
+    total: int
+    items: List[DatasetListItem]
