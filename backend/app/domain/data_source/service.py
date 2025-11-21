@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import IO, Optional, Tuple
+from typing import IO, Optional, Tuple, List
 import uuid
 
 from .models import Dataset
@@ -40,6 +40,7 @@ class DataSourceService:
         display_name: Optional[str] = None,
         encoding: Optional[str] = None,
         delimiter: Optional[str] = None,
+        workspace_id: Optional[str] = None,
     ) -> Dataset:
         """
         업로드된 파일을 저장하고, Dataset 객체를 생성하여 DB에 저장
@@ -55,5 +56,42 @@ class DataSourceService:
             delimiter=delimiter,
             filesize=size,
             extra_metadata=None,
+            workspace_id=workspace_id,
         )
         return self.repository.create(dataset)
+    
+    def list_datasets(
+        self,
+        workspace_id: Optional[str] = None,
+        skip: int = 0,
+        limit: int = 20,
+    ) -> List[Dataset]:
+        """
+        워크스페이스 단위 데이터 소스 목록 조회
+        - workspace_id 가 주어지면 해당 워크스페이스 기준으로 필터링
+        - 없으면 전체 데이터셋 기준
+        - skip / limit 로 간단한 페이지네이션 처리
+        """
+        if workspace_id:
+            datasets = self.repository.list_by_workspace(workspace_id)
+        else:
+            datasets = self.repository.list_all()
+
+        # 간단한 슬라이싱 기반 페이지네이션
+        end = skip + limit if limit is not None else None
+        return datasets[skip:end]
+    
+
+    def get_dataset_detail(self, dataset_id: int) -> Optional[dict]:
+        """
+        단일 데이터 소스 상세 정보 반환.
+        """
+        dataset = self.repository.get_by_id(dataset_id)
+        if not dataset:
+            return None
+
+        return {
+            "dataset": dataset,
+        }
+        
+        
