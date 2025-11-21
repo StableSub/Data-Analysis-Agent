@@ -1,11 +1,15 @@
 from sqlalchemy import Column, DateTime, Integer, JSON, String
 from sqlalchemy.sql import func
 from ...core.db import Base
+import uuid
 
 class Dataset(Base):
     __tablename__ = "datasets"
-
-    id = Column(Integer, primary_key=True, index=True)
+    
+    id = Column(Integer, primary_key=True, index=True) # DB 내부 ID
+    source_id = Column(String(36), unique=True, index=True, default=lambda: str(uuid.uuid4()))  # 외부 노출용 고유 데이터 소스 ID
+    workspace_id = Column(String(64), nullable=True, index=True)    # 데이터가 속한 workspace ID
+        
     filename = Column(String(255), nullable=False)
     storage_path = Column(String(512), nullable=False)  # 서버 또는 스토리지에 저장된 파일 경로
     encoding = Column(String(64), nullable=True)    # 인코딩 정보: 'utf-8'
