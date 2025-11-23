@@ -1,7 +1,8 @@
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, Query
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, Query, status
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from ..core.db import get_db
@@ -112,3 +113,38 @@ async def get_dataset_detail(
 
     dataset = detail_data["dataset"]
     return dataset
+
+@router.delete("/{source_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_dataset(
+    source_id: str,
+    service: DataSourceService = Depends(get_data_source_service),
+):
+    """
+    데이터 소스 삭제 엔드포인트 (안전 삭제 처리 포함)
+    
+    - 세션에서 사용 중인 파일은 삭제하지 않고 오류 반환
+    - 성공 시: 204 No Content 반환, 본문 없음
+    - 삭제할 파일이 없는 경우: 404 NOT_FOUND
+    - 사용 중인 파일: 409 CONFLICT (또는 400 BAD_REQUEST)
+    
+    Args:
+        source_id: 삭제할 데이터 소스의 고유 ID
+    """
+    result = service.delete_dataset(source_id)
+    
+    # 데이터셋이 존재하지 않음
+    if not result["success"] and not result["in_use"]:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=result["message"]
+        )
+    
+    # 데이터셋이 세션에서 사용 중임 (안전 삭제 처리)
+    if result["in_use"]:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=result["message"]
+        )
+    
+    # 성공 시 204 No Content 반환 (본문 없음)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
