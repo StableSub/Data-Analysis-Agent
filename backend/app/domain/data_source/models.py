@@ -1,4 +1,4 @@
-from sqlalchemy import Column, DateTime, Integer, JSON, String
+from sqlalchemy import Column, DateTime, Integer, JSON, String, ForeignKey
 from sqlalchemy.sql import func
 from ...core.db import Base
 import uuid
@@ -17,4 +17,26 @@ class Dataset(Base):
     filesize = Column(Integer, nullable=True)       # 파일 크기 (bytes)
     extra_metadata = Column(JSON, nullable=True)    # 추가 메타데이터 (예: 행/열 수)
     uploaded_at = Column(DateTime(timezone=True), server_default=func.now()) # 업로드 시각(default: 현재 시각)
+
+class SessionSource(Base):
+    """
+    세션과 데이터 소스 간의 관계를 저장하는 테이블
+    어떤 세션에서 어떤 데이터셋을 사용하고 있는지 추적
+    """
+    __tablename__ = "session_sources"
+    
+    id = Column(Integer, primary_key=True, index=True)  # 관계 테이블 ID
+    session_id = Column(String(64), nullable=False, index=True)  # 세션 ID
+    
+    # ForeignKey 추가 - Dataset 테이블의 source_id 참조
+    source_id = Column(
+        String(36),
+        ForeignKey('datasets.source_id', ondelete='CASCADE'),  # Dataset 삭제 시 함께 삭제
+        nullable=False,
+        index=True
+    )
+    
+    # 세션에 데이터 소스가 추가된 시각
+    added_at = Column(DateTime(timezone=True), server_default=func.now())
+
     
