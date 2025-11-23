@@ -82,3 +82,20 @@ class DatasetListResponse(BaseModel):
     """
     total: int
     items: List[DatasetListItem]
+
+class DeletedFileInfo(BaseModel):
+    """
+    삭제된 파일 정보
+    """
+    source_id: str
+    filename: str
+    storage_path: str
+
+class DatasetDeleteResponse(BaseModel):
+    """
+    데이터 소스 삭제 응답 스키마
+    - 성공 시: 204 No Content (response_model 없이 처리)
+    - 삭제된 파일 정보는 내부적으로만 사용
+    """
+    success: bool
+    deleted_file: Optional[DeletedFileInfo] = None
