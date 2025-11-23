@@ -1,6 +1,7 @@
 from typing import List, Optional
 from sqlalchemy.orm import Session
-from .models import Dataset
+from .models import Dataset, SessionSource
+from sqlalchemy import text
 
 class DataSourceRepository:
     """
@@ -62,4 +63,34 @@ class DataSourceRepository:
         """
         self.db.delete(dataset)
         self.db.commit()
+
+    def is_dataset_in_use(self, source_id: str) -> bool:
+        """
+        데이터셋이 세션에서 사용 중인지 확인
+        session_sources 테이블을 참조하여 연결 여부 확인
+        
+        Returns:
+            bool: 사용 중이면 True, 아니면 False
+        """
+        # SessionSource 모델을 import 해야 합니다
+        
+        count = (
+            self.db.query(SessionSource)
+            .filter(SessionSource.source_id == source_id)
+            .count()
+        )
+        
+        return count > 0
+
+    def delete_by_source_id(self, source_id: str) -> bool:
+        """
+        source_id 기준으로 Dataset 삭제
+        Returns:
+            bool: 삭제 성공 여부
+        """
+        dataset = self.get_by_source_id(source_id)
+        if dataset:
+            self.delete(dataset)
+            return True
+        return False
 
