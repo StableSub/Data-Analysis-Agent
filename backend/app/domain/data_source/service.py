@@ -1,6 +1,7 @@
 from pathlib import Path
-from typing import IO, Optional, Tuple, List
+from typing import IO, Optional, Tuple, List, Dict
 import uuid
+import os
 
 from .models import Dataset
 from .repository import DataSourceRepository
@@ -94,4 +95,62 @@ class DataSourceService:
             "dataset": dataset,
         }
         
+    def delete_dataset(self, source_id: str) -> Dict[str, any]:
+        """
+        데이터 소스 삭제 (안전 삭제 처리 포함)
+        - source_id로 데이터셋을 조회
+        - 세션에서 사용 중인지 확인
+        - 사용 중이 아닐 때만 실제 저장된 파일과 메타데이터(DB)를 함께 제거
         
+        Returns:
+            dict: 삭제 결과 정보
+                - success: 삭제 성공 여부
+                - in_use: 사용 중 여부
+                - deleted_file: 삭제된 파일 정보 (source_id, filename, storage_path)
+                - message: 결과 메시지
+        """
+        # 1. DB에서 데이터셋 조회
+        dataset = self.repository.get_by_source_id(source_id)
+        if not dataset:
+            return {
+                "success": False,
+                "in_use": False,
+                "deleted_file": None,
+                "message": "데이터셋을 찾을 수 없습니다.",
+            }
+        
+        # 2. 세션에서 사용 중인지 확인 (안전 삭제 처리)
+        if self.repository.is_dataset_in_use(source_id):
+            return {
+                "success": False,
+                "in_use": True,
+                "deleted_file": None,
+                "message": "해당 데이터셋은 현재 세션에서 사용 중입니다.",
+            }
+        
+        # 3. 삭제 전 파일 정보 백업 (응답용)
+        deleted_info = {
+            "source_id": dataset.source_id,
+            "filename": dataset.filename,
+            "storage_path": dataset.storage_path,
+        }
+        
+        # 4. 실제 스토리지 파일 삭제
+        storage_path = (Path(__file__).resolve().parent.parent.parent / "storage" / "datasets")
+        if storage_path.exists():
+            try:
+                os.remove(storage_path)
+            except Exception as e:
+                # 파일 삭제 실패 시에도 DB는 삭제하도록 처리
+                # (로깅 등 추가 가능)
+                pass
+        
+        # 5. DB에서 메타데이터 삭제
+        self.repository.delete(dataset)
+        
+        return {
+            "success": True,
+            "in_use": False,
+            "deleted_file": deleted_info,
+            "message": "데이터셋이 성공적으로 삭제되었습니다.",
+        }
