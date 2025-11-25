@@ -1,0 +1,15 @@
+from fastapi import FastAPI
+
+from .core.db import Base, engine
+from .api import datasets as datasets_api
+
+app = FastAPI()
+
+
+@app.on_event("startup")
+def on_startup():
+    Base.metadata.create_all(bind=engine)
+
+
+
+app.include_router(datasets_api.router)

@@ -1,20 +1,42 @@
-from sqlalchemy import Column, DateTime, Integer, JSON, String
+from sqlalchemy import Column, DateTime, Integer, JSON, String, ForeignKey
 from sqlalchemy.sql import func
-
 from ...core.db import Base
-
+import uuid
 
 class Dataset(Base):
-    """Persisted dataset metadata."""
-
     __tablename__ = "datasets"
+    
+    id = Column(Integer, primary_key=True, index=True) # DB 내부 ID
+    source_id = Column(String(36), unique=True, index=True, default=lambda: str(uuid.uuid4()))  # 외부 노출용 고유 데이터 소스 ID
+    workspace_id = Column(String(64), nullable=True, index=True)    # 데이터가 속한 workspace ID
+        
+    filename = Column(String(255), nullable=False)
+    storage_path = Column(String(512), nullable=False)  # 서버 또는 스토리지에 저장된 파일 경로
+    encoding = Column(String(64), nullable=True)    # 인코딩 정보: 'utf-8'
+    delimiter = Column(String(8), nullable=True)    # 구분자 정보: ',', '\t' 등
+    filesize = Column(Integer, nullable=True)       # 파일 크기 (bytes)
+    extra_metadata = Column(JSON, nullable=True)    # 추가 메타데이터 (예: 행/열 수)
+    uploaded_at = Column(DateTime(timezone=True), server_default=func.now()) # 업로드 시각(default: 현재 시각)
 
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(255), nullable=False)
-    original_filename = Column(String(255), nullable=False)
-    storage_path = Column(String(512), nullable=False)
-    encoding = Column(String(64), nullable=True)
-    delimiter = Column(String(8), nullable=True)
-    size_bytes = Column(Integer, nullable=True)
-    extra_metadata = Column(JSON, nullable=True)
-    uploaded_at = Column(DateTime(timezone=True), server_default=func.now())
+class SessionSource(Base):
+    """
+    세션과 데이터 소스 간의 관계를 저장하는 테이블
+    어떤 세션에서 어떤 데이터셋을 사용하고 있는지 추적
+    """
+    __tablename__ = "session_sources"
+    
+    id = Column(Integer, primary_key=True, index=True)  # 관계 테이블 ID
+    session_id = Column(String(64), nullable=False, index=True)  # 세션 ID
+    
+    # ForeignKey 추가 - Dataset 테이블의 source_id 참조
+    source_id = Column(
+        String(36),
+        ForeignKey('datasets.source_id', ondelete='CASCADE'),  # Dataset 삭제 시 함께 삭제
+        nullable=False,
+        index=True
+    )
+    
+    # 세션에 데이터 소스가 추가된 시각
+    added_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    
