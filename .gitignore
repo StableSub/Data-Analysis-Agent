@@ -25,7 +25,7 @@ __pycache__/
 coverage.xml
 htmlcov/
 
-# Node / Frontend
+# Node / Frontend / test
 node_modules/
 dist/
 build/
@@ -33,6 +33,7 @@ coverage/
 .vite/
 *.tsbuildinfo
 .eslintcache
+tests/
 
 # Uploaded / generated data
 storage/
