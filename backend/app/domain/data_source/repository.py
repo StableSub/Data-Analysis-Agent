@@ -94,3 +94,37 @@ class DataSourceRepository:
             return True
         return False
 
+    def update_metadata(
+        self, 
+        source_id: str, 
+        encoding: Optional[str] = None,
+        delimiter: Optional[str] = None,
+        has_header: Optional[bool] = None
+    ) -> Optional[Dataset]:
+        """
+        데이터셋의 메타데이터 필드 수정
+        
+        Args:
+            source_id: 데이터셋 ID
+            encoding: 새로운 인코딩
+            delimiter: 새로운 구분자
+            has_header: 헤더 존재 여부
+            
+        Returns:
+            Dataset: 수정된 Dataset 객체
+        """
+        dataset = self.get_by_source_id(source_id)
+        if not dataset:
+            return None
+        
+        # 전달된 필드만 업데이트
+        if encoding is not None:
+            dataset.encoding = encoding
+        if delimiter is not None:
+            dataset.delimiter = delimiter
+        if has_header is not None:
+            dataset.has_header = has_header
+        
+        self.db.commit()
+        self.db.refresh(dataset)
+        return dataset
