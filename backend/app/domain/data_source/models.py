@@ -1,4 +1,4 @@
-from sqlalchemy import Column, DateTime, Integer, JSON, String, ForeignKey
+from sqlalchemy import Column, DateTime, Integer, JSON, String, ForeignKey, Boolean
 from sqlalchemy.sql import func
 from ...core.db import Base
 import uuid
@@ -17,6 +17,12 @@ class Dataset(Base):
     filesize = Column(Integer, nullable=True)       # 파일 크기 (bytes)
     extra_metadata = Column(JSON, nullable=True)    # 추가 메타데이터 (예: 행/열 수)
     uploaded_at = Column(DateTime(timezone=True), server_default=func.now()) # 업로드 시각(default: 현재 시각)
+
+    line_ending = Column(String(8), nullable=True)      # 줄바꿈 문자: '\n', '\r\n', '\r'
+    quotechar = Column(String(4), nullable=True)        # 따옴표 문자: '"'
+    escapechar = Column(String(4), nullable=True)       # 이스케이프 문자
+    has_header = Column(Boolean, nullable=True, default=True)  # 헤더 존재 여부
+    parse_status = Column(String(16), nullable=True)    # 파싱 상태: 'success', 'tentative', 'failed'
 
 class SessionSource(Base):
     """
