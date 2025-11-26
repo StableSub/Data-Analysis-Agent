@@ -2,6 +2,7 @@ from datetime import datetime
 from typing import List, Optional
 
 from pydantic import BaseModel, Field
+from pydantic import ConfigDict
 
 
 class ChatMessageSchema(BaseModel):
@@ -10,13 +11,13 @@ class ChatMessageSchema(BaseModel):
     content: str
     created_at: datetime
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ChatRequest(BaseModel):
     question: str = Field(..., description="The natural language question from the user.")
     session_id: Optional[int] = Field(default=None, description="Existing chat session identifier.")
+    context: Optional[str] = Field(default=None, description="Optional extra context to store.")
 
 
 class ChatResponse(BaseModel):
