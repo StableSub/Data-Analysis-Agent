@@ -103,7 +103,6 @@ class DatasetDeleteResponse(BaseModel):
 class DatasetMetadataResponse(BaseModel):
     """
     데이터 소스 메타데이터 조회 응답
-    GET /sources/{id}/meta
     """
     source_id: str
     encoding: Optional[str] = None
@@ -118,7 +117,6 @@ class DatasetMetadataResponse(BaseModel):
 class DatasetMetadataUpdateRequest(BaseModel):
     """
     데이터 소스 메타데이터 수정 요청
-    PATCH /sources/{id}/meta
     """
     encoding: Optional[str] = None
     delimiter: Optional[str] = None
