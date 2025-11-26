@@ -20,6 +20,7 @@ async def ask_chat(
         question=request.question,
         session_id=request.session_id,
         context=request.context,
+        data_source_id=request.data_source_id,
     )
 
 
