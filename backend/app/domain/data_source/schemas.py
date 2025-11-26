@@ -99,3 +99,36 @@ class DatasetDeleteResponse(BaseModel):
     """
     success: bool
     deleted_file: Optional[DeletedFileInfo] = None
+
+class DatasetMetadataResponse(BaseModel):
+    """
+    데이터 소스 메타데이터 조회 응답
+    """
+    source_id: str
+    encoding: Optional[str] = None
+    delimiter: Optional[str] = None
+    line_ending: Optional[str] = None
+    quotechar: Optional[str] = None
+    escapechar: Optional[str] = None
+    has_header: Optional[bool] = None
+    parse_status: Optional[str] = None  # 'success', 'tentative', 'failed'
+
+
+class DatasetMetadataUpdateRequest(BaseModel):
+    """
+    데이터 소스 메타데이터 수정 요청
+    """
+    encoding: Optional[str] = None
+    delimiter: Optional[str] = None
+    has_header: Optional[bool] = None
+
+
+class DatasetMetadataUpdateResponse(BaseModel):
+    """
+    데이터 소스 메타데이터 수정 응답
+    """
+    source_id: str
+    encoding: Optional[str] = None
+    delimiter: Optional[str] = None
+    has_header: Optional[bool] = None
+    updated: bool = True
