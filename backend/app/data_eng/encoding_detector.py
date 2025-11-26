@@ -46,17 +46,29 @@ class EncodingDetector:
         
         # chardet으로 인코딩 탐지
         result = chardet.detect(raw_data)
-        detected_encoding = result.get('encoding', 'unknown').lower()
+        detected_encoding = result.get('encoding', 'unknown')
         confidence = result.get('confidence', 0.0)
-        
-        # 인코딩 정규화 (euc-kr -> cp949)
+
+        # chardet이 실패했으면 바로 unknown 리턴
+        if not detected_encoding:
+             return {'encoding': 'unknown'}
+
+        detected_encoding = detected_encoding.lower()
+
+        # 인코딩 정규화 
         if detected_encoding in ['euc-kr', 'euc_kr']:
             detected_encoding = 'cp949'
-        elif detected_encoding in ['iso-8859-1', 'iso_8859_1']:
+        elif detected_encoding == 'ascii':
+            detected_encoding = 'utf-8'
+        elif detected_encoding == 'windows-1252': # 추가 추천
             detected_encoding = 'iso-8859-1'
         
-        # 지원하지 않는 인코딩이면 unknown
-        if detected_encoding not in EncodingDetector.SUPPORTED_ENCODINGS:
+        # 리스트에 없는 방식 확인
+        try:
+            import codecs
+            codecs.lookup(detected_encoding) # 파이썬에 존재하는 인코딩인지 체크
+            
+        except LookupError:
             detected_encoding = 'unknown'
         
         return {
