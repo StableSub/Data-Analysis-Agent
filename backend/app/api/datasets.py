@@ -59,8 +59,18 @@ async def upload_dataset(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"파일 업로드 중 오류가 발생했습니다.")
 
-    return dataset
-
+    return {
+        "id": dataset.id,
+        "source_id": dataset.source_id,
+        "workspace_id": dataset.workspace_id,
+        "filename": dataset.filename,
+        "filesize": dataset.filesize,
+        "uploaded_at": dataset.uploaded_at,
+        "metadata": {
+            "encoding": dataset.encoding,
+            "delimiter": dataset.delimiter,
+        }
+    }
 
 
 @router.get("/", response_model=DatasetListResponse)
