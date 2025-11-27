@@ -5,6 +5,7 @@ import os
 
 from .models import Dataset
 from .repository import DataSourceRepository
+from ...data_eng.encoding_detector import EncodingDetector
 
 
 class DataSourceService:
@@ -49,12 +50,24 @@ class DataSourceService:
         # 파일 저장 + 파일 크기 계산
         storage_path, size = self._persist_file(file_stream, original_filename)
 
+        # 인코딩/구분자 자동 탐지
+        metadata = EncodingDetector.detect_file_metadata(storage_path)
+    
+        # 사용자가 명시적으로 지정한 값이 있으면 우선 사용
+        final_encoding = encoding if encoding else metadata.get('encoding')
+        final_delimiter = delimiter if delimiter else metadata.get('delimiter')
+
         # Dataset ORM 객체 생성
         dataset = Dataset(
             filename=display_name or original_filename,
             storage_path=str(storage_path),
-            encoding=encoding,
-            delimiter=delimiter,
+            encoding=final_encoding,
+            delimiter=final_delimiter,
+            line_ending=metadata.get('line_ending'),
+            quotechar=metadata.get('quotechar'),
+            escapechar=metadata.get('escapechar'),
+            has_header=metadata.get('has_header', True),
+            parse_status=metadata.get('parse_status', 'success'),
             filesize=size,
             extra_metadata=None,
             workspace_id=workspace_id,
@@ -153,4 +166,54 @@ class DataSourceService:
             "in_use": False,
             "deleted_file": deleted_info,
             "message": "데이터셋이 성공적으로 삭제되었습니다.",
+        }
+    
+    def get_dataset_metadata(self, source_id: str) -> Optional[Dict]:
+        """
+        데이터 소스의 메타데이터 조회
+        """
+        dataset = self.repository.get_by_source_id(source_id)
+        if not dataset:
+            return None
+        
+        return {
+            'source_id': dataset.source_id,
+            'encoding': dataset.encoding,
+            'delimiter': dataset.delimiter,
+            'line_ending': dataset.line_ending,
+            'quotechar': dataset.quotechar,
+            'escapechar': dataset.escapechar,
+            'has_header': dataset.has_header,
+            'parse_status': dataset.parse_status,
+        }
+
+
+    def update_dataset_metadata(
+        self,
+        source_id: str,
+        encoding: Optional[str] = None,
+        delimiter: Optional[str] = None,
+        has_header: Optional[bool] = None
+    ) -> Optional[Dict]:
+        """
+        데이터 소스의 메타데이터 수정
+        
+        필요 시 수동 보정 가능
+        """
+        updated_dataset = self.repository.update_metadata(
+            source_id=source_id,
+            encoding=encoding,
+            delimiter=delimiter,
+            has_header=has_header
+        )
+        
+        if not updated_dataset:
+            return None
+        
+        return {
+            'source_id': updated_dataset.source_id,
+            'encoding': updated_dataset.encoding,
+            'delimiter': updated_dataset.delimiter,
+            'has_header': updated_dataset.has_header,
+            'updated': True
         }

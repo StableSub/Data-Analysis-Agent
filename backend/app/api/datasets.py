@@ -12,6 +12,9 @@ from ..domain.data_source.schemas import (
     DatasetUploadResponse,
     DatasetListResponse,
     DatasetRead,
+    DatasetMetadataResponse,
+    DatasetMetadataUpdateRequest,
+    DatasetMetadataUpdateResponse,
 )
 from ..domain.data_source.service import DataSourceService
 
@@ -59,8 +62,18 @@ async def upload_dataset(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"파일 업로드 중 오류가 발생했습니다.")
 
-    return dataset
-
+    return {
+        "id": dataset.id,
+        "source_id": dataset.source_id,
+        "workspace_id": dataset.workspace_id,
+        "filename": dataset.filename,
+        "filesize": dataset.filesize,
+        "uploaded_at": dataset.uploaded_at,
+        "metadata": {
+            "encoding": dataset.encoding,
+            "delimiter": dataset.delimiter,
+        }
+    }
 
 
 @router.get("/", response_model=DatasetListResponse)
@@ -148,3 +161,61 @@ async def delete_dataset(
     
     # 성공 시 204 No Content 반환 (본문 없음)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+@router.get("/{source_id}/meta", response_model=DatasetMetadataResponse)
+async def get_dataset_metadata(
+    source_id: str,
+    service: DataSourceService = Depends(get_data_source_service),
+):
+    """
+    데이터 소스 메타데이터 조회
+    
+    Args:
+        source_id: 데이터 소스 ID
+        
+    Returns:
+        DatasetMetadataResponse: 인코딩, 구분자 등 메타데이터
+    """
+    metadata = service.get_dataset_metadata(source_id)
+    
+    if not metadata:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="데이터셋을 찾을 수 없습니다."
+        )
+    
+    return metadata
+
+
+@router.patch("/{source_id}/meta", response_model=DatasetMetadataUpdateResponse)
+async def update_dataset_metadata(
+    source_id: str,
+    request: DatasetMetadataUpdateRequest,
+    service: DataSourceService = Depends(get_data_source_service),
+):
+    """
+    데이터 소스 메타데이터 수동 수정
+    
+    필요 시 사용자가 인코딩, 구분자, 헤더 존재 여부를 수동으로 보정 가능
+    
+    Args:
+        source_id: 데이터 소스 ID
+        request: 수정할 필드 (encoding, delimiter, has_header)
+        
+    Returns:
+        DatasetMetadataUpdateResponse: 수정 결과
+    """
+    result = service.update_dataset_metadata(
+        source_id=source_id,
+        encoding=request.encoding,
+        delimiter=request.delimiter,
+        has_header=request.has_header
+    )
+    
+    if not result:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="데이터셋을 찾을 수 없습니다."
+        )
+    
+    return result
