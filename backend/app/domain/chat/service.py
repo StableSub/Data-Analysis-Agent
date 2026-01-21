@@ -5,7 +5,10 @@ from ..data_source.repository import DataSourceRepository
 from .repository import ChatRepository
 from .schemas import ChatHistoryResponse, ChatResponse
 from ...ai.orchestrator.chat_flow import ChatFlowOrchestrator
-from .models import ChatSession, ChatMessage
+from ...rag.service import RagService
+from ...rag.types.errors import RagError
+
+DEFAULT_RAG_TOP_K = 3
 
 
 class ChatService:
@@ -16,10 +19,12 @@ class ChatService:
         repository: ChatRepository,
         orchestrator: ChatFlowOrchestrator,
         data_source_repository: Optional[DataSourceRepository] = None,
+        rag_service: Optional[RagService] = None,
     ) -> None:
         self.repository = repository
         self.orchestrator = orchestrator
         self.data_source_repository = data_source_repository
+        self.rag_service = rag_service
 
     def ask(
         self,
@@ -35,9 +40,28 @@ class ChatService:
             session = self.repository.create_session(title=question[:60])
 
         history = self.repository.get_history(session.id)
+        rag_context = None
+        retrieved_chunks = None
+        rag_attempted = False
+        if data_source_id and self.rag_service:
+            try:
+                rag_attempted = True
+                retrieved_chunks = self.rag_service.query(
+                    query=question,
+                    top_k=DEFAULT_RAG_TOP_K,
+                    source_filter=[data_source_id],
+                )
+                if retrieved_chunks:
+                    rag_context = self.rag_service.build_context(retrieved_chunks)
+            except RagError:
+                retrieved_chunks = None
+                rag_attempted = False
+
         merged_context = self._build_context_from_source(
             data_source_id=data_source_id,
             fallback_context=context,
+            rag_context=rag_context,
+            rag_attempted=rag_attempted,
         )
         answer = self.orchestrator.generate_answer(
             session_id=session.id,
@@ -48,6 +72,11 @@ class ChatService:
 
         self.repository.append_message(session, "user", question)
         self.repository.append_message(session, "assistant", answer)
+        if retrieved_chunks and self.rag_service:
+            self.rag_service.add_context_links(
+                session_id=session.id,
+                retrieved=retrieved_chunks,
+            )
         return ChatResponse(answer=answer, session_id=session.id)
 
     def get_history(self, session_id: int) -> Optional[ChatHistoryResponse]:
@@ -63,6 +92,8 @@ class ChatService:
         *,
         data_source_id: Optional[str],
         fallback_context: Optional[str],
+        rag_context: Optional[str],
+        rag_attempted: bool,
     ) -> Optional[str]:
         """
         데이터 소스 ID로 파일을 찾아 텍스트를 읽고, 기존 컨텍스트와 합쳐 전달합니다.
@@ -72,7 +103,9 @@ class ChatService:
         if fallback_context:
             pieces.append(fallback_context)
 
-        if data_source_id and self.data_source_repository:
+        if rag_context:
+            pieces.append(rag_context)
+        elif data_source_id and self.data_source_repository and not rag_attempted:
             dataset = self.data_source_repository.get_by_source_id(data_source_id)
             print(dataset)
             if dataset and dataset.storage_path:

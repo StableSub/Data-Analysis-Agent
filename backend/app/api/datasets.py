@@ -6,6 +6,7 @@ from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from ..core.db import get_db
+from ..dependencies import get_rag_service
 from ..domain.data_source.repository import DataSourceRepository
 from ..domain.data_source.schemas import (
     DatasetUploadRequest,
@@ -18,6 +19,8 @@ from ..domain.data_source.schemas import (
     DatasetSampleResponse,
 )
 from ..domain.data_source.service import DataSourceService
+from ..rag.service import RagService
+from ..rag.types.errors import RagEmbeddingError
 
 router = APIRouter(
     prefix="/datasets",
@@ -40,6 +43,7 @@ async def upload_dataset(
     file: UploadFile = File(...),
     options: DatasetUploadRequest = Depends(),
     service: DataSourceService = Depends(get_data_source_service),
+    rag_service: RagService = Depends(get_rag_service),
     workspace_id: Optional[str] = Query(
         None,
         description="업로드되는 데이터셋이 속한 워크스페이스 ID",
@@ -60,8 +64,11 @@ async def upload_dataset(
             delimiter=options.delimiter,
             workspace_id=workspace_id,
         )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"파일 업로드 중 오류가 발생했습니다.")
+        rag_service.index_dataset(dataset)
+    except RagEmbeddingError:
+        raise HTTPException(status_code=500, detail="EMBEDDING_ERROR")
+    except Exception:
+        raise HTTPException(status_code=500, detail="파일 업로드 중 오류가 발생했습니다.")
 
     return {
         "id": dataset.id,
@@ -132,6 +139,7 @@ async def get_dataset_detail(
 async def delete_dataset(
     source_id: str,
     service: DataSourceService = Depends(get_data_source_service),
+    rag_service: RagService = Depends(get_rag_service),
 ):
     """
     데이터 소스 삭제 엔드포인트 (안전 삭제 처리 포함)
@@ -161,6 +169,10 @@ async def delete_dataset(
         )
     
     # 성공 시 204 No Content 반환 (본문 없음)
+    try:
+        rag_service.delete_source(source_id)
+    except Exception:
+        pass
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 @router.get("/{source_id}/meta", response_model=DatasetMetadataResponse)
