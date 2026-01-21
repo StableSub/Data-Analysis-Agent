@@ -1,12 +1,13 @@
 import pandas as pd
 from pathlib import Path
-from typing import IO, Optional, Tuple, List, Dict
+from typing import IO, Optional, Tuple, List, Dict, Any
 import uuid
 import os
 
 from .models import Dataset
 from .repository import DataSourceRepository
 from ...data_eng.encoding_detector import EncodingDetector
+from .schemas import ManualVizRequest
 
 
 class DataSourceService:
@@ -250,3 +251,57 @@ class DataSourceService:
         except Exception as e:
             print(f"Error reading sample data: {e}")
             return None
+    
+    
+    
+    def get_manual_viz_data(self, request: "ManualVizRequest") -> Dict[str, Any]:
+        """
+        수동 시각화를 위한 샘플링 데이터 조회 및 컬럼 검증
+        """
+        # 1. 데이터셋 정보 조회
+        dataset = self.repository.get_by_source_id(request.source_id)
+        if not dataset:
+            return {"error": "NOT_FOUND", "message": "데이터셋을 찾을 수 없습니다."}
+
+        file_path = Path(dataset.storage_path)
+        if not file_path.exists():
+            return {"error": "FILE_NOT_FOUND", "message": "파일이 존재하지 않습니다."}
+
+        try:
+            # 2. 필요한 컬럼 리스트 추출
+            requested_cols = [request.columns.x, request.columns.y]
+            if request.columns.color:
+                requested_cols.append(request.columns.color)
+            if request.columns.group:
+                requested_cols.append(request.columns.group)
+
+            # 중복 제거
+            requested_cols = list(set(requested_cols))
+
+            # 3. 파일 읽기 (지정된 컬럼만, limit 적용)
+            df = pd.read_csv(
+                file_path,
+                encoding=dataset.encoding or 'utf-8',
+                sep=dataset.delimiter or ',',
+                usecols=requested_cols,
+                nrows=request.limit
+            )
+
+            if df.empty:
+                return {"error": "NO_DATA", "message": "조회된 데이터가 없습니다."}
+
+            # 4. 결과 반환
+            return {
+                "chart_type": request.chart_type,
+                "data": df.to_dict(orient='records'),
+                "summary": {
+                    "row_count": len(df),
+                    "source_id": request.source_id
+                }
+            }
+
+        except ValueError as e:
+            # usecols에 존재하지 않는 컬럼이 포함된 경우 발생
+            return {"error": "INVALID_COLUMN", "message": str(e)}
+        except Exception as e:
+            return {"error": "INTERNAL_ERROR", "message": f"데이터 처리 중 오류: {str(e)}"}

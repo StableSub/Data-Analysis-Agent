@@ -1,6 +1,7 @@
 from datetime import datetime
 from typing import Any, Dict, List, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from typing import Optional, Dict, Any, List
 
 
 class DatasetRead(BaseModel):
@@ -140,3 +141,26 @@ class DatasetSampleResponse(BaseModel):
     source_id: str
     columns: List[str]  # 열 이름 리스트
     rows: List[Dict[str, Any]]  # 상위 5개 데이터 행
+    
+
+class ChartColumns(BaseModel):
+    """수동 시각화 요청 컬럼 설정"""
+    x: str
+    y: str
+    color: Optional[str] = None
+    group: Optional[str] = None
+
+
+class ManualVizRequest(BaseModel):
+    """수동 시각화 요청 객체"""
+    source_id: str
+    chart_type: str = Field(..., pattern="^(bar|line|pie|scatter|heatmap)$")
+    columns: ChartColumns
+    limit: Optional[int] = 500
+
+
+class ManualVizResponse(BaseModel):
+    """수동 시각화 응답 객체"""
+    chart_type: str
+    data: List[Dict[str, Any]]
+    summary: Dict[str, Any]
