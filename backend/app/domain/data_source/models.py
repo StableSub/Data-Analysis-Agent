@@ -1,5 +1,6 @@
-from sqlalchemy import Column, DateTime, Integer, JSON, String, ForeignKey, Boolean
+from sqlalchemy import Column, DateTime, Integer, JSON, String, ForeignKey, Boolean, Text
 from sqlalchemy.sql import func
+from sqlalchemy.orm import relationship
 from ...core.db import Base
 import uuid
 
@@ -45,4 +46,49 @@ class SessionSource(Base):
     # 세션에 데이터 소스가 추가된 시각
     added_at = Column(DateTime(timezone=True), server_default=func.now())
 
+class DatasetVersion(Base):
+    """
+    데이터셋 전처리 결과 버전 정보를 저장
+    """
+    __tablename__ = "dataset_versions"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    # 원본 ID
+    dataset_id = Column(
+        Integer,
+        ForeignKey("datasets.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    # 이전 버전 ID 
+    base_version_id = Column(
+        Integer,
+        ForeignKey("dataset_versions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
+    version_no = Column(Integer, nullable=False, default=1)
+
+    # 전처리 후 저장된 파일 경로
+    file_path = Column(String(1024), nullable=False)
+
+    row_count = Column(Integer, nullable=True)
+    col_count = Column(Integer, nullable=True)
+
+    # 적용된 전처리 작업
+    operations_json = Column(Text, nullable=False, default="[]")
+
+    created_by = Column(String(255), nullable=True)
+    note = Column(String(1024), nullable=True)
     
+    created_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    dataset = relationship("Dataset", backref="versions")
+    base_version = relationship("DatasetVersion", remote_side=[id], uselist=False)

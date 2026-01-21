@@ -1,7 +1,7 @@
 from typing import List, Optional
 from sqlalchemy.orm import Session
-from .models import Dataset, SessionSource
-from sqlalchemy import text
+from .models import Dataset, SessionSource, DatasetVersion
+from sqlalchemy import text, func
 
 class DataSourceRepository:
     """
@@ -128,3 +128,83 @@ class DataSourceRepository:
         self.db.commit()
         self.db.refresh(dataset)
         return dataset
+    
+class DatasetVersionRepository:
+    """
+    데이터셋 버전 DB 접근 
+    """
+    def __init__(self, db: Session):
+        self.db = db
+
+    def get_dataset(self, dataset_id: int) -> Dataset:
+        """
+        데이터셋 존재 여부 확인
+        """
+        ds = self.db.query(Dataset).filter(Dataset.id == dataset_id).first()
+        if not ds:
+            raise FileNotFoundError(f"Dataset not found: {dataset_id}")
+        return ds
+
+    def get_version(self, version_id: int) -> DatasetVersion:
+        """
+        특정 데이터 버전 조회
+        """
+        v = self.db.query(DatasetVersion).filter(DatasetVersion.id == version_id).first()
+        if not v:
+            raise FileNotFoundError(f"Dataset version not found: {version_id}")
+        return v
+
+    def list_versions(self, dataset_id: int) -> List[DatasetVersion]:
+        """
+        데이터셋의 모든 버전 목록 조회
+        """
+        self.get_dataset(dataset_id)
+        return (
+            self.db.query(DatasetVersion)
+            .filter(DatasetVersion.dataset_id == dataset_id)
+            .order_by(DatasetVersion.version_no.asc(), DatasetVersion.created_at.asc())
+            .all()
+        )
+
+    def next_version_no(self, dataset_id: int) -> int:
+        """
+        다음 버전 번호 계산
+        """
+        n = (
+            self.db.query(func.max(DatasetVersion.version_no))
+            .filter(DatasetVersion.dataset_id == dataset_id)
+            .scalar()
+        )
+        return int(n or 0) + 1
+
+    def create_version(
+        self,
+        dataset_id: int,
+        file_path: str,
+        operations_json: str,
+        base_version_id: Optional[int],
+        row_count: Optional[int] = None,
+        col_count: Optional[int] = None,
+        created_by: Optional[str] = None,
+        note: Optional[str] = None,
+    ) -> DatasetVersion:
+        """
+        새 전처리 버전 생성
+        """
+        self.get_dataset(dataset_id)
+
+        v = DatasetVersion(
+            dataset_id=dataset_id,
+            base_version_id=base_version_id,
+            version_no=self.next_version_no(dataset_id),
+            file_path=file_path,
+            operations_json=operations_json,
+            row_count=row_count,
+            col_count=col_count,
+            created_by=created_by,
+            note=note,
+        )
+        self.db.add(v)
+        self.db.commit()
+        self.db.refresh(v)
+        return v

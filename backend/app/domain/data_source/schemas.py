@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Any, Dict, List, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class DatasetRead(BaseModel):
@@ -132,3 +132,29 @@ class DatasetMetadataUpdateResponse(BaseModel):
     delimiter: Optional[str] = None
     has_header: Optional[bool] = None
     updated: bool = True
+
+class DatasetVersionOut(BaseModel):
+    """
+    전처리 후 생성된 데이터 버전의 메타 정보 응답
+    """
+    id: int
+    dataset_id: int
+    base_version_id: Optional[int] = None
+    version_no: int
+    file_path: str
+    row_count: Optional[int] = None
+    col_count: Optional[int] = None
+    operations_json: str
+    created_by: Optional[str] = None
+    note: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class DatasetVersionsResponse(BaseModel):
+    """
+    모든 전처리 버전 목록 응답
+    """
+    dataset_id: int
+    versions: List[DatasetVersionOut]
