@@ -132,3 +132,11 @@ class DatasetMetadataUpdateResponse(BaseModel):
     delimiter: Optional[str] = None
     has_header: Optional[bool] = None
     updated: bool = True
+    
+class DatasetSampleResponse(BaseModel):
+    """
+    데이터셋 샘플 데이터 응답 스키마
+    """
+    source_id: str
+    columns: List[str]  # 열 이름 리스트
+    rows: List[Dict[str, Any]]  # 상위 5개 데이터 행

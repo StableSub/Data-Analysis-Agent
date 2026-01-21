@@ -1,3 +1,4 @@
+import pandas as pd
 from pathlib import Path
 from typing import IO, Optional, Tuple, List, Dict
 import uuid
@@ -217,3 +218,35 @@ class DataSourceService:
             'has_header': updated_dataset.has_header,
             'updated': True
         }
+        
+    def get_dataset_sample(self, source_id: str, n_rows: int = 5) -> Optional[Dict]:
+        """
+        데이터셋 파일에서 상위 n개의 행을 읽어 샘플 데이터 반환
+        """
+        # 1. DB에서 데이터셋 정보 조회
+        dataset = self.repository.get_by_source_id(source_id)
+        if not dataset or not dataset.storage_path:
+            return None
+
+        file_path = Path(dataset.storage_path)
+        if not file_path.exists():
+            return None
+
+        try:
+            # 2. 저장된 인코딩 및 구분자 정보를 사용하여 파일 읽기
+            # csv 외의 형식 확장을 고려한다면 파일 확장자에 따른 분기 처리가 필요
+            df = pd.read_csv(
+                file_path,
+                encoding=dataset.encoding or 'utf-8',
+                sep=dataset.delimiter or ',',
+                nrows=n_rows
+            )
+
+            return {
+                "source_id": source_id,
+                "columns": df.columns.tolist(),
+                "rows": df.to_dict(orient='records')
+            }
+        except Exception as e:
+            print(f"Error reading sample data: {e}")
+            return None
