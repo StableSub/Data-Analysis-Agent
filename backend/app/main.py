@@ -6,6 +6,8 @@ from .api import chats as chats_api
 from .rag import models as rag_models
 from .rag import router as rag_router
 from .api import export as export_api
+from .api import preprocess as preprocess_api
+
 
 app = FastAPI()
 
@@ -15,8 +17,8 @@ def on_startup():
     Base.metadata.create_all(bind=engine)
 
 
-
 app.include_router(datasets_api.router)
 app.include_router(chats_api.router)
 app.include_router(rag_router.router)
 app.include_router(export_api.router)
+app.include_router(preprocess_api.router)
