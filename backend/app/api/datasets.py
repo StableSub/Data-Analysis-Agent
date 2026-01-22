@@ -16,6 +16,7 @@ from ..domain.data_source.schemas import (
     DatasetMetadataResponse,
     DatasetMetadataUpdateRequest,
     DatasetMetadataUpdateResponse,
+    DatasetSampleResponse,
 )
 from ..domain.data_source.service import DataSourceService
 from ..rag.service import RagService
@@ -231,3 +232,27 @@ async def update_dataset_metadata(
         )
     
     return result
+
+@router.get("/{source_id}/sample", response_model=DatasetSampleResponse)
+async def get_dataset_sample(
+    source_id: str,
+    service: DataSourceService = Depends(get_data_source_service),
+):
+    """
+    데이터 소스의 상위 5개 행 샘플 데이터 조회
+    
+    Args:
+        source_id: 데이터 소스 ID
+        
+    Returns:
+        DatasetSampleResponse: 컬럼 정보와 상위 행 데이터
+    """
+    sample_data = service.get_dataset_sample(source_id, n_rows=5)
+    
+    if not sample_data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="데이터셋을 찾을 수 없거나 샘플 데이터를 읽을 수 없습니다."
+        )
+    
+    return sample_data
