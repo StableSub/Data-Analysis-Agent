@@ -24,44 +24,18 @@
 └──────────────────────────────────────────────────┘
 ```
 
-## 옵션 1: 실제 작동하는 앱 보기
+## 앱 실행 (라우팅 기반)
 
-**App.tsx** 파일을 열고 다음과 같이 수정:
+기본 `App.tsx`는 라우팅을 포함합니다. 아래 명령으로 실행하세요:
 
-```tsx
-import { SimplifiedApp } from './components/SimplifiedApp';
-import { Toaster } from './components/ui/sonner';
-
-function App() {
-  return (
-    <>
-      <SimplifiedApp />
-      <Toaster />
-    </>
-  );
-}
-
-export default App;
-```
-
-그 다음:
 ```bash
 npm run dev
 ```
 
-## 옵션 2: 피그마 참고용 화면 갤러리
-
-**App.tsx** 파일을 열고 다음과 같이 수정:
-
-```tsx
-import { SimplifiedGallery } from './components/figma-screens/SimplifiedGallery';
-
-function App() {
-  return <SimplifiedGallery />;
-}
-
-export default App;
-```
+주요 경로:
+- `/chat` 대화/분석 워크벤치
+- `/preprocess` 전처리 도구
+- `/datasets` CSV 업로드(검증/미리보기)
 
 ## 주요 변경사항
 
@@ -134,11 +108,10 @@ const [uploadedFiles, setUploadedFiles] = useState<File[]>([]);
 4. ⏳ API 통신 추가
 5. ⏳ 파일 처리 로직
 
-## 도움이 필요하신가요?
+## 참고 자료
 
-- 📖 상세 가이드: `/FIGMA-SCREENS-GUIDE.md`
-- 🎨 화면 갤러리: `SimplifiedGallery` 컴포넌트 사용
-- 💻 코드 참고: `/components/SimplifiedApp.tsx`
+- 💻 코드 참고: `/components/WorkbenchApp.tsx`, `/components/pages/*`
+- 🧩 UI 컴포넌트: `/components/ui/*`
 
 ---
 

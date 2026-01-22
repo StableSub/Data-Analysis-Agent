@@ -31,4 +31,3 @@ export function AppHeader({ title, subtitle, isDark, onToggleTheme, center }: Ap
     </div>
   );
 }
-

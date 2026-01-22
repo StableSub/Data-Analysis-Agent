@@ -1,8 +1,8 @@
-# 🤖 NotebookLM 스타일 UI 가이드
+# 🤖 workbench 스타일 UI 가이드
 
 ## 🎉 새로운 기능 (v3.0)
 
-**2024.11.10 업데이트** - NotebookLM + ChatGPT 스타일로 완전히 재설계했습니다!
+**2024.11.10 업데이트** - workbench + ChatGPT 스타일로 완전히 재설계했습니다!
 
 ### ✨ 주요 특징
 
@@ -34,13 +34,13 @@
 
 ```tsx
 // App.tsx
-import { NotebookLMApp } from './components/NotebookLMApp';
+import { WorkbenchApp } from './components/WorkbenchApp';
 import { Toaster } from './components/ui/sonner';
 
 function App() {
   return (
     <>
-      <NotebookLMApp />
+      <WorkbenchApp />
       <Toaster />
     </>
   );
@@ -49,18 +49,7 @@ function App() {
 export default App;
 ```
 
-### 2. 화면 갤러리 보기
-
-```tsx
-// App.tsx
-import { NotebookLMGallery } from './components/figma-screens/NotebookLMGallery';
-
-function App() {
-  return <NotebookLMGallery />;
-}
-
-export default App;
-```
+<!-- 갤러리/목업 섹션은 제거되었습니다. 실제 워크벤치 앱을 기준으로 설명합니다. -->
 
 ## 📁 파일 업로드 시스템
 
@@ -81,8 +70,8 @@ export default App;
 ### 업로드 방법
 
 ```tsx
-// NotebookLMUpload 컴포넌트 사용
-<NotebookLMUpload
+// WorkbenchUpload 컴포넌트 사용
+<WorkbenchUpload
   onClose={() => setShowUpload(false)}
   onUpload={(file, type) => {
     // type: 'dataset' | 'document'
@@ -164,17 +153,17 @@ addFile(sessionId, {
 
 ```
 components/
-├── NotebookLMApp.tsx                 # 메인 앱 (실제 작동)
+├── WorkbenchApp.tsx                 # 메인 앱 (실제 작동)
 ├── layout/
-│   └── NotebookLMNav.tsx            # 좌측 네비게이션
+│   └── WorkbenchNav.tsx            # 좌측 네비게이션
 ├── chat/
-│   ├── NotebookLMUpload.tsx         # 파일 업로드 모달
+│   ├── WorkbenchUpload.tsx         # 파일 업로드 모달
 │   ├── SourceFiles.tsx              # 소스 파일 목록
 │   └── ChatHistory.tsx              # 대화 기록
-└── figma-screens/
-    ├── NotebookLMEmpty.tsx          # 빈 상태 화면
-    ├── NotebookLMWithSources.tsx    # 소스 있는 화면
-    └── NotebookLMGallery.tsx        # 화면 갤러리
+└── pages/
+    ├── Chat.tsx                    # /chat 라우트
+    ├── Preprocess.tsx              # /preprocess 라우트
+    └── Datasets.tsx                # /datasets 라우트 (업로드)
 ```
 
 ## 📦 상태 관리 (Zustand)
@@ -265,7 +254,7 @@ console.log(session.messages, session.files);
 
 ## 🎨 UI 특징
 
-### NotebookLM 스타일
+### workbench 스타일
 - ✅ 소스 파일 체크박스 선택
 - ✅ 데이터셋 vs 문서 구분
 - ✅ 접을 수 있는 섹션
@@ -291,7 +280,7 @@ console.log(session.messages, session.files);
 ❌ 단순한 파일 업로드
 ```
 
-### After (v3.0 - NotebookLMApp)
+### After (v3.0 - WorkbenchApp)
 ```
 ✅ 완전한 세션 관리 (대화 기록 보존)
 ✅ 파일 체크박스 선택
@@ -344,5 +333,5 @@ console.log(session.messages, session.files);
 ---
 
 **제작일**: 2024.11.10  
-**버전**: 3.0.0 (NotebookLM Style)  
+**버전**: 3.0.0 (workbench Style)  
 **기술 스택**: React + TypeScript + Zustand + Tailwind CSS

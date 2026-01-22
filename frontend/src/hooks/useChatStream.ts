@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef } from 'react';
 import { ChatMessage } from '../types/chat';
-import { toast } from 'sonner@2.0.3';
+import { toast } from 'sonner';
 
 export function useChatStream() {
   const [isStreaming, setIsStreaming] = useState(false);

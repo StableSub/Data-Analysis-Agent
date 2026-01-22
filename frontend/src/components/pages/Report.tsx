@@ -5,7 +5,7 @@ import { Textarea } from '../ui/textarea';
 import { useStore } from '../../store/useStore';
 import { mockReport } from '../../lib/mockData';
 import { FileText, Download, Loader2, Send, Sparkles } from 'lucide-react';
-import { toast } from 'sonner@2.0.3';
+import { toast } from 'sonner';
 import { Separator } from '../ui/separator';
 
 export function Report() {

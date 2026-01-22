@@ -1,7 +1,7 @@
 
   # Frontend Design Specification
 
-  This is a code bundle for Frontend Design Specification. The original project is available at https://www.figma.com/design/aS3x6DvlU2KqUn6GinHwYH/Frontend-Design-Specification.
+  This repository contains the frontend for the Manufacturing AI assistant, built with React, TypeScript, Zustand, and Tailwind. It includes a routed app with pages for Chat, Preprocess, and Datasets (Upload).
 
   ## Requirements
   - Node.js 18.17+ (or 20+ recommended)
@@ -17,6 +17,11 @@
     - `npm run dev`
 
   Dev server runs on `http://localhost:3000` by default (see `vite.config.ts`).
+
+  ## App Routes
+  - `/chat`: Chat + analysis workbench
+  - `/preprocess`: Data preprocessing tools
+  - `/datasets`: CSV upload with validation and preview
 
   ## Tooling
   - Tailwind/PostCSS are pre-configured. Global CSS variables and utilities are imported via `src/styles/globals.css` and `src/index.css`.

@@ -1,15 +1,15 @@
 import { useState, useEffect, useRef } from 'react';
-import { NotebookLMNav, FeatureType } from './layout/NotebookLMNav';
+import { WorkbenchNav, FeatureType } from './layout/WorkbenchNav';
 import { FeatureToggle } from './layout/FeatureToggle';
-import { NotebookLMUpload } from './chat/NotebookLMUpload';
+import { WorkbenchUpload } from './chat/WorkbenchUpload';
 import { DataPreprocessing } from './preprocessing/DataPreprocessing';
 import { useStore } from '../store/useStore';
 import { BarChart3, FileEdit } from 'lucide-react';
 import { DEFAULT_MODEL_ID } from '../lib/models';
-import { AppHeader } from './notebooklm/AppHeader';
-import { SelectedFilesBar } from './notebooklm/SelectedFilesBar';
-import { ChatMessages } from './notebooklm/ChatMessages';
-import { ChatInputBar } from './notebooklm/ChatInputBar';
+import { AppHeader } from './workbench/AppHeader';
+import { SelectedFilesBar } from './workbench/SelectedFilesBar';
+import { ChatMessages } from './workbench/ChatMessages';
+import { ChatInputBar } from './workbench/ChatInputBar';
 
 // 데이터 분석(AI 챗봇)과 데이터 전처리 2가지 기능만
 type AppFeature = 'analysis' | 'preprocessing';
@@ -20,11 +20,15 @@ const featureButtons = [
 ];
 
 /**
- * NotebookLM 스타일 메인 앱
+ * workbench 스타일 메인 앱
  */
-export function NotebookLMApp() {
+interface WorkbenchAppProps {
+  initialFeature?: AppFeature; // 'analysis' | 'preprocessing'
+}
+
+export function WorkbenchApp({ initialFeature = 'analysis' }: WorkbenchAppProps) {
   const [isDark, setIsDark] = useState(false);
-  const [activeFeature, setActiveFeature] = useState<AppFeature>('analysis'); // 기본값: 데이터 분석
+  const [activeFeature, setActiveFeature] = useState<AppFeature>(initialFeature); // 기본값: 라우트에서 전달 가능
   const [message, setMessage] = useState('');
   const [showUpload, setShowUpload] = useState(false);
   const [selectedModelId, setSelectedModelId] = useState(DEFAULT_MODEL_ID);
@@ -210,7 +214,7 @@ export function NotebookLMApp() {
         ) : (
           <>
             {/* 좌측 네비게이션 */}
-            <NotebookLMNav
+            <WorkbenchNav
               onNewChat={handleNewChat}
               sessions={chatHistorySessions}
               activeSessionId={activeSessionId}
@@ -268,7 +272,7 @@ export function NotebookLMApp() {
 
             {/* Upload Modal */}
             {showUpload && (
-              <NotebookLMUpload
+              <WorkbenchUpload
                 onClose={() => setShowUpload(false)}
                 onUpload={handleFileUpload}
               />

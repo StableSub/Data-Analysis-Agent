@@ -6,7 +6,7 @@ import { Badge } from '../ui/badge';
 import { useStore } from '../../store/useStore';
 import { mockAnalysisResult } from '../../lib/mockData';
 import { Play, Loader2, AlertTriangle } from 'lucide-react';
-import { toast } from 'sonner@2.0.3';
+import { toast } from 'sonner';
 import {
   Table,
   TableBody,

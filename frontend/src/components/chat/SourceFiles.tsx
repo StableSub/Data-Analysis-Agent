@@ -19,7 +19,7 @@ interface SourceFilesProps {
 }
 
 /**
- * NotebookLM 스타일 소스 파일 목록
+ * workbench 스타일 소스 파일 목록
  */
 export function SourceFiles({ files, onToggle, onRemove }: SourceFilesProps) {
   const formatFileSize = (bytes: number) => {

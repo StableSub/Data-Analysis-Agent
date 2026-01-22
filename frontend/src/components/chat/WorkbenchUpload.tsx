@@ -5,17 +5,17 @@ import { Card } from '../ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs';
 import { Badge } from '../ui/badge';
 
-interface NotebookLMUploadProps {
+interface WorkbenchUploadProps {
   onClose: () => void;
   onUpload: (file: File, type: 'dataset' | 'document') => void;
 }
 
 /**
- * NotebookLM 스타일 파일 업로드 컴포넌트
+ * workbench 스타일 파일 업로드 컴포넌트
  * - 데이터셋 탭: CSV, XLSX
  * - 문서 탭: PDF, DOCX
  */
-export function NotebookLMUpload({ onClose, onUpload }: NotebookLMUploadProps) {
+export function WorkbenchUpload({ onClose, onUpload }: WorkbenchUploadProps) {
   const [dragOver, setDragOver] = useState(false);
   const [activeTab, setActiveTab] = useState<'dataset' | 'document'>('dataset');
 
@@ -217,3 +217,4 @@ export function NotebookLMUpload({ onClose, onUpload }: NotebookLMUploadProps) {
     </div>
   );
 }
+
