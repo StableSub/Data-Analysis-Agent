@@ -43,14 +43,12 @@ def get_rag_repository(db=Depends(get_db)) -> RagRepository:
 
 def get_rag_service(
     repository: RagRepository = Depends(get_rag_repository),
-    llm_client: LLMClient = Depends(get_llm_client),
 ) -> RagService:
     storage: Path = Path("storage") / "vectors"
     return RagService(
         repository=repository,
         storage_dir=storage,
         embedder=get_embedder(),
-        llm_client=llm_client,
     )
 
 
