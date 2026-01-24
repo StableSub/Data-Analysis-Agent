@@ -30,14 +30,12 @@ class RagService:
         repository: RagRepository,
         storage_dir: Path,
         embedder: E5Embedder,
-        llm_client: LLMClient,
         chunk_size: int = 800,
         chunk_overlap: int = 100,
     ) -> None:
         self.repository = repository
         self.storage_dir = storage_dir
         self.embedder = embedder
-        self.llm_client = llm_client
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
         self.storage_dir.mkdir(parents=True, exist_ok=True)
@@ -157,19 +155,6 @@ class RagService:
             parts.append(f"[source:{item.source_id}][chunk:{item.chunk_id}]")
             parts.append(item.content)
         return "\n\n".join(parts)
-
-    def answer_query(
-        self, *, query: str, top_k: int, source_filter: Optional[List[str]]
-    ):
-        """
-        답변 생성
-        """
-        retrieved = self.query(query=query, top_k=top_k, source_filter=source_filter)
-        if not retrieved:
-            return "", retrieved
-        context = self.build_context(retrieved)
-        answer = self.llm_client.ask(question=query, context=context)
-        return answer, retrieved
 
     def add_context_links(
         self, *, session_id: int, retrieved: Iterable[RetrievedChunk]

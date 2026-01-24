@@ -2,7 +2,8 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 
-from ..dependencies import get_rag_service
+from ..ai.llm.client import LLMClient
+from ..dependencies import get_llm_client, get_rag_service
 from .service import RagService
 from .types.errors import RagEmbeddingError, RagNotIndexedError, RagSearchError
 from .types.schemas import (
@@ -19,6 +20,7 @@ router = APIRouter(prefix="/rag", tags=["rag"])
 async def rag_query(
     request: RagQueryRequest,
     rag_service: RagService = Depends(get_rag_service),
+    llm_client: LLMClient = Depends(get_llm_client),
 ):
     """
     [RAG 검색 및 답변]
@@ -29,7 +31,7 @@ async def rag_query(
     - 에러 발생: 404(인덱스 없음), 500(내부 연산 오류)
     """
     try:
-        answer, retrieved = rag_service.answer_query(
+        retrieved = rag_service.query(
             query=request.query,
             top_k=request.top_k,
             source_filter=request.source_filter,
@@ -49,6 +51,9 @@ async def rag_query(
 
     if not retrieved:
         return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    context = rag_service.build_context(retrieved)
+    answer = llm_client.ask(question=request.query, context=context)
 
     retrieved_chunks = [
         RagRetrievedChunk(
