@@ -1,4 +1,4 @@
-ㅎimport { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import Chat from './pages/Chat';
 import Preprocess from './pages/Preprocess';
 import Datasets from './pages/Datasets';
