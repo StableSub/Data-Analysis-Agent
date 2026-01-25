@@ -23,6 +23,7 @@ interface ChatMessage {
 
 interface ChatSession {
   id: string;
+  backendSessionId?: number | null;
   title: string;
   feature: 'chat' | 'visualization' | 'edit' | 'simulation';
   messages: ChatMessage[];
@@ -64,6 +65,7 @@ interface AppState {
   createSession: (feature: ChatSession['feature']) => string;
   deleteSession: (sessionId: string) => void;
   setActiveSession: (sessionId: string | null) => void;
+  setSessionBackendId: (sessionId: string, backendSessionId: number) => void;
   addMessage: (sessionId: string, message: Omit<ChatMessage, 'id' | 'timestamp'>) => void;
   addFile: (sessionId: string, file: Omit<UploadedFile, 'id' | 'uploadedAt' | 'selected'>) => boolean;
   removeFile: (sessionId: string, fileId: string) => void;
@@ -217,6 +219,7 @@ export const useStore = create<AppState>()(
     const sessionId = `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     const newSession: ChatSession = {
       id: sessionId,
+      backendSessionId: null,
       title: '새 대화',
       feature,
       messages: [],
@@ -242,6 +245,16 @@ export const useStore = create<AppState>()(
   
   setActiveSession: (sessionId) => {
     set({ activeSessionId: sessionId });
+  },
+
+  setSessionBackendId: (sessionId, backendSessionId) => {
+    set((state) => ({
+      sessions: state.sessions.map(session =>
+        session.id === sessionId
+          ? { ...session, backendSessionId }
+          : session
+      ),
+    }));
   },
   
   addMessage: (sessionId, message) => {

@@ -10,6 +10,8 @@ import { AppHeader } from './workbench/AppHeader';
 import { SelectedFilesBar } from './workbench/SelectedFilesBar';
 import { ChatMessages } from './workbench/ChatMessages';
 import { ChatInputBar } from './workbench/ChatInputBar';
+import { apiRequest } from '../lib/api';
+import { toast } from 'sonner@2.0.3';
 
 // 데이터 분석(AI 챗봇)과 데이터 전처리 2가지 기능만
 type AppFeature = 'analysis' | 'preprocessing';
@@ -45,6 +47,7 @@ export function WorkbenchApp({ initialFeature = 'analysis' }: WorkbenchAppProps)
     setActiveSession,
     deleteSession,
     updateSessionTitle,
+    setSessionBackendId,
     addMessage,
     addFile,
     removeFile,
@@ -73,10 +76,11 @@ export function WorkbenchApp({ initialFeature = 'analysis' }: WorkbenchAppProps)
     setActiveFeature(feature);
   };
 
-  const handleSend = () => {
+  const handleSend = async () => {
     if (!message.trim() || !activeSessionId || isGenerating) return;
 
     const userMessage = message;
+    const currentSession = sessions.find(s => s.id === activeSessionId);
 
     // 첫 메시지인 경우 제목 자동 생성
     const isFirstMessage = activeSession?.messages.length === 0;
@@ -101,54 +105,44 @@ export function WorkbenchApp({ initialFeature = 'analysis' }: WorkbenchAppProps)
       textareaRef.current.style.height = 'auto';
     }
 
-    // Mock AI response with streaming
     setIsGenerating(true);
-    setStreamingContent('');
+    setStreamingContent('응답 생성 중...');
 
     const abortController = new AbortController();
     abortControllerRef.current = abortController;
 
-    setTimeout(() => {
-      if (abortController.signal.aborted) return;
+    try {
+      const response = await apiRequest<{ answer: string; session_id: number }>('/chats', {
+        method: 'POST',
+        body: JSON.stringify({
+          question: userMessage,
+          session_id: currentSession?.backendSessionId ?? undefined,
+        }),
+        signal: abortController.signal,
+      });
 
-      const selectedFiles = sessions.find(s => s.id === activeSessionId)?.files.filter(f => f.selected) || [];
-      let response = `데이터 분석 요청 "${userMessage}"을 처리하고 있습니다.`;
-      
-      if (selectedFiles.length > 0) {
-        response += `\n\n선택된 소스 파일 (${selectedFiles.length}개):`;
-        selectedFiles.forEach(file => {
-          response += `\n- ${file.name} (${file.type === 'dataset' ? '데이터셋' : '문서'})`;
+      if (activeSessionId) {
+        if (!currentSession?.backendSessionId) {
+          setSessionBackendId(activeSessionId, response.session_id);
+        }
+        addMessage(activeSessionId, {
+          role: 'assistant',
+          content: response.answer,
         });
       }
-
-      // Simulate streaming response
-      let index = 0;
-      const streamInterval = setInterval(() => {
-        if (abortController.signal.aborted) {
-          clearInterval(streamInterval);
-          setIsGenerating(false);
-          setStreamingContent('');
-          return;
-        }
-
-        if (index < response.length) {
-          setStreamingContent(response.substring(0, index + 1));
-          index++;
-        } else {
-          clearInterval(streamInterval);
-          // 스트리밍 완료 후 메시지 저장
-          if (activeSessionId) {
-            addMessage(activeSessionId, {
-              role: 'assistant',
-              content: response,
-            });
-          }
-          setIsGenerating(false);
-          setStreamingContent('');
-          abortControllerRef.current = null;
-        }
-      }, 30);
-    }, 500);
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        return;
+      }
+      if (error instanceof Error && error.name === 'AbortError') {
+        return;
+      }
+      toast.error(error instanceof Error ? error.message : '채팅 요청에 실패했습니다.');
+    } finally {
+      setIsGenerating(false);
+      setStreamingContent('');
+      abortControllerRef.current = null;
+    }
   };
 
   const handleStopGenerating = () => {
