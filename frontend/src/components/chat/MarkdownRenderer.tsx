@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Button } from '../ui/button';
 import { Check, Copy } from 'lucide-react';
-import { toast } from 'sonner@2.0.3';
+import { toast } from 'sonner';
 
 interface MarkdownRendererProps {
   content: string;

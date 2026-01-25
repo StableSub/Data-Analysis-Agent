@@ -33,7 +33,7 @@ interface ChatHistoryProps {
 }
 
 /**
- * ChatGPT/NotebookLM 스타일 대화 기록
+ * ChatGPT/workbench 스타일 대화 기록
  */
 export function ChatHistory({ 
   sessions, 

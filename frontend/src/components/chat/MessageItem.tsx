@@ -3,7 +3,7 @@ import { MarkdownRenderer } from './MarkdownRenderer';
 import { TypingDots } from './TypingDots';
 import { Button } from '../ui/button';
 import { Copy, RotateCcw, User, Bot } from 'lucide-react';
-import { toast } from 'sonner@2.0.3';
+import { toast } from 'sonner';
 import { Avatar, AvatarFallback } from '../ui/avatar';
 
 interface MessageItemProps {

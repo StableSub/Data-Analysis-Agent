@@ -7,7 +7,7 @@ import { SourceFiles } from '../chat/SourceFiles';
 
 export type FeatureType = 'chat' | 'visualization' | 'edit';
 
-interface NotebookLMNavProps {
+interface WorkbenchNavProps {
   onNewChat: () => void;
   
   // Chat Sessions
@@ -34,7 +34,7 @@ interface NotebookLMNavProps {
   onFileRemove: (fileId: string) => void;
 }
 
-export function NotebookLMNav({
+export function WorkbenchNav({
   onNewChat,
   sessions,
   activeSessionId,
@@ -44,7 +44,7 @@ export function NotebookLMNav({
   files,
   onFileToggle,
   onFileRemove,
-}: NotebookLMNavProps) {
+}: WorkbenchNavProps) {
   const [showSources, setShowSources] = useState(true);
   const [showHistory, setShowHistory] = useState(true);
 
@@ -107,7 +107,7 @@ export function NotebookLMNav({
         </button>
         
         {showSources && (
-          <div className="flex-1 min-h-0 border-t border-gray-200 dark:border-white/10 overflow-hidden w-full max-w-full">
+          <div className="flex-1 min-h-0 border-gray-200 dark:border-white/10 overflow-hidden w-full max-w-full border-t">
             <SourceFiles
               files={files}
               onToggle={onFileToggle}
@@ -132,3 +132,4 @@ export function NotebookLMNav({
     </div>
   );
 }
+
