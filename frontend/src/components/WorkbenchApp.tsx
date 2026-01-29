@@ -63,6 +63,13 @@ export function WorkbenchApp({ initialFeature = 'analysis' }: WorkbenchAppProps)
     }
   }, []);
 
+  // 세션 삭제 후 활성 세션이 없을 때 최근 세션을 자동 선택
+  useEffect(() => {
+    if (!activeSessionId && sessions.length > 0) {
+      setActiveSession(sessions[0].id);
+    }
+  }, [activeSessionId, sessions, setActiveSession]);
+
   // 메시지가 업데이트될 때마다 스크롤을 최하단으로 이동
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });

@@ -1,6 +1,5 @@
-import { Upload } from '../components/pages/Upload';
+import { DatasetConsole } from '../components/datasets/DatasetConsole';
 
 export default function Datasets() {
-  return <Upload />;
+  return <DatasetConsole />;
 }
-

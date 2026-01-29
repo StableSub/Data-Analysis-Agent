@@ -11,6 +11,15 @@ import { RadioGroup, RadioGroupItem } from '../ui/radio-group';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger } from '../ui/dropdown-menu';
 import { useDataStore, ColumnInfo } from '../../store/useDataStore';
 import * as XLSX from 'xlsx';
+import { apiRequest } from '../../lib/api';
+import { toast } from 'sonner';
+
+type PreprocessOperation =
+  | { op: 'scale'; method: 'standardization' | 'normalization'; columns: string[] }
+  | { op: 'fill_missing'; column: string; method: 'mean' | 'median' | 'mode' | 'custom'; value?: string }
+  | { op: 'change_type'; column: string; to: 'number' | 'string' }
+  | { op: 'remove_outliers'; column: string; method: 'iqr' }
+  | { op: 'delete_column'; column: string };
 
 interface DataPreprocessingProps {
   isDark: boolean;
@@ -32,6 +41,14 @@ export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
   } = useDataStore();
   
   const [selectedColumns, setSelectedColumns] = useState<string[]>([]);
+  const [datasetId, setDatasetId] = useState<string>('');
+  const [operations, setOperations] = useState<PreprocessOperation[]>([]);
+  const [applyResult, setApplyResult] = useState<{
+    new_version_id: string;
+    version_no: number;
+    row_count: number;
+    col_count: number;
+  } | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [scalingMethod, setScalingMethod] = useState<'standardization' | 'normalization'>('standardization');
 
@@ -156,129 +173,61 @@ export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
   // Standardization
   const handleStandardization = () => {
     if (selectedColumns.length === 0) return;
-
-    const newData = data.map(row => {
-      const newRow = { ...row };
-      selectedColumns.forEach(col => {
-        const colInfo = columnInfo.find(c => c.name === col);
-        if (colInfo?.type === 'number' && colInfo.mean !== undefined && colInfo.std !== undefined) {
-          const value = parseFloat(row[col]);
-          if (!isNaN(value)) {
-            newRow[col] = ((value - colInfo.mean) / colInfo.std).toFixed(4);
-          }
-        }
-      });
-      return newRow;
-    });
-
-    const newColumnInfo = analyzeColumns(columns, newData);
-    updateData(newData, columns, newColumnInfo);
+    setOperations((ops) => [...ops, { op: 'scale', method: 'standardization', columns: selectedColumns }]);
   };
 
   // Normalization
   const handleNormalization = () => {
     if (selectedColumns.length === 0) return;
-
-    const newData = data.map(row => {
-      const newRow = { ...row };
-      selectedColumns.forEach(col => {
-        const colInfo = columnInfo.find(c => c.name === col);
-        if (colInfo?.type === 'number' && colInfo.min !== undefined && colInfo.max !== undefined) {
-          const value = parseFloat(row[col]);
-          if (!isNaN(value)) {
-            const range = colInfo.max - colInfo.min;
-            newRow[col] = range === 0 ? 0 : ((value - colInfo.min) / range).toFixed(4);
-          }
-        }
-      });
-      return newRow;
-    });
-
-    const newColumnInfo = analyzeColumns(columns, newData);
-    updateData(newData, columns, newColumnInfo);
+    setOperations((ops) => [...ops, { op: 'scale', method: 'normalization', columns: selectedColumns }]);
   };
 
   // 결측치 채우기
   const handleFillMissing = (column: string, method: 'mean' | 'median' | 'mode' | 'custom', customValue?: string) => {
-    const colInfo = columnInfo.find(c => c.name === column);
-    if (!colInfo) return;
-
-    const newData = data.map(row => {
-      if (row[column] === '' || row[column] === null || row[column] === undefined) {
-        let fillValue = '';
-        
-        if (method === 'mean' && colInfo.mean !== undefined) {
-          fillValue = colInfo.mean.toString();
-        } else if (method === 'median' && colInfo.median !== undefined) {
-          fillValue = colInfo.median.toString();
-        } else if (method === 'mode') {
-          const values = data.map(r => r[column]).filter(v => v !== '' && v !== null && v !== undefined);
-          const frequency: Record<string, number> = {};
-          values.forEach(v => frequency[v] = (frequency[v] || 0) + 1);
-          fillValue = Object.keys(frequency).reduce((a, b) => frequency[a] > frequency[b] ? a : b);
-        } else if (method === 'custom' && customValue) {
-          fillValue = customValue;
-        }
-        
-        return { ...row, [column]: fillValue };
-      }
-      return row;
-    });
-
-    const newColumnInfo = analyzeColumns(columns, newData);
-    updateData(newData, columns, newColumnInfo);
+    setOperations((ops) => [...ops, { op: 'fill_missing', column, method, value: customValue }]);
   };
 
   // 데이터 타입 변경
   const handleChangeType = (column: string, newType: 'number' | 'string') => {
-    const newData = data.map(row => {
-      if (newType === 'number') {
-        const num = parseFloat(row[column]);
-        return { ...row, [column]: isNaN(num) ? '' : num };
-      } else {
-        return { ...row, [column]: row[column].toString() };
-      }
-    });
-
-    const newColumnInfo = analyzeColumns(columns, newData);
-    updateData(newData, columns, newColumnInfo);
+    setOperations((ops) => [...ops, { op: 'change_type', column, to: newType }]);
   };
 
   // 이상치 제거
   const handleRemoveOutliers = (column: string) => {
     const colInfo = columnInfo.find(c => c.name === column);
     if (!colInfo || colInfo.type !== 'number') return;
-
-    const values = data.map(row => parseFloat(row[column])).filter(v => !isNaN(v));
-    const sorted = [...values].sort((a, b) => a - b);
-    
-    const q1 = sorted[Math.floor(sorted.length * 0.25)];
-    const q3 = sorted[Math.floor(sorted.length * 0.75)];
-    const iqr = q3 - q1;
-    const lowerBound = q1 - 1.5 * iqr;
-    const upperBound = q3 + 1.5 * iqr;
-
-    const newData = data.filter(row => {
-      const val = parseFloat(row[column]);
-      return isNaN(val) || (val >= lowerBound && val <= upperBound);
-    });
-
-    const newColumnInfo = analyzeColumns(columns, newData);
-    updateData(newData, columns, newColumnInfo);
+    setOperations((ops) => [...ops, { op: 'remove_outliers', column, method: 'iqr' }]);
   };
 
   // 열 삭제
   const handleDeleteColumn = (column: string) => {
-    const newColumns = columns.filter(c => c !== column);
-    const newData = data.map(row => {
-      const newRow = { ...row };
-      delete newRow[column];
-      return newRow;
-    });
-
-    const newColumnInfo = analyzeColumns(newColumns, newData);
-    updateData(newData, newColumns, newColumnInfo);
+    setOperations((ops) => [...ops, { op: 'delete_column', column }]);
     setSelectedColumns(prev => prev.filter(c => c !== column));
+  };
+
+  const handleApplyPreprocess = async () => {
+    if (!datasetId) {
+      toast.error('dataset_id를 입력하세요');
+      return;
+    }
+    if (operations.length === 0) {
+      toast.message('적용할 전처리 작업이 없습니다');
+      return;
+    }
+    try {
+      const res = await apiRequest<{ new_version_id: string; version_no: number; row_count: number; col_count: number }>(
+        '/preprocess/apply',
+        {
+          method: 'POST',
+          body: JSON.stringify({ dataset_id: datasetId, operations }),
+        }
+      );
+      setApplyResult(res);
+      toast.success('전처리 적용이 완료되었습니다');
+      // 필요 시 operations 초기화 (여기서는 유지)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '전처리 적용에 실패했습니다');
+    }
   };
 
   // 열 선택/해제
@@ -674,6 +623,45 @@ export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
 
                 <ScrollArea className="flex-1">
                   <div className="p-4 space-y-6">
+                    {/* dataset_id 입력 및 누적 작업 목록 */}
+                    <div>
+                      <Label htmlFor="dataset-id" className="text-sm">dataset_id</Label>
+                      <Input id="dataset-id" placeholder="예: ds_123" value={datasetId} onChange={(e) => setDatasetId(e.target.value)} className="mt-1" />
+                      <div className="mt-3">
+                        <h4 className="text-sm text-gray-900 dark:text-white mb-2">누적된 작업</h4>
+                        {operations.length === 0 ? (
+                          <p className="text-xs text-gray-500 dark:text-gray-400">아직 추가된 작업이 없습니다</p>
+                        ) : (
+                          <ul className="space-y-1 text-xs text-gray-900 dark:text-white">
+                            {operations.map((op, idx) => (
+                              <li key={idx} className="flex items-center justify-between">
+                                <span>
+                                  {op.op === 'scale' && `${op.method} (${op.columns.join(', ')})`}
+                                  {op.op === 'fill_missing' && `fill_missing ${op.method} (${op.column})`}
+                                  {op.op === 'change_type' && `change_type ${op.to} (${op.column})`}
+                                  {op.op === 'remove_outliers' && `remove_outliers (${op.column})`}
+                                  {op.op === 'delete_column' && `delete_column (${op.column})`}
+                                </span>
+                                <Button size="sm" variant="ghost" onClick={() => setOperations(ops => ops.filter((_, i) => i !== idx))}>삭제</Button>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                        <div className="mt-3 flex gap-2">
+                          <Button size="sm" variant="outline" onClick={() => setOperations([])} disabled={operations.length === 0}>비우기</Button>
+                          <Button size="sm" className="flex-1" onClick={handleApplyPreprocess} disabled={!datasetId || operations.length === 0}>전처리 적용</Button>
+                        </div>
+                        {applyResult && (
+                          <div className="mt-3 text-xs text-gray-700 dark:text-gray-300">
+                            <div>new_version_id: <span className="font-mono">{applyResult.new_version_id}</span></div>
+                            <div>version_no: {applyResult.version_no}</div>
+                            <div>row_count: {applyResult.row_count}</div>
+                            <div>col_count: {applyResult.col_count}</div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
                     {/* 스케일링 */}
                     <div>
                       <h4 className="text-sm text-gray-900 dark:text-white mb-3">스케일링</h4>
@@ -710,7 +698,7 @@ export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
                         disabled={selectedColumns.length === 0}
                         className="w-full mt-2"
                       >
-                        선택한 열에 적용
+                        선택한 열 작업 추가
                       </Button>
                     </div>
 
@@ -768,7 +756,7 @@ export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
                                     handleFillMissing(selectedColumns[0], 'custom', input.value);
                                   }}
                                 >
-                                  적용
+                                  작업 추가
                                 </Button>
                               </div>
                             </div>
@@ -795,7 +783,7 @@ export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
                             onClick={() => handleRemoveOutliers(selectedColumns[0])}
                           >
                             <TrendingUp className="w-4 h-4" />
-                            IQR 방식으로 제거
+                            IQR 제거 작업 추가
                           </Button>
                           <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
                             Q1 - 1.5×IQR 미만 또는 Q3 + 1.5×IQR 초과하는 데이터를 제거합니다
@@ -820,7 +808,7 @@ export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
                             className="w-full justify-start"
                             onClick={() => handleChangeType(selectedColumns[0], 'number')}
                           >
-                            숫자형으로 변환
+                            숫자형 변환 작업 추가
                           </Button>
                           <Button
                             variant="outline"
@@ -828,7 +816,7 @@ export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
                             className="w-full justify-start"
                             onClick={() => handleChangeType(selectedColumns[0], 'string')}
                           >
-                            문자형으로 변환
+                            문자형 변환 작업 추가
                           </Button>
                         </div>
                       </div>
