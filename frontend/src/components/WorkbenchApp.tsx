@@ -112,11 +112,17 @@ export function WorkbenchApp({ initialFeature = 'analysis' }: WorkbenchAppProps)
     abortControllerRef.current = abortController;
 
     try {
+      // Collect selected file source IDs
+      const selectedSourceIds = currentSession?.files
+        .filter(f => f.selected && f.sourceId)
+        .map(f => f.sourceId!) || [];
+
       const response = await apiRequest<{ answer: string; session_id: number }>('/chats', {
         method: 'POST',
         body: JSON.stringify({
           question: userMessage,
           session_id: currentSession?.backendSessionId ?? undefined,
+          data_source_id: selectedSourceIds.length > 0 ? selectedSourceIds[0] : undefined,
         }),
         signal: abortController.signal,
       });
@@ -154,26 +160,43 @@ export function WorkbenchApp({ initialFeature = 'analysis' }: WorkbenchAppProps)
     setStreamingContent('');
   };
 
-  const handleFileUpload = (file: File, type: 'dataset' | 'document') => {
+  const handleFileUpload = async (file: File, type: 'dataset' | 'document') => {
     if (!activeSessionId) return;
 
-    const success = addFile(activeSessionId, {
-      name: file.name,
-      size: file.size,
-      type,
-    });
-
-    if (success) {
-      setShowUpload(false);
+    try {
+      // 1. Upload to Backend
+      const formData = new FormData();
+      formData.append('file', file);
       
-      // 데이터셋 파일이면 전역 상태에도 저장 (전처리 화면에서 사용)
-      if (type === 'dataset') {
-        // 파일을 직접 전역 상태로 전달하기 위해 file 객체를 저장할 방법 필요
-        // 여기서는 임시로 파일 업로드만 하고, 전처리 화면에서 다시 업로드하도록 유도
+      const uploadToast = toast.loading(`${file.name} 업로드 중...`);
+      
+      const response = await apiRequest<{ 
+        source_id: string; 
+        id: number;
+        filename: string;
+      }>('/datasets/', {
+        method: 'POST',
+        body: formData,
+      });
+      
+      toast.dismiss(uploadToast);
+      toast.success('파일 업로드 완료');
+
+      // 2. Add to Store with sourceId
+      const success = addFile(activeSessionId, {
+        name: response.filename || file.name,
+        size: file.size,
+        type,
+        sourceId: response.source_id,
+      });
+
+      if (success) {
+        setShowUpload(false);
+      } else {
+        toast.warning(`"${file.name}" 파일이 이미 추가되어 있습니다.`);
       }
-    } else {
-      // 중복 파일인 경우 알림
-      alert(`"${file.name}" 파일이 이미 업로드되어 있습니다.`);
+    } catch (error) {
+      toast.error('파일 업로드 실패: ' + (error instanceof Error ? error.message : '알 수 없는 오류'));
     }
   };
 
