@@ -1,12 +1,14 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { User, Role, Permission, ROLE_DEFINITIONS, AuditLogEntry } from '../types/rbac';
+import { apiRequest } from '../lib/api';
 
 interface UploadedFile {
   id: string;
   name: string;
   size: number;
   type: 'dataset' | 'document'; // 데이터셋 vs 문서
+  sourceId?: string; // Backend source ID
   uploadedAt: Date;
   columns?: string[];
   rowCount?: number;
@@ -66,6 +68,7 @@ interface AppState {
   deleteSession: (sessionId: string) => void;
   setActiveSession: (sessionId: string | null) => void;
   setSessionBackendId: (sessionId: string, backendSessionId: number) => void;
+  fetchMessages: (sessionId: string) => Promise<void>;
   addMessage: (sessionId: string, message: Omit<ChatMessage, 'id' | 'timestamp'>) => void;
   addFile: (sessionId: string, file: Omit<UploadedFile, 'id' | 'uploadedAt' | 'selected'>) => boolean;
   removeFile: (sessionId: string, fileId: string) => void;
@@ -255,6 +258,45 @@ export const useStore = create<AppState>()(
           : session
       ),
     }));
+  },
+
+  fetchMessages: async (sessionId) => {
+    const state = get();
+    const session = state.sessions.find(s => s.id === sessionId);
+    
+    if (!session || !session.backendSessionId) return;
+
+    try {
+      // Import needed interface locally or assume backend structure
+      interface ChatHistoryResponse {
+        session_id: number;
+        messages: {
+          id: number;
+          role: string;
+          content: string;
+          created_at: string;
+        }[];
+      }
+
+      const history = await apiRequest<ChatHistoryResponse>(`/chats/${session.backendSessionId}/history`);
+      
+      const newMessages: ChatMessage[] = history.messages.map(msg => ({
+        id: `msg-${msg.id}`,
+        role: msg.role as 'user' | 'assistant',
+        content: msg.content,
+        timestamp: new Date(msg.created_at),
+      }));
+
+      set((state) => ({
+        sessions: state.sessions.map(s => 
+          s.id === sessionId
+            ? { ...s, messages: newMessages }
+            : s
+        ),
+      }));
+    } catch (error) {
+      console.error('Failed to fetch messages:', error);
+    }
   },
   
   addMessage: (sessionId, message) => {

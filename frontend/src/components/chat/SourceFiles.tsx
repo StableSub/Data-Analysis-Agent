@@ -136,9 +136,11 @@ export function SourceFiles({ files, onToggle, onRemove }: SourceFilesProps) {
                 <Button
                   size="icon"
                   variant="ghost"
-                  className="opacity-60 hover:opacity-100 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-600 dark:hover:text-red-400 transition-all h-6 w-6"
+                  className="relative z-10 opacity-60 hover:opacity-100 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-600 dark:hover:text-red-400 transition-all h-6 w-6"
                   onClick={(e) => {
+                    e.preventDefault();
                     e.stopPropagation();
+                    console.log('Deleting file:', file.id);
                     onRemove(file.id);
                   }}
                   title="파일 삭제"

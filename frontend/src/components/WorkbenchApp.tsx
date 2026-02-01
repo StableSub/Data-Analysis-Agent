@@ -11,7 +11,7 @@ import { SelectedFilesBar } from './workbench/SelectedFilesBar';
 import { ChatMessages } from './workbench/ChatMessages';
 import { ChatInputBar } from './workbench/ChatInputBar';
 import { apiRequest } from '../lib/api';
-import { toast } from 'sonner@2.0.3';
+import { toast } from 'sonner';
 
 // 데이터 분석(AI 챗봇)과 데이터 전처리 2가지 기능만
 type AppFeature = 'analysis' | 'preprocessing';
@@ -48,6 +48,7 @@ export function WorkbenchApp({ initialFeature = 'analysis' }: WorkbenchAppProps)
     deleteSession,
     updateSessionTitle,
     setSessionBackendId,
+    fetchMessages,
     addMessage,
     addFile,
     removeFile,
@@ -62,6 +63,13 @@ export function WorkbenchApp({ initialFeature = 'analysis' }: WorkbenchAppProps)
       createSession('chat'); // 내부적으로는 chat 타입 유지
     }
   }, []);
+
+  // 세션 변경 시 백엔드 메시지 동기화
+  useEffect(() => {
+    if (activeSessionId) {
+      fetchMessages(activeSessionId);
+    }
+  }, [activeSessionId]);
 
   // 메시지가 업데이트될 때마다 스크롤을 최하단으로 이동
   useEffect(() => {
@@ -240,7 +248,28 @@ export function WorkbenchApp({ initialFeature = 'analysis' }: WorkbenchAppProps)
               onSessionRename={updateSessionTitle}
               files={activeSession?.files || []}
               onFileToggle={(fileId) => activeSessionId && toggleFileSelection(activeSessionId, fileId)}
-              onFileRemove={(fileId) => activeSessionId && removeFile(activeSessionId, fileId)}
+              onFileRemove={async (fileId) => {
+                if (!activeSessionId) return;
+                
+                const currentSession = sessions.find(s => s.id === activeSessionId);
+                const file = currentSession?.files.find(f => f.id === fileId);
+                
+                if (file && file.sourceId) {
+                  try {
+                    const deleteToast = toast.loading('파일 삭제 중...');
+                    await apiRequest(`/datasets/${file.sourceId}`, { method: 'DELETE' });
+                    toast.dismiss(deleteToast);
+                    toast.success('파일이 삭제되었습니다.');
+                  } catch (error) {
+                    console.error('Failed to delete file from backend:', error);
+                    toast.error('파일 삭제 실패: 서버 오류');
+                    // 서버 삭제 실패해도 로컬에서는 지우고 싶다면 아래 코드를 try 밖으로 뺍니다.
+                  }
+                }
+                
+                // Ensure store update happens
+                removeFile(activeSessionId, fileId);
+              }}
             />
 
             {/* 우측 대화 영역 */}
@@ -283,7 +312,7 @@ export function WorkbenchApp({ initialFeature = 'analysis' }: WorkbenchAppProps)
                 onOpenUpload={() => setShowUpload(true)}
                 selectedModelId={selectedModelId}
                 setSelectedModelId={setSelectedModelId}
-                textareaRef={textareaRef}
+                textareaRef={textareaRef as React.RefObject<HTMLTextAreaElement>}
               />
             </div>
 
