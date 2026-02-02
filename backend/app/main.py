@@ -8,6 +8,8 @@ from .rag import models as rag_models
 from .rag import router as rag_router
 from .api import export as export_api
 from .api import preprocess as preprocess_api
+from .api import reports as reports_api
+from .domain.report import models as report_models
 
 
 app = FastAPI()
@@ -24,3 +26,4 @@ app.include_router(visualization_api.router)
 app.include_router(rag_router.router)
 app.include_router(export_api.router)
 app.include_router(preprocess_api.router)
+app.include_router(reports_api.router)

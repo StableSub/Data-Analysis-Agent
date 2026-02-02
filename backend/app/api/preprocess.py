@@ -1,14 +1,14 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.core.db import get_db
-from app.domain.preprocess.schemas import (
+from ..core.db import get_db
+from ..domain.preprocess.schemas import (
     PreprocessPreviewResponse,
     PreprocessPreviewRequest,
     PreprocessApplyRequest,
     PreprocessApplyResponse,
 )
-from app.domain.preprocess.service import PreprocessService
+from ..domain.preprocess.service import PreprocessService
 
 router = APIRouter(prefix="/preprocess", tags=["preprocess"])
 
