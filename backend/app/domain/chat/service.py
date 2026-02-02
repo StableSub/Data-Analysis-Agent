@@ -1,10 +1,9 @@
 from typing import Optional
 
-from ...ai.llm.client import LLMClient
+from ...ai.agents.client import AgentClient
 from ..data_source.repository import DataSourceRepository
 from .repository import ChatRepository
 from .schemas import ChatHistoryResponse, ChatResponse
-from ...ai.orchestrator.chat_flow import ChatFlowOrchestrator
 from ...rag.service import RagService
 from ...rag.types.errors import RagError
 
@@ -16,13 +15,13 @@ class ChatService:
 
     def __init__(
         self,
+        agent: AgentClient,
         repository: ChatRepository,
-        orchestrator: ChatFlowOrchestrator,
         data_source_repository: Optional[DataSourceRepository] = None,
         rag_service: Optional[RagService] = None,
     ) -> None:
+        self.agent = agent
         self.repository = repository
-        self.orchestrator = orchestrator
         self.data_source_repository = data_source_repository
         self.rag_service = rag_service
 
@@ -39,7 +38,6 @@ class ChatService:
         if session is None:
             session = self.repository.create_session(title=question[:60])
 
-        history = self.repository.get_history(session.id)
         rag_context = None
         retrieved_chunks = None
         rag_attempted = False
@@ -63,13 +61,12 @@ class ChatService:
             rag_context=rag_context,
             rag_attempted=rag_attempted,
         )
-        answer = self.orchestrator.generate_answer(
+        answer = self.agent.ask(
             session_id=session.id,
             question=question,
-            history=history,
             context=merged_context,
         )
-
+        
         self.repository.append_message(session, "user", question)
         self.repository.append_message(session, "assistant", answer)
         if retrieved_chunks and self.rag_service:
@@ -110,7 +107,7 @@ class ChatService:
             print(dataset)
             if dataset and dataset.storage_path:
                 try:
-                    file_text = LLMClient.load_text_from_file(dataset.storage_path)
+                    file_text = AgentClient.load_text_from_file(dataset.storage_path)
                     if file_text:
                         pieces.append(file_text)
                 except Exception:
