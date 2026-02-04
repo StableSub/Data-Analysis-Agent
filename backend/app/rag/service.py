@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List, Optional
 
-from ..ai.llm.client import LLMClient
+from ..ai.agents.client import AgentClient
 from ..domain.data_source.models import Dataset
 from .core.embedding import E5Embedder
 from .core.vector_store import FaissStore
@@ -193,7 +193,7 @@ class RagService:
         """파일 확장자에 따른 텍스트 추출."""
         path = Path(dataset.storage_path)
         if path.suffix.lower() == ".pdf":
-            return LLMClient.load_text_from_file(str(path), max_chars=200000)
+            return AgentClient.load_text_from_file(str(path), max_chars=200000)
         encoding = dataset.encoding or "utf-8"
         return path.read_text(encoding=encoding, errors="ignore")
 
