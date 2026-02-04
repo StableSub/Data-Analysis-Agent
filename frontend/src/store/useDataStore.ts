@@ -17,7 +17,7 @@ interface DataState {
   data: any[];
   columns: string[];
   columnInfo: ColumnInfo[];
-  
+
   // 히스토리 관리
   history: {
     data: any[];
@@ -25,12 +25,12 @@ interface DataState {
     columnInfo: ColumnInfo[];
   }[];
   historyIndex: number;
-  
+
   // 액션들
   setFileData: (file: File, data: any[], columns: string[], columnInfo: ColumnInfo[]) => void;
   updateData: (data: any[], columns: string[], columnInfo: ColumnInfo[], addToHistory?: boolean) => void;
   clearData: () => void;
-  
+
   // Undo/Redo
   undo: () => void;
   redo: () => void;
@@ -45,7 +45,7 @@ export const useDataStore = create<DataState>((set, get) => ({
   columnInfo: [],
   history: [],
   historyIndex: -1,
-  
+
   setFileData: (file, data, columns, columnInfo) => {
     set({
       file,
@@ -56,13 +56,13 @@ export const useDataStore = create<DataState>((set, get) => ({
       historyIndex: 0,
     });
   },
-  
+
   updateData: (data, columns, columnInfo, addToHistory = true) => {
     if (addToHistory) {
       const { history, historyIndex } = get();
       const newHistory = history.slice(0, historyIndex + 1);
       newHistory.push({ data, columns, columnInfo });
-      
+
       set({
         data,
         columns,
@@ -74,7 +74,7 @@ export const useDataStore = create<DataState>((set, get) => ({
       set({ data, columns, columnInfo });
     }
   },
-  
+
   clearData: () => {
     set({
       file: null,
@@ -85,11 +85,11 @@ export const useDataStore = create<DataState>((set, get) => ({
       historyIndex: -1,
     });
   },
-  
+
   undo: () => {
     const { history, historyIndex } = get();
     if (historyIndex > 0) {
-      const prevState = history[historyIndex - 1];
+      const prevState = history[historyIndex - 1]!;
       set({
         data: prevState.data,
         columns: prevState.columns,
@@ -98,11 +98,11 @@ export const useDataStore = create<DataState>((set, get) => ({
       });
     }
   },
-  
+
   redo: () => {
     const { history, historyIndex } = get();
     if (historyIndex < history.length - 1) {
-      const nextState = history[historyIndex + 1];
+      const nextState = history[historyIndex + 1]!;
       set({
         data: nextState.data,
         columns: nextState.columns,
@@ -111,12 +111,12 @@ export const useDataStore = create<DataState>((set, get) => ({
       });
     }
   },
-  
+
   canUndo: () => {
     const { historyIndex } = get();
     return historyIndex > 0;
   },
-  
+
   canRedo: () => {
     const { history, historyIndex } = get();
     return historyIndex < history.length - 1;

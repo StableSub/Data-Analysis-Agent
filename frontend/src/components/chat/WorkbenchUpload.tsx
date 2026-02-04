@@ -22,17 +22,17 @@ export function WorkbenchUpload({ onClose, onUpload }: WorkbenchUploadProps) {
   const handleDrop = (e: React.DragEvent, type: 'dataset' | 'document') => {
     e.preventDefault();
     setDragOver(false);
-    
+
     const files = Array.from(e.dataTransfer.files);
     if (files.length > 0) {
-      onUpload(files[0], type);
+      onUpload(files[0]!, type);
     }
   };
 
   const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>, type: 'dataset' | 'document') => {
     const files = e.target.files;
     if (files && files.length > 0) {
-      onUpload(files[0], type);
+      onUpload(files[0]!, type);
     }
   };
 
@@ -71,8 +71,8 @@ export function WorkbenchUpload({ onClose, onUpload }: WorkbenchUploadProps) {
               <div
                 className={`
                   border-2 border-dashed rounded-xl p-12 text-center transition-all
-                  ${dragOver 
-                    ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/20' 
+                  ${dragOver
+                    ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/20'
                     : 'border-gray-300 dark:border-white/20 hover:border-blue-400 dark:hover:border-blue-600'
                   }
                 `}
@@ -86,15 +86,15 @@ export function WorkbenchUpload({ onClose, onUpload }: WorkbenchUploadProps) {
                 <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-blue-100 dark:bg-blue-900/30 mb-4">
                   <Database className="w-8 h-8 text-blue-600 dark:text-blue-400" />
                 </div>
-                
+
                 <h3 className="text-lg text-gray-900 dark:text-white mb-2">
                   데이터셋 파일 업로드
                 </h3>
-                
+
                 <p className="text-gray-600 dark:text-gray-400 mb-4">
                   CSV 또는 XLSX 파일을 드래그하여 놓거나
                 </p>
-                
+
                 <label className="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 hover:bg-blue-700 dark:bg-[#0a84ff] dark:hover:bg-[#0077ed] text-white rounded-lg cursor-pointer transition-colors">
                   <Upload className="w-5 h-5" />
                   <span>파일 선택</span>
@@ -105,7 +105,7 @@ export function WorkbenchUpload({ onClose, onUpload }: WorkbenchUploadProps) {
                     onChange={(e) => handleFileInput(e, 'dataset')}
                   />
                 </label>
-                
+
                 <div className="mt-6 flex items-center justify-center gap-4">
                   <Badge variant="secondary" className="gap-1">
                     <Check className="w-3 h-3" />
@@ -120,7 +120,7 @@ export function WorkbenchUpload({ onClose, onUpload }: WorkbenchUploadProps) {
                     XLS
                   </Badge>
                 </div>
-                
+
                 <p className="text-xs text-gray-500 dark:text-[#98989d] mt-4">
                   최대 파일 크기: 100MB
                 </p>
@@ -138,8 +138,8 @@ export function WorkbenchUpload({ onClose, onUpload }: WorkbenchUploadProps) {
               <div
                 className={`
                   border-2 border-dashed rounded-xl p-12 text-center transition-all
-                  ${dragOver 
-                    ? 'border-purple-500 bg-purple-50 dark:bg-purple-950/20' 
+                  ${dragOver
+                    ? 'border-purple-500 bg-purple-50 dark:bg-purple-950/20'
                     : 'border-gray-300 dark:border-white/20 hover:border-purple-400 dark:hover:border-purple-600'
                   }
                 `}
@@ -153,15 +153,15 @@ export function WorkbenchUpload({ onClose, onUpload }: WorkbenchUploadProps) {
                 <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-purple-100 dark:bg-purple-900/30 mb-4">
                   <FileText className="w-8 h-8 text-purple-600 dark:text-purple-400" />
                 </div>
-                
+
                 <h3 className="text-lg text-gray-900 dark:text-white mb-2">
                   문서 파일 업로드
                 </h3>
-                
+
                 <p className="text-gray-600 dark:text-gray-400 mb-4">
                   PDF 또는 DOCX 파일을 드래그하여 놓거나
                 </p>
-                
+
                 <label className="inline-flex items-center gap-2 px-6 py-3 bg-purple-600 hover:bg-purple-700 dark:bg-purple-500 dark:hover:bg-purple-600 text-white rounded-lg cursor-pointer transition-colors">
                   <Upload className="w-5 h-5" />
                   <span>파일 선택</span>
@@ -172,7 +172,7 @@ export function WorkbenchUpload({ onClose, onUpload }: WorkbenchUploadProps) {
                     onChange={(e) => handleFileInput(e, 'document')}
                   />
                 </label>
-                
+
                 <div className="mt-6 flex items-center justify-center gap-4">
                   <Badge variant="secondary" className="gap-1 bg-purple-100 dark:bg-purple-900/30">
                     <Check className="w-3 h-3" />
@@ -187,7 +187,7 @@ export function WorkbenchUpload({ onClose, onUpload }: WorkbenchUploadProps) {
                     TXT
                   </Badge>
                 </div>
-                
+
                 <p className="text-xs text-gray-500 dark:text-[#98989d] mt-4">
                   최대 파일 크기: 50MB
                 </p>

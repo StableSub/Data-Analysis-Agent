@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { Button } from '../ui/button';
 import { Check, Copy } from 'lucide-react';
 import { toast } from 'sonner';
@@ -11,19 +11,25 @@ export function MarkdownRenderer({ content }: MarkdownRendererProps) {
   // Simple markdown rendering - in production, use react-markdown or similar
   const renderContent = (text: string) => {
     const lines = text.split('\n');
-    const elements: JSX.Element[] = [];
+    const elements: React.ReactNode[] = [];
     let i = 0;
 
     while (i < lines.length) {
       const line = lines[i];
+      if (line === undefined) {
+        i++;
+        continue;
+      }
 
       // Code block
       if (line.startsWith('```')) {
         const language = line.slice(3).trim();
         const codeLines: string[] = [];
         i++;
-        while (i < lines.length && !lines[i].startsWith('```')) {
-          codeLines.push(lines[i]);
+        while (i < lines.length) {
+          const l = lines[i];
+          if (l === undefined || l.startsWith('```')) break;
+          codeLines.push(l);
           i++;
         }
         elements.push(

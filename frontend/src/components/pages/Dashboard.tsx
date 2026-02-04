@@ -1,38 +1,44 @@
 import { Card } from '../ui/card';
 import { Badge } from '../ui/badge';
 import { Activity, FileCheck, AlertTriangle, Cpu } from 'lucide-react';
-import { mockDashboardStats } from '../../lib/mockData';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
 export function Dashboard() {
-  const stats = mockDashboardStats;
-  
+  const stats = {
+    totalAnalyses: 0,
+    filesProcessed: 0,
+    anomaliesDetected: 0,
+    systemHealth: 100,
+    recentActivity: [] as Array<{ action: string; time: string; status: string }>,
+    topProcesses: [] as Array<{ name: string; count: number; percentage: number }>
+  };
+
   const cards = [
-    { 
-      title: '총 분석 건수', 
-      value: stats.totalAnalyses, 
-      icon: Activity, 
+    {
+      title: '총 분석 건수',
+      value: stats.totalAnalyses,
+      icon: Activity,
       color: 'text-blue-600',
       bgColor: 'bg-blue-50'
     },
-    { 
-      title: '처리된 파일', 
-      value: stats.filesProcessed, 
-      icon: FileCheck, 
+    {
+      title: '처리된 파일',
+      value: stats.filesProcessed,
+      icon: FileCheck,
       color: 'text-green-600',
       bgColor: 'bg-green-50'
     },
-    { 
-      title: '이상 탐지', 
-      value: stats.anomaliesDetected, 
-      icon: AlertTriangle, 
+    {
+      title: '이상 탐지',
+      value: stats.anomaliesDetected,
+      icon: AlertTriangle,
       color: 'text-orange-600',
       bgColor: 'bg-orange-50'
     },
-    { 
-      title: '시스템 상태', 
-      value: `${stats.systemHealth}%`, 
-      icon: Cpu, 
+    {
+      title: '시스템 상태',
+      value: `${stats.systemHealth}%`,
+      icon: Cpu,
       color: 'text-purple-600',
       bgColor: 'bg-purple-50'
     },

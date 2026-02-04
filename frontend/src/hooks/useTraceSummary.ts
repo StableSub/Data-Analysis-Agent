@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import { TraceSummary } from '../types/chat';
-import { mockTraceEvents, mockDashboardStats } from '../lib/mockData';
 
 export function useTraceSummary(pollingInterval = 10000) {
   const [summary, setSummary] = useState<TraceSummary | null>(null);
@@ -11,20 +10,15 @@ export function useTraceSummary(pollingInterval = 10000) {
     const fetchSummary = async () => {
       try {
         // In production, this would call /api/trace/summary
-        // Mock implementation:
-        const mockSummary: TraceSummary = {
-          totalEvents: mockTraceEvents.length,
-          suspiciousCount: mockTraceEvents.filter(e => e.suspicious).length,
-          topProcesses: mockDashboardStats.topProcesses,
-          recentEvents: mockTraceEvents.slice(0, 5).map(e => ({
-            timestamp: e.timestamp,
-            type: e.type,
-            process: e.process,
-            suspicious: e.suspicious,
-          })),
+        // Initialize with empty summary
+        const emptySummary: TraceSummary = {
+          totalEvents: 0,
+          suspiciousCount: 0,
+          topProcesses: [],
+          recentEvents: [],
         };
 
-        setSummary(mockSummary);
+        setSummary(emptySummary);
         setIsLoading(false);
         setError(null);
       } catch (err) {

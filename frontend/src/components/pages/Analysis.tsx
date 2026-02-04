@@ -4,7 +4,6 @@ import { Button } from '../ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs';
 import { Badge } from '../ui/badge';
 import { useStore } from '../../store/useStore';
-import { mockAnalysisResult } from '../../lib/mockData';
 import { Play, Loader2, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
 import {
@@ -28,10 +27,21 @@ export function Analysis() {
     }
 
     setIsAnalyzing(true);
-    
+
     // Simulate analysis delay
     setTimeout(() => {
-      setAnalysisResult(mockAnalysisResult);
+      // In production, this would be an actual analysis result from the backend
+      const emptyResult = {
+        summary: '데이터 분석이 완료되었습니다.',
+        details: [],
+        eda: {
+          summary: { totalRows: 0, totalColumns: 0, dateRange: '-', missingValues: 0 },
+          distributions: [],
+          correlations: []
+        },
+        anomalies: { detected: 0, items: [] }
+      };
+      setAnalysisResult(emptyResult as any);
       setIsAnalyzing(false);
       toast.success('분석이 완료되었습니다');
     }, 2000);
@@ -228,9 +238,9 @@ export function Analysis() {
                     <TableCell>{anomaly.machine_id}</TableCell>
                     <TableCell>{anomaly.type}</TableCell>
                     <TableCell>
-                      <Badge 
+                      <Badge
                         variant={anomaly.severity === 'High' ? 'destructive' : 'secondary'}
-                        style={{ 
+                        style={{
                           backgroundColor: anomaly.severity === 'High' ? undefined : severityColors[anomaly.severity] + '20',
                           color: severityColors[anomaly.severity]
                         }}

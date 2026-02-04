@@ -15,11 +15,11 @@ export function useChatStream() {
       setIsStreaming(true);
       abortControllerRef.current = new AbortController();
 
-      // Mock streaming - in production, this would call /api/chat/stream
+      // Simulate streaming - in production, this would call /api/chat/stream
       const messageId = `msg-${Date.now()}`;
-      
-      // Simulate streaming with mock responses
-      const mockResponses = [
+
+      // Simulate streaming with responses
+      const responses = [
         "분석을 시작하겠습니다. ",
         "업로드하신 데이터를 확인했습니다.\n\n",
         "## 주요 발견사항\n\n",
@@ -29,13 +29,13 @@ export function useChatStream() {
         "추가로 궁금한 사항이 있으시면 말씀해 주세요!"
       ];
 
-      for (let i = 0; i < mockResponses.length; i++) {
+      for (let i = 0; i < responses.length; i++) {
         if (abortControllerRef.current?.signal.aborted) {
           break;
         }
-        
+
         await new Promise(resolve => setTimeout(resolve, 200 + Math.random() * 300));
-        onChunk(mockResponses[i], messageId);
+        onChunk(responses[i]!, messageId);
       }
 
       if (!abortControllerRef.current?.signal.aborted) {

@@ -36,15 +36,15 @@ export function SimplifiedChatLayout({ feature }: SimplifiedChatLayoutProps) {
 
   const handleSend = () => {
     if (!message.trim()) return;
-    
+
     setMessages([...messages, { role: 'user', content: message }]);
     setMessage('');
-    
-    // Mock AI response
+
+    // Generate AI response simulation
     setTimeout(() => {
-      setMessages(prev => [...prev, { 
-        role: 'assistant', 
-        content: `${featureTitles[feature]} 기능으로 "${message}" 요청을 처리하고 있습니다.` 
+      setMessages(prev => [...prev, {
+        role: 'assistant',
+        content: `${featureTitles[feature]} 기능으로 "${message}" 요청을 처리하고 있습니다.`
       }]);
     }, 1000);
   };
@@ -169,11 +169,10 @@ export function SimplifiedChatLayout({ feature }: SimplifiedChatLayoutProps) {
                       </div>
                     )}
                     <div>
-                      <div className={`px-4 py-3 rounded-2xl ${
-                        msg.role === 'user' 
-                          ? 'bg-blue-500 dark:bg-[#0a84ff] text-white' 
+                      <div className={`px-4 py-3 rounded-2xl ${msg.role === 'user'
+                          ? 'bg-blue-500 dark:bg-[#0a84ff] text-white'
                           : 'bg-gray-100 dark:bg-[#2c2c2e] text-gray-900 dark:text-white'
-                      }`}>
+                        }`}>
                         <p className="text-sm">{msg.content}</p>
                       </div>
                       <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 px-2">
@@ -197,7 +196,7 @@ export function SimplifiedChatLayout({ feature }: SimplifiedChatLayoutProps) {
                   <X className="w-4 h-4" />
                 </Button>
               </div>
-              
+
               <div className="border-2 border-dashed border-gray-300 dark:border-white/20 rounded-xl p-8 text-center">
                 <Upload className="w-12 h-12 text-gray-400 dark:text-gray-500 mx-auto mb-4" />
                 <p className="text-gray-700 dark:text-white mb-2">

@@ -2,7 +2,6 @@ import { useEffect } from 'react';
 import { Card } from '../ui/card';
 import { Badge } from '../ui/badge';
 import { useStore } from '../../store/useStore';
-import { mockTraceEvents, mockDashboardStats } from '../../lib/mockData';
 import { Activity, AlertTriangle, Terminal, Network, File } from 'lucide-react';
 import {
   Table,
@@ -17,9 +16,9 @@ export function Trace() {
   const { traceEvents, setTraceEvents } = useStore();
 
   useEffect(() => {
-    // Initialize with mock data
+    // Initialize with empty data - in production, this would fetch from API
     if (traceEvents.length === 0) {
-      setTraceEvents(mockTraceEvents);
+      setTraceEvents([]);
     }
 
     // Simulate real-time updates every 10 seconds
@@ -27,11 +26,11 @@ export function Trace() {
       const newEvent = {
         timestamp: new Date().toISOString().replace('T', ' ').substring(0, 19),
         type: ['exec', 'open', 'tcp_connect'][Math.floor(Math.random() * 3)] as 'exec' | 'open' | 'tcp_connect',
-        process: ['python3', 'node', 'analyze_data'][Math.floor(Math.random() * 3)],
+        process: (['python3', 'node', 'analyze_data'][Math.floor(Math.random() * 3)])!,
         details: 'System activity detected',
         suspicious: Math.random() > 0.9,
       };
-      
+
       setTraceEvents([newEvent, ...traceEvents.slice(0, 99)]);
     }, 10000);
 
@@ -52,7 +51,7 @@ export function Trace() {
   };
 
   const suspiciousEvents = traceEvents.filter(e => e.suspicious);
-  const topProcesses = mockDashboardStats.topProcesses;
+  const topProcesses: Array<{ name: string; count: number }> = [];
 
   return (
     <div className="p-8">

@@ -29,41 +29,21 @@ export function useAgentStatus(pollingInterval = 10000) {
       // TODO: Replace with actual API call
       // const response = await fetch('/api/agent/status');
       // const data = await response.json();
-      
-      // Mock data for demonstration
-      const activeCount = Math.floor(Math.random() * 2);
-      const mockStatus: AgentStatus = {
-        totalTasks: Math.floor(Math.random() * 50) + 95,
-        activeTasks: activeCount,
+
+      // In production, this would call a real API
+      const emptyStatus: AgentStatus = {
+        totalTasks: 0,
+        activeTasks: 0,
         capabilities: [
-          { name: '데이터 분석', status: activeCount > 0 ? 'active' : 'idle' },
-          { name: '패턴 인식', status: 'active' },
-          { name: '리포트 생성', status: 'active' },
+          { name: '데이터 분석', status: 'idle' },
+          { name: '패턴 인식', status: 'idle' },
+          { name: '리포트 생성', status: 'idle' },
           { name: '이상 탐지', status: 'idle' },
         ],
-        recentActivities: [
-          {
-            timestamp: new Date(Date.now() - 15000).toISOString(),
-            type: 'analysis',
-            description: '제조 데이터 분석 중',
-            status: activeCount > 0 ? 'active' : 'completed',
-          },
-          {
-            timestamp: new Date(Date.now() - 80000).toISOString(),
-            type: 'search',
-            description: '데이터베이스 검색 완료',
-            status: 'completed',
-          },
-          {
-            timestamp: new Date(Date.now() - 140000).toISOString(),
-            type: 'thinking',
-            description: '응답 생성 완료',
-            status: 'completed',
-          },
-        ],
+        recentActivities: [],
       };
 
-      setStatus(mockStatus);
+      setStatus(emptyStatus);
       setIsLoading(false);
       setError(null);
     } catch (err) {
