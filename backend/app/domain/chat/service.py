@@ -86,6 +86,10 @@ class ChatService:
         messages = self.repository.get_history(session_id)
         return ChatHistoryResponse(session_id=session_id, messages=messages)
 
+    def delete_session(self, session_id: int) -> bool:
+        """세션을 삭제합니다."""
+        return self.repository.delete_session(session_id)
+
     def _build_context_from_source(
         self,
         *,
