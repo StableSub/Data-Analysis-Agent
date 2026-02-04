@@ -22,6 +22,7 @@ class ChatRequest(BaseModel):
         default=None,
         description="Optional dataset source_id to load file content as context.",
     )
+    model_id: Optional[str] = Field(default=None, description="Identifier for the AI model to use.")
 
 
 class ChatResponse(BaseModel):

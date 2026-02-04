@@ -15,6 +15,7 @@ import {
 } from '../ui/alert-dialog';
 import { MessageSquarePlus, Trash2, MessageSquare, Edit2, Check, X } from 'lucide-react';
 import { cn } from '../ui/utils';
+import { DEFAULT_MODEL_ID } from '../../lib/models';
 
 export function SessionSidebar() {
   const { sessions, currentSessionId, createSession, deleteSession, setCurrentSession, renameSession } = useSessions();
@@ -24,7 +25,7 @@ export function SessionSidebar() {
   const [sessionToDelete, setSessionToDelete] = useState<string | null>(null);
 
   const handleNewChat = () => {
-    createSession('새 대화');
+    createSession('새 대화', DEFAULT_MODEL_ID);
   };
 
   const startEditing = (id: string, currentTitle: string) => {

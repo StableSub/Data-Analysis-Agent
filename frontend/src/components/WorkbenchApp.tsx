@@ -107,7 +107,7 @@ export function WorkbenchApp({ initialFeature = 'analysis' }: WorkbenchAppProps)
     });
 
     setMessage('');
-    
+
     // Textarea 높이 초기화
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
@@ -131,6 +131,7 @@ export function WorkbenchApp({ initialFeature = 'analysis' }: WorkbenchAppProps)
           question: userMessage,
           session_id: currentSession?.backendSessionId ?? undefined,
           data_source_id: selectedSourceIds.length > 0 ? selectedSourceIds[0] : undefined,
+          model_id: selectedModelId,
         }),
         signal: abortController.signal,
       });
@@ -175,18 +176,18 @@ export function WorkbenchApp({ initialFeature = 'analysis' }: WorkbenchAppProps)
       // 1. Upload to Backend
       const formData = new FormData();
       formData.append('file', file);
-      
+
       const uploadToast = toast.loading(`${file.name} 업로드 중...`);
-      
-      const response = await apiRequest<{ 
-        source_id: string; 
+
+      const response = await apiRequest<{
+        source_id: string;
         id: number;
         filename: string;
       }>('/datasets/', {
         method: 'POST',
         body: formData,
       });
-      
+
       toast.dismiss(uploadToast);
       toast.success('파일 업로드 완료');
 
@@ -250,10 +251,10 @@ export function WorkbenchApp({ initialFeature = 'analysis' }: WorkbenchAppProps)
               onFileToggle={(fileId) => activeSessionId && toggleFileSelection(activeSessionId, fileId)}
               onFileRemove={async (fileId) => {
                 if (!activeSessionId) return;
-                
+
                 const currentSession = sessions.find(s => s.id === activeSessionId);
                 const file = currentSession?.files.find(f => f.id === fileId);
-                
+
                 if (file && file.sourceId) {
                   try {
                     const deleteToast = toast.loading('파일 삭제 중...');
@@ -266,7 +267,7 @@ export function WorkbenchApp({ initialFeature = 'analysis' }: WorkbenchAppProps)
                     // 서버 삭제 실패해도 로컬에서는 지우고 싶다면 아래 코드를 try 밖으로 뺍니다.
                   }
                 }
-                
+
                 // Ensure store update happens
                 removeFile(activeSessionId, fileId);
               }}

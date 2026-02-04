@@ -32,6 +32,7 @@ class ChatService:
         session_id: Optional[int] = None,
         data_source_id: Optional[str] = None,
         context: Optional[str] = None,
+        model_id: Optional[str] = None,
     ) -> ChatResponse:
         """질문을 저장하고 간단한 응답을 생성합니다."""
         session = self.repository.get_session(session_id) if session_id else None
@@ -62,9 +63,10 @@ class ChatService:
             rag_attempted=rag_attempted,
         )
         answer = self.agent.ask(
-            session_id=session.id,
+            session_id=str(session.id),
             question=question,
             context=merged_context,
+            model_id=model_id,
         )
         
         self.repository.append_message(session, "user", question)

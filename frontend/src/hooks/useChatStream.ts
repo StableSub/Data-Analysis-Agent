@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef } from 'react';
 import { ChatMessage } from '../types/chat';
 import { toast } from 'sonner';
+import { DEFAULT_MODEL_ID } from '../lib/models';
 
 export function useChatStream() {
   const [isStreaming, setIsStreaming] = useState(false);
@@ -9,42 +10,59 @@ export function useChatStream() {
   const send = useCallback(async (
     messages: ChatMessage[],
     onChunk: (delta: string, messageId: string) => void,
-    onComplete: (messageId: string, usage?: any) => void
+    onComplete: (messageId: string, usage?: any) => void,
+    options?: { modelId?: string; sessionId?: string; data_source_id?: string; assistantMessageId?: string }
   ) => {
     try {
       setIsStreaming(true);
       abortControllerRef.current = new AbortController();
 
-      // Simulate streaming - in production, this would call /api/chat/stream
-      const messageId = `msg-${Date.now()}`;
+      const lastMessage = messages[messages.length - 1];
+      if (!lastMessage) return;
 
-      // Simulate streaming with responses
-      const responses = [
-        "분석을 시작하겠습니다. ",
-        "업로드하신 데이터를 확인했습니다.\n\n",
-        "## 주요 발견사항\n\n",
-        "1. **온도 데이터**: 평균 73.5°C로 정상 범위입니다.\n",
-        "2. **이상 탐지**: 총 23건의 이상 패턴이 감지되었습니다.\n",
-        "3. **권장사항**: M001 설비의 냉각 시스템 점검이 필요합니다.\n\n",
-        "추가로 궁금한 사항이 있으시면 말씀해 주세요!"
-      ];
-
-      for (let i = 0; i < responses.length; i++) {
-        if (abortControllerRef.current?.signal.aborted) {
-          break;
+      // Extract numeric ID from string like "session-1738679469212"
+      let numericSessionId: number | undefined = undefined;
+      if (options?.sessionId) {
+        const parts = options.sessionId.split('-');
+        const lastPart = parts[parts.length - 1];
+        if (lastPart) {
+          numericSessionId = parseInt(lastPart);
         }
-
-        await new Promise(resolve => setTimeout(resolve, 200 + Math.random() * 300));
-        onChunk(responses[i]!, messageId);
       }
 
-      if (!abortControllerRef.current?.signal.aborted) {
-        onComplete(messageId, {
-          promptTokens: 512,
-          completionTokens: 256
-        });
+      const body = {
+        question: lastMessage.content,
+        session_id: numericSessionId,
+        model_id: options?.modelId || DEFAULT_MODEL_ID,
+        data_source_id: options?.data_source_id,
+      };
+
+      console.log('Sending request to backend:', body);
+
+      const response = await fetch('http://localhost:8000/chats/', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+        signal: abortControllerRef.current.signal,
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch response');
       }
+
+      const data = await response.json();
+      const messageId = options?.assistantMessageId || `assistant-${Date.now()}`;
+
+      // Since backend doesn't support streaming yet, we return the whole answer as one chunk
+      onChunk(data.answer, messageId);
+      onComplete(messageId);
+
     } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        return;
+      }
       toast.error('응답 생성 중 오류가 발생했습니다');
       console.error('Stream error:', error);
     } finally {

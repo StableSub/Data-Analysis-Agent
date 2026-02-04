@@ -14,18 +14,17 @@ class AgentClient:
         self,
         model: str = "gpt-5-nano",
     ) -> None:
-        self.model = model
-        # 에이전트와 메모리를 초기화 시점에 한 번만 생성하여 유지합니다.
+        self.default_model = model
+        # Cache agents to avoid rebuilding them on every request
         self.agent = AgentBuilder(model_name=model).build()
 
     def ask(self, session_id: str | None = None,
             question: str | None = None,
-            context: str | None = None) -> str:
+            context: str | None = None,
+            model_id: str | None = None) -> str:
         """
         질문과 선택적 추가 컨텍스트를 받아 답변을 생성한다.
         """
-        # 저장된 self.agent를 재사용합니다.
-        
         if context:
             message = f"{question} 이것은 사용자의 질문 입니다. {context} 이것은 관련된 context 입니다."
         else:
@@ -34,7 +33,7 @@ class AgentClient:
         # config에 thread_id를 전달하여 대화 흐름을 유지합니다.
         response = self.agent.invoke(
             {"messages": [{"role": "user", "content": message}]},
-            {"configurable": {"thread_id": session_id}}
+            {"configurable": {"thread_id": session_id, "model_id": model_id}}
         )
         return response["messages"][-1].content
 
