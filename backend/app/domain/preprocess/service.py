@@ -6,14 +6,14 @@ from typing import Optional, List, Dict, Any, Tuple
 import pandas as pd
 from sqlalchemy.orm import Session
 
-from app.domain.data_source.repository import DatasetVersionRepository
-from app.domain.preprocess.schemas import (
+from backend.app.domain.data_source.repository import DatasetVersionRepository
+from backend.app.domain.preprocess.schemas import (
     PreprocessOperation,
     PreprocessPreviewResponse,
     ColumnPreview,
     PreprocessApplyResponse,
 )
-from app.domain.data_source.models import Dataset
+from backend.app.domain.data_source.models import Dataset
 
 # 파생 변수 생성 시 사용할 수 있는 안전한 표현 정규식 
 _SAFE_EXPR_RE = re.compile(r"^[0-9a-zA-Z_+\-*/%().\s<>=!&|]+$")
