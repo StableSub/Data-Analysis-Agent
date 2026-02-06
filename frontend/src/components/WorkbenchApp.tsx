@@ -10,6 +10,8 @@ import { AppHeader } from './workbench/AppHeader';
 import { SelectedFilesBar } from './workbench/SelectedFilesBar';
 import { ChatMessages } from './workbench/ChatMessages';
 import { ChatInputBar } from './workbench/ChatInputBar';
+import { apiRequest } from '../lib/api';
+import { toast } from 'sonner';
 
 // 데이터 분석(AI 챗봇)과 데이터 전처리 2가지 기능만
 type AppFeature = 'analysis' | 'preprocessing';
@@ -45,6 +47,8 @@ export function WorkbenchApp({ initialFeature = 'analysis' }: WorkbenchAppProps)
     setActiveSession,
     deleteSession,
     updateSessionTitle,
+    setSessionBackendId,
+    fetchMessages,
     addMessage,
     addFile,
     removeFile,
@@ -60,6 +64,13 @@ export function WorkbenchApp({ initialFeature = 'analysis' }: WorkbenchAppProps)
     }
   }, []);
 
+  // 세션 변경 시 백엔드 메시지 동기화
+  useEffect(() => {
+    if (activeSessionId) {
+      fetchMessages(activeSessionId);
+    }
+  }, [activeSessionId]);
+
   // 메시지가 업데이트될 때마다 스크롤을 최하단으로 이동
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -73,10 +84,11 @@ export function WorkbenchApp({ initialFeature = 'analysis' }: WorkbenchAppProps)
     setActiveFeature(feature);
   };
 
-  const handleSend = () => {
+  const handleSend = async () => {
     if (!message.trim() || !activeSessionId || isGenerating) return;
 
     const userMessage = message;
+    const currentSession = sessions.find(s => s.id === activeSessionId);
 
     // 첫 메시지인 경우 제목 자동 생성
     const isFirstMessage = activeSession?.messages.length === 0;
@@ -95,60 +107,57 @@ export function WorkbenchApp({ initialFeature = 'analysis' }: WorkbenchAppProps)
     });
 
     setMessage('');
-    
+
     // Textarea 높이 초기화
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
     }
 
-    // Mock AI response with streaming
     setIsGenerating(true);
-    setStreamingContent('');
+    setStreamingContent('응답 생성 중...');
 
     const abortController = new AbortController();
     abortControllerRef.current = abortController;
 
-    setTimeout(() => {
-      if (abortController.signal.aborted) return;
+    try {
+      // Collect selected file source IDs
+      const selectedSourceIds = currentSession?.files
+        .filter(f => f.selected && f.sourceId)
+        .map(f => f.sourceId!) || [];
 
-      const selectedFiles = sessions.find(s => s.id === activeSessionId)?.files.filter(f => f.selected) || [];
-      let response = `데이터 분석 요청 "${userMessage}"을 처리하고 있습니다.`;
-      
-      if (selectedFiles.length > 0) {
-        response += `\n\n선택된 소스 파일 (${selectedFiles.length}개):`;
-        selectedFiles.forEach(file => {
-          response += `\n- ${file.name} (${file.type === 'dataset' ? '데이터셋' : '문서'})`;
+      const response = await apiRequest<{ answer: string; session_id: number }>('/chats', {
+        method: 'POST',
+        body: JSON.stringify({
+          question: userMessage,
+          session_id: currentSession?.backendSessionId ?? undefined,
+          data_source_id: selectedSourceIds.length > 0 ? selectedSourceIds[0] : undefined,
+          model_id: selectedModelId,
+        }),
+        signal: abortController.signal,
+      });
+
+      if (activeSessionId) {
+        if (!currentSession?.backendSessionId) {
+          setSessionBackendId(activeSessionId, response.session_id);
+        }
+        addMessage(activeSessionId, {
+          role: 'assistant',
+          content: response.answer,
         });
       }
-
-      // Simulate streaming response
-      let index = 0;
-      const streamInterval = setInterval(() => {
-        if (abortController.signal.aborted) {
-          clearInterval(streamInterval);
-          setIsGenerating(false);
-          setStreamingContent('');
-          return;
-        }
-
-        if (index < response.length) {
-          setStreamingContent(response.substring(0, index + 1));
-          index++;
-        } else {
-          clearInterval(streamInterval);
-          // 스트리밍 완료 후 메시지 저장
-          if (activeSessionId) {
-            addMessage(activeSessionId, {
-              role: 'assistant',
-              content: response,
-            });
-          }
-          setIsGenerating(false);
-          setStreamingContent('');
-          abortControllerRef.current = null;
-        }
-      }, 30);
-    }, 500);
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        return;
+      }
+      if (error instanceof Error && error.name === 'AbortError') {
+        return;
+      }
+      toast.error(error instanceof Error ? error.message : '채팅 요청에 실패했습니다.');
+    } finally {
+      setIsGenerating(false);
+      setStreamingContent('');
+      abortControllerRef.current = null;
+    }
   };
 
   const handleStopGenerating = () => {
@@ -160,26 +169,43 @@ export function WorkbenchApp({ initialFeature = 'analysis' }: WorkbenchAppProps)
     setStreamingContent('');
   };
 
-  const handleFileUpload = (file: File, type: 'dataset' | 'document') => {
+  const handleFileUpload = async (file: File, type: 'dataset' | 'document') => {
     if (!activeSessionId) return;
 
-    const success = addFile(activeSessionId, {
-      name: file.name,
-      size: file.size,
-      type,
-    });
+    try {
+      // 1. Upload to Backend
+      const formData = new FormData();
+      formData.append('file', file);
 
-    if (success) {
-      setShowUpload(false);
-      
-      // 데이터셋 파일이면 전역 상태에도 저장 (전처리 화면에서 사용)
-      if (type === 'dataset') {
-        // 파일을 직접 전역 상태로 전달하기 위해 file 객체를 저장할 방법 필요
-        // 여기서는 임시로 파일 업로드만 하고, 전처리 화면에서 다시 업로드하도록 유도
+      const uploadToast = toast.loading(`${file.name} 업로드 중...`);
+
+      const response = await apiRequest<{
+        source_id: string;
+        id: number;
+        filename: string;
+      }>('/datasets/', {
+        method: 'POST',
+        body: formData,
+      });
+
+      toast.dismiss(uploadToast);
+      toast.success('파일 업로드 완료');
+
+      // 2. Add to Store with sourceId
+      const success = addFile(activeSessionId, {
+        name: response.filename || file.name,
+        size: file.size,
+        type,
+        sourceId: response.source_id,
+      });
+
+      if (success) {
+        setShowUpload(false);
+      } else {
+        toast.warning(`"${file.name}" 파일이 이미 추가되어 있습니다.`);
       }
-    } else {
-      // 중복 파일인 경우 알림
-      alert(`"${file.name}" 파일이 이미 업로드되어 있습니다.`);
+    } catch (error) {
+      toast.error('파일 업로드 실패: ' + (error instanceof Error ? error.message : '알 수 없는 오류'));
     }
   };
 
@@ -223,7 +249,28 @@ export function WorkbenchApp({ initialFeature = 'analysis' }: WorkbenchAppProps)
               onSessionRename={updateSessionTitle}
               files={activeSession?.files || []}
               onFileToggle={(fileId) => activeSessionId && toggleFileSelection(activeSessionId, fileId)}
-              onFileRemove={(fileId) => activeSessionId && removeFile(activeSessionId, fileId)}
+              onFileRemove={async (fileId) => {
+                if (!activeSessionId) return;
+
+                const currentSession = sessions.find(s => s.id === activeSessionId);
+                const file = currentSession?.files.find(f => f.id === fileId);
+
+                if (file && file.sourceId) {
+                  try {
+                    const deleteToast = toast.loading('파일 삭제 중...');
+                    await apiRequest(`/datasets/${file.sourceId}`, { method: 'DELETE' });
+                    toast.dismiss(deleteToast);
+                    toast.success('파일이 삭제되었습니다.');
+                  } catch (error) {
+                    console.error('Failed to delete file from backend:', error);
+                    toast.error('파일 삭제 실패: 서버 오류');
+                    // 서버 삭제 실패해도 로컬에서는 지우고 싶다면 아래 코드를 try 밖으로 뺍니다.
+                  }
+                }
+
+                // Ensure store update happens
+                removeFile(activeSessionId, fileId);
+              }}
             />
 
             {/* 우측 대화 영역 */}
@@ -266,7 +313,7 @@ export function WorkbenchApp({ initialFeature = 'analysis' }: WorkbenchAppProps)
                 onOpenUpload={() => setShowUpload(true)}
                 selectedModelId={selectedModelId}
                 setSelectedModelId={setSelectedModelId}
-                textareaRef={textareaRef}
+                textareaRef={textareaRef as React.RefObject<HTMLTextAreaElement>}
               />
             </div>
 

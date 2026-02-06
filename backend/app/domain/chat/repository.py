@@ -35,3 +35,11 @@ class ChatRepository:
             .order_by(ChatMessage.created_at.asc())
             .all()
         )
+
+    def delete_session(self, session_id: int) -> bool:
+        session = self.get_session(session_id)
+        if not session:
+            return False
+        self.db.delete(session)
+        self.db.commit()
+        return True

@@ -151,14 +151,16 @@ class DataSourceService:
         }
         
         # 4. 실제 스토리지 파일 삭제
-        storage_path = (Path(__file__).resolve().parent.parent.parent / "storage" / "datasets")
-        if storage_path.exists():
-            try:
-                os.remove(storage_path)
-            except Exception as e:
-                # 파일 삭제 실패 시에도 DB는 삭제하도록 처리
-                # (로깅 등 추가 가능)
-                pass
+        if dataset.storage_path:
+            file_path = Path(dataset.storage_path)
+            if file_path.exists() and file_path.is_file():
+                try:
+                    os.remove(file_path)
+                except Exception as e:
+                    # 파일 삭제 실패 시에도 DB는 삭제하도록 처리
+                    # (로깅 등 추가 가능)
+                    print(f"Failed to remove file {file_path}: {e}")
+                    pass
         
         # 5. DB에서 메타데이터 삭제
         self.repository.delete(dataset)

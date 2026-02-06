@@ -21,6 +21,7 @@ async def ask_chat(
         session_id=request.session_id,
         context=request.context,
         data_source_id=request.data_source_id,
+        model_id=request.model_id,
     )
 
 
@@ -36,3 +37,17 @@ async def get_history(
             status_code=status.HTTP_404_NOT_FOUND, detail="세션을 찾을 수 없습니다."
         )
     return history
+
+
+@router.delete("/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_chat(
+    session_id: int,
+    chat_service: ChatService = Depends(get_chat_service),
+):
+    """세션을 삭제합니다."""
+    deleted = chat_service.delete_session(session_id)
+    if not deleted:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="세션을 찾을 수 없습니다."
+        )
+    return None

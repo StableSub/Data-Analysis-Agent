@@ -12,13 +12,13 @@ import { DataUploadFeature } from '../features/DataUploadFeature';
 import { ComingSoonFeature } from '../features/ComingSoonFeature';
 import { motion, AnimatePresence } from 'motion/react';
 import { DEFAULT_MODEL_ID } from '../../lib/models';
-import { 
-  Database, 
-  Filter, 
-  BarChart3, 
-  FileEdit, 
-  Activity, 
-  Shield 
+import {
+  Database,
+  Filter,
+  BarChart3,
+  FileEdit,
+  Activity,
+  Shield
 } from 'lucide-react';
 
 export function ChatLayout() {
@@ -26,7 +26,7 @@ export function ChatLayout() {
   const [showSidebar, setShowSidebar] = useState(true);
   const [showAgent, setShowAgent] = useState(false);
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
-  
+
   const {
     sessions,
     currentSessionId,
@@ -46,7 +46,7 @@ export function ChatLayout() {
       createSession('새 대화', DEFAULT_MODEL_ID);
     }
   }, []);
-  
+
   const currentSession = getCurrentSession();
 
   const handleSendMessage = async (content: string, files?: File[]) => {
@@ -67,7 +67,7 @@ export function ChatLayout() {
       createdAt: new Date().toISOString(),
     };
     addMessage(userMessage);
-    
+
     // Clear attached files
     setAttachedFiles([]);
 
@@ -84,21 +84,20 @@ export function ChatLayout() {
 
     // Start streaming
     let accumulatedContent = '';
-    
+
     await send(
-      currentSession?.messages || [],
+      [...currentSession?.messages || [], userMessage],
       (delta, messageId) => {
         accumulatedContent += delta;
         updateMessage(messageId, accumulatedContent);
       },
       (messageId) => {
         // Mark streaming as complete
-        const finalMessage = {
-          ...assistantMessage,
-          content: accumulatedContent,
-          isStreaming: false,
-        };
-        // The message is already updated, just need to remove streaming flag
+      },
+      {
+        modelId: currentSession?.modelId || DEFAULT_MODEL_ID,
+        sessionId: currentSessionId || undefined,
+        assistantMessageId: assistantMessageId
       }
     );
   };
@@ -127,14 +126,19 @@ export function ChatLayout() {
       addMessage(assistantMessage);
 
       let accumulatedContent = '';
-      
+
       await send(
-        currentSession.messages || [],
+        currentSession.messages,
         (delta, messageId) => {
           accumulatedContent += delta;
           updateMessage(messageId, accumulatedContent);
         },
-        () => {}
+        () => { },
+        {
+          modelId: currentSession.modelId || DEFAULT_MODEL_ID,
+          sessionId: currentSessionId || undefined,
+          assistantMessageId: assistantMessageId
+        }
       );
     }
   };
@@ -196,10 +200,10 @@ export function ChatLayout() {
             </div>
           </>
         );
-      
+
       case 'data-upload':
         return <DataUploadFeature />;
-      
+
       case 'data-snapshot':
         return (
           <ComingSoonFeature
@@ -214,7 +218,7 @@ export function ChatLayout() {
             ]}
           />
         );
-      
+
       case 'data-filter':
         return (
           <ComingSoonFeature
@@ -229,7 +233,7 @@ export function ChatLayout() {
             ]}
           />
         );
-      
+
       case 'visualization':
         return (
           <ComingSoonFeature
@@ -244,7 +248,7 @@ export function ChatLayout() {
             ]}
           />
         );
-      
+
       case 'data-edit':
         return (
           <ComingSoonFeature
@@ -259,7 +263,7 @@ export function ChatLayout() {
             ]}
           />
         );
-      
+
       case 'simulation':
         return (
           <ComingSoonFeature
@@ -274,7 +278,7 @@ export function ChatLayout() {
             ]}
           />
         );
-      
+
       case 'audit-log':
         return (
           <ComingSoonFeature
@@ -289,7 +293,7 @@ export function ChatLayout() {
             ]}
           />
         );
-      
+
       default:
         return null;
     }
@@ -298,7 +302,7 @@ export function ChatLayout() {
   return (
     <div className="flex h-screen bg-gray-50 dark:bg-[#1c1c1e] transition-colors relative overflow-hidden">
       {/* Feature Navigation */}
-      <FeatureNav 
+      <FeatureNav
         activeFeature={activeFeature}
         onFeatureChange={setActiveFeature}
       />

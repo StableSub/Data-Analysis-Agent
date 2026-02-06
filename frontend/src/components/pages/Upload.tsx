@@ -13,31 +13,23 @@ import {
   TableRow,
 } from '../ui/table';
 import { Alert, AlertDescription } from '../ui/alert';
-import { parseCSV, type CSVParseError } from '../../lib/csvParser';
+import { apiRequest } from '../../lib/api';
 
 const UPLOAD_VALIDATION_CONFIG = {
   // Pre-upload limits
   allowedExtensions: ['.csv'],
   maxFileSizeBytes: 10 * 1024 * 1024, // 10MB
-  maxColumns: 50,
-  // Schema (optional): set to enable schema mismatch checks
-  expectedSchema: {
-    columns: [] as string[],
-    // types: { id: 'number', timestamp: 'date', value: 'number' as const },
-  },
-  missingThreshold: 0.5, // >=50% considered excessive
 };
 
 export function Upload() {
   const [isDragging, setIsDragging] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<any[]>([]);
-  const [errors, setErrors] = useState<CSVParseError[]>([]);
-  const [warnings, setWarnings] = useState<CSVParseError[]>([]);
   const [columns, setColumns] = useState<string[]>([]);
+  const [datasetSourceId, setDatasetSourceId] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [progress, setProgress] = useState(0);
-  const fileReaderRef = useRef<FileReader | null>(null);
+  const uploadAbortRef = useRef<AbortController | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { setUploadedFile } = useStore();
 
@@ -53,9 +45,11 @@ export function Upload() {
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
-    
+
     const droppedFile = e.dataTransfer.files[0];
-    processFile(droppedFile);
+    if (droppedFile) {
+      processFile(droppedFile);
+    }
   };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -65,7 +59,7 @@ export function Upload() {
     }
   };
 
-  const processFile = (file: File) => {
+  const processFile = async (file: File) => {
     // Pre-upload: extension check
     const ext = (file.name.match(/\.[^.]+$/)?.[0] || '').toLowerCase();
     if (!UPLOAD_VALIDATION_CONFIG.allowedExtensions.includes(ext)) {
@@ -79,113 +73,67 @@ export function Upload() {
       return;
     }
 
-    // Begin reading with cancel support
-    const reader = new FileReader();
-    fileReaderRef.current = reader;
     setIsUploading(true);
     setProgress(0);
-    setErrors([]);
-    setWarnings([]);
     setPreview([]);
     setColumns([]);
+    setDatasetSourceId(null);
     setFile(file);
 
-    // Progress (best effort; may not fire consistently)
-    reader.onprogress = (evt) => {
-      if (evt.lengthComputable) {
-        const pct = Math.round((evt.loaded / evt.total) * 100);
-        setProgress(Math.min(99, pct));
+    const abortController = new AbortController();
+    uploadAbortRef.current = abortController;
+
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const uploadResponse = await apiRequest<{
+        source_id: string;
+      }>('/datasets', {
+        method: 'POST',
+        body: formData,
+        signal: abortController.signal,
+      });
+
+      const sampleResponse = await apiRequest<{
+        columns: string[];
+        rows: Record<string, any>[];
+      }>(`/datasets/${uploadResponse.source_id}/sample`, {
+        signal: abortController.signal,
+      });
+
+      setColumns(sampleResponse.columns || []);
+      setPreview(sampleResponse.rows || []);
+      setDatasetSourceId(uploadResponse.source_id);
+      setProgress(100);
+      toast.success('파일이 성공적으로 업로드되었습니다');
+    } catch (e) {
+      if (e instanceof DOMException && e.name === 'AbortError') {
+        toast.message('업로드가 취소되었습니다.');
+      } else if (e instanceof Error && e.name === 'AbortError') {
+        toast.message('업로드가 취소되었습니다.');
+      } else {
+        toast.error(e instanceof Error ? e.message : '파일 업로드에 실패했습니다.');
       }
-    };
-
-    reader.onerror = () => {
-      setIsUploading(false);
-      toast.error('파일을 읽는 중 오류가 발생했습니다.');
-    };
-
-    reader.onabort = () => {
-      setIsUploading(false);
-      setProgress(0);
       setFile(null);
       setPreview([]);
       setColumns([]);
-      setErrors([]);
-      setWarnings([]);
-      toast.message('업로드가 취소되었습니다.');
-    };
-
-    reader.onload = () => {
-      try {
-        const text = String(reader.result || '');
-        // Parse CSV and validate header/columns limits (pre-upload validations continue here)
-        const result = parseCSV(text, {
-          maxColumns: UPLOAD_VALIDATION_CONFIG.maxColumns,
-          requireHeader: true,
-          expectedSchema: UPLOAD_VALIDATION_CONFIG.expectedSchema,
-          missingThreshold: UPLOAD_VALIDATION_CONFIG.missingThreshold,
-        });
-
-        setErrors(result.errors);
-        setWarnings(result.warnings);
-
-        if (result.errors.length) {
-          // Pre-upload specific surfaces
-          const critical = result.errors.find((e) =>
-            ['empty_file', 'missing_header', 'too_many_columns', 'parse_error', 'inconsistent_columns'].includes(e.code)
-          );
-          if (critical) {
-            setIsUploading(false);
-            setProgress(100);
-            toast.error(critical.message);
-            return;
-          }
-        }
-
-        setColumns(result.columns);
-        // Preview up to 5 rows
-        setPreview(result.rows.slice(0, 5));
-        setProgress(100);
-        setIsUploading(false);
-        toast.success('파일이 성공적으로 업로드되었습니다');
-      } catch (e) {
-        setIsUploading(false);
-        toast.error('CSV 파싱 에러가 발생했습니다.');
-        setErrors((prev) => [...prev, { code: 'parse_error', message: 'CSV 파싱 에러가 발생했습니다.' }]);
-      }
-    };
-
-    reader.readAsText(file);
+      setDatasetSourceId(null);
+      setProgress(0);
+    } finally {
+      setIsUploading(false);
+      uploadAbortRef.current = null;
+    }
   };
 
   const handleUpload = () => {
-    if (!file || preview.length === 0) return;
-
-    // Post-upload validation gates: fail if critical issues exist
-    const hasParseError = errors.some((e) => e.code === 'parse_error' || e.code === 'inconsistent_columns');
-    if (hasParseError) {
-      toast.error('CSV 파싱 오류가 있어 업로드를 완료할 수 없습니다.');
-      return;
-    }
-
-    const hasSchemaMismatch = errors.some((e) => e.code === 'schema_mismatch');
-    if (hasSchemaMismatch) {
-      toast.error('스키마 불일치로 업로드를 완료할 수 없습니다.');
-      return;
-    }
-
-    const excessiveMissing = warnings.find((w) => w.code === 'excessive_missing');
-    if (excessiveMissing) {
-      toast.message('결측치가 과도합니다. 계속 진행하려면 확인해주세요.');
-    }
-
-    const datatypeMismatch = warnings.find((w) => w.code === 'datatype_mismatch');
-    if (datatypeMismatch) {
-      toast.message('일부 컬럼 데이터 타입이 예상과 다릅니다.');
-    }
+    if (!file || preview.length === 0 || !datasetSourceId) return;
 
     setUploadedFile({
+      id: datasetSourceId,
       name: file.name,
       size: file.size,
+      type: 'dataset',
       uploadedAt: new Date(),
       columns,
       rowCount: preview.length,
@@ -196,16 +144,14 @@ export function Upload() {
   };
 
   const handleReset = () => {
-    if (isUploading && fileReaderRef.current) {
-      // During-upload cancel
-      fileReaderRef.current.abort();
+    if (isUploading && uploadAbortRef.current) {
+      uploadAbortRef.current.abort();
       return;
     }
     setFile(null);
     setPreview([]);
     setColumns([]);
-    setErrors([]);
-    setWarnings([]);
+    setDatasetSourceId(null);
     setProgress(0);
     setIsUploading(false);
     if (fileInputRef.current) {
@@ -226,9 +172,8 @@ export function Upload() {
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
-            className={`border-2 border-dashed rounded-lg p-12 text-center transition-colors ${
-              isDragging ? 'border-blue-500 bg-blue-50' : 'border-gray-300 hover:border-gray-400'
-            }`}
+            className={`border-2 border-dashed rounded-lg p-12 text-center transition-colors ${isDragging ? 'border-blue-500 bg-blue-50' : 'border-gray-300 hover:border-gray-400'
+              }`}
           >
             <UploadIcon className="w-16 h-16 mx-auto mb-4 text-gray-400" />
             <h3 className="text-gray-900 mb-2">파일을 드래그하거나 클릭하여 업로드</h3>
@@ -240,7 +185,7 @@ export function Upload() {
               onChange={handleFileSelect}
               className="hidden"
             />
-            <Button onClick={() => fileInputRef.current?.click()}>
+            <Button onClick={() => fileInputRef.current?.click()} disabled={isUploading}>
               파일 선택
             </Button>
             {isUploading && (
@@ -286,32 +231,6 @@ export function Upload() {
             </AlertDescription>
           </Alert>
 
-          {/* Errors & Warnings */}
-          {(errors.length > 0 || warnings.length > 0) && (
-            <Card className="p-4">
-              {errors.length > 0 && (
-                <div className="mb-3">
-                  <h4 className="text-sm font-medium text-red-600">오류</h4>
-                  <ul className="list-disc pl-5 text-sm text-red-700 mt-1">
-                    {errors.map((e, idx) => (
-                      <li key={`err-${idx}`}>{e.message}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-              {warnings.length > 0 && (
-                <div>
-                  <h4 className="text-sm font-medium text-amber-600">경고</h4>
-                  <ul className="list-disc pl-5 text-sm text-amber-700 mt-1">
-                    {warnings.map((w, idx) => (
-                      <li key={`warn-${idx}`}>{w.message}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </Card>
-          )}
-
           {/* Data Preview */}
           <Card className="p-6">
             <h3 className="text-gray-900 mb-4">데이터 미리보기</h3>
@@ -339,7 +258,7 @@ export function Upload() {
 
           {/* Action Buttons */}
           <div className="flex gap-4">
-            <Button onClick={handleUpload} className="flex-1" disabled={errors.length > 0}>
+            <Button onClick={handleUpload} className="flex-1" disabled={isUploading || !datasetSourceId}>
               데이터 저장 및 분석 준비
             </Button>
             <Button variant="outline" onClick={handleReset}>

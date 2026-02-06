@@ -3,7 +3,6 @@ import { Card } from '../ui/card';
 import { Button } from '../ui/button';
 import { Textarea } from '../ui/textarea';
 import { useStore } from '../../store/useStore';
-import { mockReport } from '../../lib/mockData';
 import { FileText, Download, Loader2, Send, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import { Separator } from '../ui/separator';
@@ -22,10 +21,10 @@ export function Report() {
     }
 
     setIsGenerating(true);
-    
-    // Simulate LLM report generation
+
+    // Simulate report generation
     setTimeout(() => {
-      setReport(mockReport);
+      setReport('데이터 분석이 완료되었습니다. 관측된 모든 지표가 정상 범위 내에 있습니다.');
       setIsGenerating(false);
       toast.success('리포트가 생성되었습니다');
     }, 2000);
@@ -33,7 +32,7 @@ export function Report() {
 
   const handleDownloadPDF = () => {
     if (!report) return;
-    
+
     // In a real app, this would generate and download a PDF
     toast.success('PDF 다운로드 시작 (데모 모드)');
   };
@@ -43,19 +42,14 @@ export function Report() {
 
     setIsAsking(true);
     const userMessage = question;
-    
+
     setChatHistory(prev => [...prev, { role: 'user', content: userMessage }]);
     setQuestion('');
 
-    // Simulate LLM response
+    // Simulate answer generation
     setTimeout(() => {
-      const mockAnswers = [
-        'M001 설비의 온도 상승은 냉각 시스템의 성능 저하로 추정됩니다. 냉각수 순환 펌프 점검을 권장합니다.',
-        '분석 결과, 총 23건의 이상 패턴이 감지되었으며, 이 중 15건이 온도 관련 경고입니다.',
-        '온도와 압력은 양의 상관관계(0.67)를 보이며, 이는 정상적인 제조 프로세스 특성입니다.',
-      ];
-      
-      const answer = mockAnswers[Math.floor(Math.random() * mockAnswers.length)];
+      const answer = '분석된 데이터에 따르면 현재 시스템은 안정적인 상태를 유지하고 있습니다. 구체적으로 궁금한 지표가 있으신가요?';
+
       setChatHistory(prev => [...prev, { role: 'assistant', content: answer }]);
       setIsAsking(false);
     }, 1500);
@@ -134,7 +128,7 @@ export function Report() {
         <div className="space-y-6">
           <Card className="p-6">
             <h3 className="text-gray-900 mb-4">질의응답</h3>
-            
+
             {/* Chat History */}
             <div className="space-y-4 mb-4 max-h-96 overflow-y-auto">
               {chatHistory.length === 0 ? (
@@ -145,11 +139,10 @@ export function Report() {
                 chatHistory.map((message, index) => (
                   <div
                     key={index}
-                    className={`p-3 rounded-lg ${
-                      message.role === 'user'
-                        ? 'bg-blue-50 text-blue-900 ml-4'
-                        : 'bg-gray-50 text-gray-900 mr-4'
-                    }`}
+                    className={`p-3 rounded-lg ${message.role === 'user'
+                      ? 'bg-blue-50 text-blue-900 ml-4'
+                      : 'bg-gray-50 text-gray-900 mr-4'
+                      }`}
                   >
                     <p className="text-xs mb-1 opacity-70">
                       {message.role === 'user' ? '질문' : 'AI 답변'}
@@ -176,8 +169,8 @@ export function Report() {
                 }}
                 rows={3}
               />
-              <Button 
-                onClick={handleAskQuestion} 
+              <Button
+                onClick={handleAskQuestion}
                 disabled={!question.trim() || isAsking}
                 className="w-full"
               >

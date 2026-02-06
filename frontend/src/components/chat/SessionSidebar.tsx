@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { useSessions } from '../../hooks/useSessions';
 import { Button } from '../ui/button';
 import { ScrollArea } from '../ui/scroll-area';
@@ -15,6 +15,7 @@ import {
 } from '../ui/alert-dialog';
 import { MessageSquarePlus, Trash2, MessageSquare, Edit2, Check, X } from 'lucide-react';
 import { cn } from '../ui/utils';
+import { DEFAULT_MODEL_ID } from '../../lib/models';
 
 export function SessionSidebar() {
   const { sessions, currentSessionId, createSession, deleteSession, setCurrentSession, renameSession } = useSessions();
@@ -24,7 +25,7 @@ export function SessionSidebar() {
   const [sessionToDelete, setSessionToDelete] = useState<string | null>(null);
 
   const handleNewChat = () => {
-    createSession('새 대화');
+    createSession('새 대화', DEFAULT_MODEL_ID);
   };
 
   const startEditing = (id: string, currentTitle: string) => {
@@ -61,9 +62,9 @@ export function SessionSidebar() {
   return (
     <div className="w-64 bg-white dark:bg-[#171717] border-r border-gray-200 dark:border-white/10 flex flex-col transition-colors">
       <div className="p-3 border-b border-gray-200 dark:border-white/10">
-        <Button 
-          onClick={handleNewChat} 
-          className="w-full justify-start gap-3 h-11 bg-white dark:bg-white/5 hover:bg-gray-100 dark:hover:bg-white/10 border border-gray-200 dark:border-white/20 text-gray-900 dark:text-white shadow-none transition-colors" 
+        <Button
+          onClick={handleNewChat}
+          className="w-full justify-start gap-3 h-11 bg-white dark:bg-white/5 hover:bg-gray-100 dark:hover:bg-white/10 border border-gray-200 dark:border-white/20 text-gray-900 dark:text-white shadow-none transition-colors"
           size="sm"
         >
           <MessageSquarePlus className="w-4 h-4" />
@@ -83,8 +84,8 @@ export function SessionSidebar() {
                 key={session.id}
                 className={cn(
                   'group relative flex items-center gap-2 px-3 py-2.5 rounded-lg transition-all cursor-pointer',
-                  editingId === session.id 
-                    ? 'bg-gray-100 dark:bg-white/10' 
+                  editingId === session.id
+                    ? 'bg-gray-100 dark:bg-white/10'
                     : currentSessionId === session.id
                       ? 'bg-gray-100 dark:bg-white/5'
                       : 'hover:bg-gray-50 dark:hover:bg-white/5'
@@ -93,29 +94,29 @@ export function SessionSidebar() {
               >
                 <MessageSquare className={cn(
                   "w-4 h-4 flex-shrink-0",
-                  currentSessionId === session.id 
-                    ? "text-gray-900 dark:text-white" 
+                  currentSessionId === session.id
+                    ? "text-gray-900 dark:text-white"
                     : "text-gray-500 dark:text-gray-400"
                 )} />
-                
+
                 {editingId === session.id ? (
                   <div className="flex-1 flex items-center gap-1.5">
                     <Input
                       value={editTitle}
-                      onChange={(e) => setEditTitle(e.target.value)}
-                      onKeyDown={(e) => {
+                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => setEditTitle(e.target.value)}
+                      onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => {
                         if (e.key === 'Enter') saveEdit();
                         if (e.key === 'Escape') cancelEdit();
                       }}
                       className="h-8 text-sm bg-white dark:bg-[#2c2c2e] border-gray-300 dark:border-white/20"
                       autoFocus
-                      onClick={(e) => e.stopPropagation()}
+                      onClick={(e: React.MouseEvent) => e.stopPropagation()}
                     />
                     <Button
                       variant="ghost"
                       size="icon"
                       className="h-8 w-8 flex-shrink-0 hover:bg-green-100 dark:hover:bg-green-900/30 hover:text-green-700 dark:hover:text-green-400"
-                      onClick={(e) => {
+                      onClick={(e: React.MouseEvent) => {
                         e.stopPropagation();
                         saveEdit();
                       }}
@@ -126,7 +127,7 @@ export function SessionSidebar() {
                       variant="ghost"
                       size="icon"
                       className="h-8 w-8 flex-shrink-0 hover:bg-red-100 dark:hover:bg-red-900/30 hover:text-red-700 dark:hover:text-red-400"
-                      onClick={(e) => {
+                      onClick={(e: React.MouseEvent) => {
                         e.stopPropagation();
                         cancelEdit();
                       }}
@@ -139,14 +140,14 @@ export function SessionSidebar() {
                     <div className="flex-1 min-w-0 pr-2">
                       <p className={cn(
                         "text-sm truncate",
-                        currentSessionId === session.id 
-                          ? "text-gray-900 dark:text-white" 
+                        currentSessionId === session.id
+                          ? "text-gray-900 dark:text-white"
                           : "text-gray-700 dark:text-gray-300"
                       )}>
                         {session.title}
                       </p>
                     </div>
-                    
+
                     {/* 호버 시 나타나는 액션 버튼들 */}
                     <div className={cn(
                       "absolute right-2 flex gap-1 items-center bg-gradient-to-l from-white dark:from-[#171717] via-white dark:via-[#171717] to-transparent pl-8 pr-1",
@@ -156,7 +157,7 @@ export function SessionSidebar() {
                         variant="ghost"
                         size="icon"
                         className="h-7 w-7 hover:bg-gray-200 dark:hover:bg-white/10 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white"
-                        onClick={(e) => {
+                        onClick={(e: React.MouseEvent) => {
                           e.stopPropagation();
                           startEditing(session.id, session.title);
                         }}
@@ -168,7 +169,7 @@ export function SessionSidebar() {
                         variant="ghost"
                         size="icon"
                         className="h-7 w-7 hover:bg-red-100 dark:hover:bg-red-900/30 text-gray-600 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400"
-                        onClick={(e) => {
+                        onClick={(e: React.MouseEvent) => {
                           e.stopPropagation();
                           confirmDelete(session.id);
                         }}

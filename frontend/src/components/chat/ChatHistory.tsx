@@ -1,5 +1,5 @@
 import { MessageSquare, MoreVertical, Trash2, Edit2, Check, X, CheckSquare } from 'lucide-react';
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { Button } from '../ui/button';
 import { ScrollArea } from '../ui/scroll-area';
 import { Input } from '../ui/input';
@@ -35,12 +35,12 @@ interface ChatHistoryProps {
 /**
  * ChatGPT/workbench 스타일 대화 기록
  */
-export function ChatHistory({ 
-  sessions, 
-  activeSessionId, 
-  onSelect, 
+export function ChatHistory({
+  sessions,
+  activeSessionId,
+  onSelect,
   onDelete,
-  onRename 
+  onRename
 }: ChatHistoryProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState('');
@@ -52,7 +52,7 @@ export function ChatHistory({
     const dateObj = typeof date === 'string' ? new Date(date) : date;
     const diff = now.getTime() - dateObj.getTime();
     const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-    
+
     if (days === 0) return '오늘';
     if (days === 1) return '어제';
     if (days < 7) return `${days}일 전`;
@@ -90,7 +90,7 @@ export function ChatHistory({
 
   const handleDeleteSelected = () => {
     if (selectedIds.size === 0) return;
-    
+
     if (confirm(`선택한 ${selectedIds.size}개의 대화를 삭제하시겠습니까?`)) {
       selectedIds.forEach(id => onDelete(id));
       handleExitSelectionMode();
@@ -188,8 +188,8 @@ export function ChatHistory({
                           <div className="flex items-center gap-1 px-3 py-2">
                             <Input
                               value={editTitle}
-                              onChange={(e) => setEditTitle(e.target.value)}
-                              onKeyDown={(e) => {
+                              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setEditTitle(e.target.value)}
+                              onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => {
                                 if (e.key === 'Enter') handleRename(session.id);
                                 if (e.key === 'Escape') {
                                   setEditingId(null);
@@ -228,12 +228,12 @@ export function ChatHistory({
                                 checked={selectedIds.has(session.id)}
                                 onCheckedChange={() => handleToggleSelection(session.id)}
                                 className="h-4 w-4"
-                                onClick={(e) => e.stopPropagation()}
+                                onClick={(e: React.MouseEvent) => e.stopPropagation()}
                               />
                             )}
 
                             {/* Icon + Title - min-w-0으로 overflow 방지 */}
-                            <div 
+                            <div
                               className="min-w-0 flex items-start gap-2 cursor-pointer"
                               style={{ gridColumn: isSelectionMode ? '2 / 3' : '1 / 3' }}
                               onClick={() => {
@@ -243,7 +243,7 @@ export function ChatHistory({
                                   onSelect(session.id);
                                 }
                               }}
-                              onDoubleClick={(e) => {
+                              onDoubleClick={(e: React.MouseEvent) => {
                                 if (!isSelectionMode) {
                                   e.stopPropagation();
                                   setEditingId(session.id);
@@ -258,9 +258,9 @@ export function ChatHistory({
                                   : 'text-gray-500 dark:text-[#98989d]'
                                 }
                               `} />
-                              
+
                               <div className="flex-1 min-w-0">
-                                <p 
+                                <p
                                   className={`
                                     text-sm overflow-hidden text-ellipsis whitespace-nowrap
                                     ${activeSessionId === session.id
@@ -288,14 +288,14 @@ export function ChatHistory({
                                     size="icon"
                                     variant="ghost"
                                     className="opacity-0 group-hover:opacity-100 transition-opacity h-6 w-6"
-                                    onClick={(e) => e.stopPropagation()}
+                                    onClick={(e: React.MouseEvent) => e.stopPropagation()}
                                   >
                                     <MoreVertical className="w-3 h-3" />
                                   </Button>
                                 </DropdownMenuTrigger>
                                 <DropdownMenuContent align="end">
                                   <DropdownMenuItem
-                                    onClick={(e) => {
+                                    onClick={(e: React.MouseEvent) => {
                                       e.stopPropagation();
                                       setEditingId(session.id);
                                       setEditTitle(session.title);
@@ -305,7 +305,7 @@ export function ChatHistory({
                                     이름 변경
                                   </DropdownMenuItem>
                                   <DropdownMenuItem
-                                    onClick={(e) => {
+                                    onClick={(e: React.MouseEvent) => {
                                       e.stopPropagation();
                                       if (confirm('이 대화를 삭제하시겠습니까?')) {
                                         onDelete(session.id);

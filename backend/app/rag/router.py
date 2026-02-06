@@ -2,8 +2,8 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 
-from ..ai.llm.client import LLMClient
-from ..dependencies import get_llm_client, get_rag_service
+from ..ai.agents.client import AgentClient
+from ..dependencies import get_agent, get_rag_service
 from .service import RagService
 from .types.errors import RagEmbeddingError, RagNotIndexedError, RagSearchError
 from .types.schemas import (
@@ -20,7 +20,7 @@ router = APIRouter(prefix="/rag", tags=["rag"])
 async def rag_query(
     request: RagQueryRequest,
     rag_service: RagService = Depends(get_rag_service),
-    llm_client: LLMClient = Depends(get_llm_client),
+    agent: AgentClient = Depends(get_agent),
 ):
     """
     [RAG 검색 및 답변]
@@ -53,7 +53,7 @@ async def rag_query(
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     context = rag_service.build_context(retrieved)
-    answer = llm_client.ask(question=request.query, context=context)
+    answer = agent.ask(question=request.query, context=context)
 
     retrieved_chunks = [
         RagRetrievedChunk(

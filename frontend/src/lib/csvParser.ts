@@ -1,13 +1,13 @@
 export type CSVParseError = {
   code:
-    | 'empty_file'
-    | 'missing_header'
-    | 'too_many_columns'
-    | 'parse_error'
-    | 'inconsistent_columns'
-    | 'schema_mismatch'
-    | 'datatype_mismatch'
-    | 'excessive_missing';
+  | 'empty_file'
+  | 'missing_header'
+  | 'too_many_columns'
+  | 'parse_error'
+  | 'inconsistent_columns'
+  | 'schema_mismatch'
+  | 'datatype_mismatch'
+  | 'excessive_missing';
   message: string;
   detail?: any;
 };
@@ -105,7 +105,7 @@ export function parseCSV(text: string, opts: CSVOptions = {}): CSVResult {
     errors.push({ code: 'parse_error', message: 'CSV 파싱 중 오류가 발생했습니다.' });
   }
 
-  if (records.length === 0 || (records.length === 1 && records[0].length === 1 && !records[0][0])) {
+  if (records.length === 0 || (records[0] && records[0].length === 1 && !records[0][0])) {
     errors.push({ code: 'empty_file', message: '빈 파일입니다.' });
     return { columns: [], rows: [], errors, warnings, columnTypes: {}, missingRatioByColumn: {} };
   }
@@ -126,7 +126,8 @@ export function parseCSV(text: string, opts: CSVOptions = {}): CSVResult {
 
   // Validate each row has consistent number of columns
   for (let r = 1; r < records.length; r++) {
-    if (records[r].length !== columnCount) {
+    const record = records[r];
+    if (record && record.length !== columnCount) {
       errors.push({ code: 'inconsistent_columns', message: `${r + 1}행의 컬럼 수가 헤더와 일치하지 않습니다.`, detail: { row: r + 1 } });
       break; // one example is enough
     }
@@ -134,9 +135,11 @@ export function parseCSV(text: string, opts: CSVOptions = {}): CSVResult {
 
   const rows: Record<string, string>[] = [];
   for (let r = 1; r < records.length; r++) {
+    const record = records[r];
+    if (!record) continue;
     const obj: Record<string, string> = {};
     for (let c = 0; c < columnCount; c++) {
-      obj[header[c] || `column_${c + 1}`] = records[r][c] ?? '';
+      obj[header[c] || `column_${c + 1}`] = record[c] ?? '';
     }
     rows.push(obj);
   }
@@ -170,7 +173,8 @@ export function parseCSV(text: string, opts: CSVOptions = {}): CSVResult {
       ['string', str],
     ];
     counts.sort((a, b) => b[1] - a[1]);
-    types[key] = counts[0][1] === 0 ? 'unknown' : counts[0][0];
+    const firstCount = counts[0];
+    types[key] = !firstCount || firstCount[1] === 0 ? 'unknown' : firstCount[0];
   }
 
   // Missing ratios

@@ -12,6 +12,7 @@ interface HeaderProps {
   onToggleAgent: () => void;
   selectedModelId?: string;
   onSelectModel?: (modelId: string) => void;
+  hasMessages?: boolean;
 }
 
 export function Header({
@@ -38,7 +39,7 @@ export function Header({
           >
             {showSidebar ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
           </Button>
-          
+
           <div className="min-w-0 flex-1 flex items-center h-10">
             <div className="flex flex-col justify-center min-w-0">
               <h2 className="text-gray-900 dark:text-white truncate text-sm sm:text-base leading-tight">

@@ -17,20 +17,20 @@ interface DataPreprocessingProps {
 }
 
 export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
-  const { 
-    file, 
-    data, 
-    columns, 
-    columnInfo, 
-    setFileData, 
-    updateData, 
+  const {
+    file,
+    data,
+    columns,
+    columnInfo,
+    setFileData,
+    updateData,
     clearData,
     undo,
     redo,
     canUndo,
     canRedo
   } = useDataStore();
-  
+
   const [selectedColumns, setSelectedColumns] = useState<string[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [scalingMethod, setScalingMethod] = useState<'standardization' | 'normalization'>('standardization');
@@ -50,11 +50,11 @@ export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [undo, redo]);
-  
+
   // 파일 업로드 처리
   const handleFileUpload = useCallback((uploadedFile: File) => {
     const fileExtension = uploadedFile.name.split('.').pop()?.toLowerCase();
-    
+
     if (fileExtension === 'csv') {
       const reader = new FileReader();
       reader.onload = (e) => {
@@ -75,12 +75,14 @@ export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
   // CSV 파싱
   const parseCSV = (text: string, uploadedFile: File) => {
     const lines = text.split('\n').filter(line => line.trim());
-    const headers = lines[0].split(',').map(h => h.trim());
-    
-    const parsedData = lines.slice(1).map(line => {
+    const firstLine = lines[0];
+    if (!firstLine) return;
+    const headers = firstLine.split(',').map((h: string) => h.trim());
+
+    const parsedData = lines.slice(1).map((line: string) => {
       const values = line.split(',');
       const row: any = {};
-      headers.forEach((header, index) => {
+      headers.forEach((header: string, index: number) => {
         row[header] = values[index]?.trim() || '';
       });
       return row;
@@ -94,12 +96,14 @@ export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
   const parseExcel = (arrayBuffer: ArrayBuffer, uploadedFile: File) => {
     const workbook = XLSX.read(arrayBuffer, { type: 'array' });
     const firstSheetName = workbook.SheetNames[0];
+    if (!firstSheetName) return;
     const worksheet = workbook.Sheets[firstSheetName];
-    
+    if (!worksheet) return;
+
     const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[][];
-    
-    if (jsonData.length === 0) return;
-    
+
+    if (jsonData.length === 0 || !jsonData[0]) return;
+
     const headers = jsonData[0].map((h: any) => h?.toString() || '');
     const parsedData = jsonData.slice(1).map(row => {
       const rowData: any = {};
@@ -118,7 +122,7 @@ export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
     return headers.map(col => {
       const values = parsedData.map(row => row[col]).filter(v => v !== '' && v !== null && v !== undefined);
       const numericValues = values.map(v => parseFloat(v)).filter(v => !isNaN(v));
-      
+
       const isNumeric = numericValues.length > values.length * 0.8;
       const missing = parsedData.length - values.length;
       const unique = new Set(values).size;
@@ -135,18 +139,20 @@ export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
         const sum = numericValues.reduce((a, b) => a + b, 0);
         const mean = sum / numericValues.length;
         const median = sorted[Math.floor(sorted.length / 2)];
-        
+
         const variance = numericValues.reduce((acc, val) => acc + Math.pow(val - mean, 2), 0) / numericValues.length;
         const std = Math.sqrt(variance);
 
-        columnData = {
-          ...columnData,
-          mean: parseFloat(mean.toFixed(2)),
-          median: parseFloat(median.toFixed(2)),
-          min: Math.min(...numericValues),
-          max: Math.max(...numericValues),
-          std: parseFloat(std.toFixed(2)),
-        };
+        if (median !== undefined) {
+          columnData = {
+            ...columnData,
+            mean: parseFloat(mean.toFixed(2)),
+            median: parseFloat(median.toFixed(2)),
+            min: Math.min(...numericValues),
+            max: Math.max(...numericValues),
+            std: parseFloat(std.toFixed(2)),
+          };
+        }
       }
 
       return columnData;
@@ -206,7 +212,7 @@ export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
     const newData = data.map(row => {
       if (row[column] === '' || row[column] === null || row[column] === undefined) {
         let fillValue = '';
-        
+
         if (method === 'mean' && colInfo.mean !== undefined) {
           fillValue = colInfo.mean.toString();
         } else if (method === 'median' && colInfo.median !== undefined) {
@@ -215,11 +221,11 @@ export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
           const values = data.map(r => r[column]).filter(v => v !== '' && v !== null && v !== undefined);
           const frequency: Record<string, number> = {};
           values.forEach(v => frequency[v] = (frequency[v] || 0) + 1);
-          fillValue = Object.keys(frequency).reduce((a, b) => frequency[a] > frequency[b] ? a : b);
+          fillValue = Object.keys(frequency).reduce((a, b) => (frequency[a] || 0) > (frequency[b] || 0) ? a : b);
         } else if (method === 'custom' && customValue) {
           fillValue = customValue;
         }
-        
+
         return { ...row, [column]: fillValue };
       }
       return row;
@@ -251,9 +257,12 @@ export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
 
     const values = data.map(row => parseFloat(row[column])).filter(v => !isNaN(v));
     const sorted = [...values].sort((a, b) => a - b);
-    
+
     const q1 = sorted[Math.floor(sorted.length * 0.25)];
     const q3 = sorted[Math.floor(sorted.length * 0.75)];
+
+    if (q1 === undefined || q3 === undefined) return;
+
     const iqr = q3 - q1;
     const lowerBound = q1 - 1.5 * iqr;
     const upperBound = q3 + 1.5 * iqr;
@@ -283,8 +292,8 @@ export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
 
   // 열 선택/해제
   const toggleColumnSelection = (column: string) => {
-    setSelectedColumns(prev => 
-      prev.includes(column) 
+    setSelectedColumns(prev =>
+      prev.includes(column)
         ? prev.filter(c => c !== column)
         : [...prev, column]
     );
@@ -321,7 +330,7 @@ export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
-    
+
     const droppedFile = e.dataTransfer.files[0];
     if (droppedFile && (droppedFile.name.endsWith('.csv') || droppedFile.name.endsWith('.xlsx') || droppedFile.name.endsWith('.xls'))) {
       handleFileUpload(droppedFile);
@@ -342,7 +351,7 @@ export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
               <div className="inline-flex items-center justify-center w-20 h-20 rounded-3xl bg-gradient-to-br from-blue-500 to-purple-600 text-white text-4xl">
                 <FileSpreadsheet className="w-10 h-10" />
               </div>
-              
+
               <div>
                 <h2 className="text-2xl text-gray-900 dark:text-white mb-2">
                   데이터 전처리
@@ -358,8 +367,8 @@ export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
                 onDrop={handleDrop}
                 className={`
                   relative border-2 border-dashed rounded-xl p-12 transition-all cursor-pointer
-                  ${isDragging 
-                    ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20' 
+                  ${isDragging
+                    ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
                     : 'border-gray-300 dark:border-gray-700 hover:border-blue-400 dark:hover:border-blue-600'
                   }
                 `}
@@ -370,7 +379,7 @@ export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
                   onChange={(e) => e.target.files?.[0] && handleFileUpload(e.target.files[0])}
                   className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
                 />
-                
+
                 <div className="space-y-3">
                   <Upload className="w-12 h-12 mx-auto text-gray-400" />
                   <div>
@@ -415,7 +424,7 @@ export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
                 </p>
               </div>
             </div>
-            
+
             <div className="flex items-center gap-2">
               {/* Undo/Redo 버튼 */}
               <div className="flex items-center gap-1 mr-2">
@@ -438,7 +447,7 @@ export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
                   <Redo2 className="w-4 h-4" />
                 </Button>
               </div>
-              
+
               <Button
                 variant="outline"
                 onClick={() => {
@@ -504,7 +513,7 @@ export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
                   <h3 className="text-lg text-gray-900 dark:text-white">열 상세 정보</h3>
                   <p className="text-sm text-gray-500 dark:text-gray-400">각 열의 통계 정보 및 데이터 품질</p>
                 </div>
-                
+
                 <div className="flex-1 overflow-auto">
                   <ScrollArea className="h-full">
                     <table className="w-full">
@@ -613,7 +622,7 @@ export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
                                       <DropdownMenuSeparator />
                                     </>
                                   )}
-                                  
+
                                   {/* 타입 변경 */}
                                   <DropdownMenuSub>
                                     <DropdownMenuSubTrigger>
@@ -628,7 +637,7 @@ export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
                                       </DropdownMenuItem>
                                     </DropdownMenuSubContent>
                                   </DropdownMenuSub>
-                                  
+
                                   {/* 이상치 제거 */}
                                   {col.type === 'number' && (
                                     <>
@@ -639,10 +648,10 @@ export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
                                       </DropdownMenuItem>
                                     </>
                                   )}
-                                  
+
                                   {/* 열 삭제 */}
                                   <DropdownMenuSeparator />
-                                  <DropdownMenuItem 
+                                  <DropdownMenuItem
                                     onClick={() => handleDeleteColumn(col.name)}
                                     className="text-red-600 dark:text-red-400"
                                   >
@@ -665,7 +674,7 @@ export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
                 <div className="p-4 border-b border-gray-200 dark:border-gray-700">
                   <h3 className="text-lg text-gray-900 dark:text-white mb-1">전처리 도구</h3>
                   <p className="text-xs text-gray-500 dark:text-gray-400">
-                    {selectedColumns.length > 0 
+                    {selectedColumns.length > 0
                       ? `${selectedColumns.length}개 열 선택됨`
                       : '왼쪽에서 열을 선택하세요'
                     }
@@ -687,7 +696,7 @@ export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
                         <p className="text-xs text-gray-500 dark:text-gray-400 ml-6 mb-3">
                           평균 0, 표준편차 1로 변환
                         </p>
-                        
+
                         <div className="flex items-center space-x-2 mb-2">
                           <RadioGroupItem value="normalization" id="normalization" />
                           <Label htmlFor="normalization" className="text-sm cursor-pointer">
@@ -731,7 +740,7 @@ export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
                                   variant="outline"
                                   size="sm"
                                   className="w-full justify-start"
-                                  onClick={() => handleFillMissing(selectedColumns[0], 'mean')}
+                                  onClick={() => handleFillMissing(selectedColumns[0]!, 'mean')}
                                 >
                                   평균값으로 채우기
                                 </Button>
@@ -739,7 +748,7 @@ export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
                                   variant="outline"
                                   size="sm"
                                   className="w-full justify-start"
-                                  onClick={() => handleFillMissing(selectedColumns[0], 'median')}
+                                  onClick={() => handleFillMissing(selectedColumns[0]!, 'median')}
                                 >
                                   중간값으로 채우기
                                 </Button>
@@ -749,7 +758,7 @@ export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
                               variant="outline"
                               size="sm"
                               className="w-full justify-start"
-                              onClick={() => handleFillMissing(selectedColumns[0], 'mode')}
+                              onClick={() => handleFillMissing(selectedColumns[0]!, 'mode')}
                             >
                               최빈값으로 채우기
                             </Button>
@@ -765,7 +774,7 @@ export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
                                   size="sm"
                                   onClick={() => {
                                     const input = document.getElementById('custom-fill') as HTMLInputElement;
-                                    handleFillMissing(selectedColumns[0], 'custom', input.value);
+                                    handleFillMissing(selectedColumns[0]!, 'custom', input.value);
                                   }}
                                 >
                                   적용
@@ -792,7 +801,7 @@ export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
                             variant="outline"
                             size="sm"
                             className="w-full justify-start gap-2"
-                            onClick={() => handleRemoveOutliers(selectedColumns[0])}
+                            onClick={() => handleRemoveOutliers(selectedColumns[0]!)}
                           >
                             <TrendingUp className="w-4 h-4" />
                             IQR 방식으로 제거
@@ -818,7 +827,7 @@ export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
                             variant="outline"
                             size="sm"
                             className="w-full justify-start"
-                            onClick={() => handleChangeType(selectedColumns[0], 'number')}
+                            onClick={() => handleChangeType(selectedColumns[0]!, 'number')}
                           >
                             숫자형으로 변환
                           </Button>
@@ -826,7 +835,7 @@ export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
                             variant="outline"
                             size="sm"
                             className="w-full justify-start"
-                            onClick={() => handleChangeType(selectedColumns[0], 'string')}
+                            onClick={() => handleChangeType(selectedColumns[0]!, 'string')}
                           >
                             문자형으로 변환
                           </Button>

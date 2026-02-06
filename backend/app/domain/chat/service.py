@@ -1,10 +1,9 @@
 from typing import Optional
 
-from ...ai.llm.client import LLMClient
+from ...ai.agents.client import AgentClient
 from ..data_source.repository import DataSourceRepository
 from .repository import ChatRepository
 from .schemas import ChatHistoryResponse, ChatResponse
-from ...ai.orchestrator.chat_flow import ChatFlowOrchestrator
 from ...rag.service import RagService
 from ...rag.types.errors import RagError
 
@@ -16,13 +15,13 @@ class ChatService:
 
     def __init__(
         self,
+        agent: AgentClient,
         repository: ChatRepository,
-        orchestrator: ChatFlowOrchestrator,
         data_source_repository: Optional[DataSourceRepository] = None,
         rag_service: Optional[RagService] = None,
     ) -> None:
+        self.agent = agent
         self.repository = repository
-        self.orchestrator = orchestrator
         self.data_source_repository = data_source_repository
         self.rag_service = rag_service
 
@@ -33,13 +32,13 @@ class ChatService:
         session_id: Optional[int] = None,
         data_source_id: Optional[str] = None,
         context: Optional[str] = None,
+        model_id: Optional[str] = None,
     ) -> ChatResponse:
         """질문을 저장하고 간단한 응답을 생성합니다."""
         session = self.repository.get_session(session_id) if session_id else None
         if session is None:
             session = self.repository.create_session(title=question[:60])
 
-        history = self.repository.get_history(session.id)
         rag_context = None
         retrieved_chunks = None
         rag_attempted = False
@@ -63,13 +62,13 @@ class ChatService:
             rag_context=rag_context,
             rag_attempted=rag_attempted,
         )
-        answer = self.orchestrator.generate_answer(
-            session_id=session.id,
+        answer = self.agent.ask(
+            session_id=str(session.id),
             question=question,
-            history=history,
             context=merged_context,
+            model_id=model_id,
         )
-
+        
         self.repository.append_message(session, "user", question)
         self.repository.append_message(session, "assistant", answer)
         if retrieved_chunks and self.rag_service:
@@ -86,6 +85,10 @@ class ChatService:
             return None
         messages = self.repository.get_history(session_id)
         return ChatHistoryResponse(session_id=session_id, messages=messages)
+
+    def delete_session(self, session_id: int) -> bool:
+        """세션을 삭제합니다."""
+        return self.repository.delete_session(session_id)
 
     def _build_context_from_source(
         self,
@@ -110,7 +113,7 @@ class ChatService:
             print(dataset)
             if dataset and dataset.storage_path:
                 try:
-                    file_text = LLMClient.load_text_from_file(dataset.storage_path)
+                    file_text = AgentClient.load_text_from_file(dataset.storage_path)
                     if file_text:
                         pieces.append(file_text)
                 except Exception:

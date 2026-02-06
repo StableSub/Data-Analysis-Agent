@@ -17,10 +17,10 @@ export function CaptureConsole() {
 
   const handleStartCapture = () => {
     if (!user) return;
-    
+
     setIsCapturing(true);
     setCaptureEvents([]);
-    
+
     // Add audit log
     addAuditLog({
       user: user.email,
@@ -31,8 +31,8 @@ export function CaptureConsole() {
 
     toast.success(`${duration}초 동안 이벤트 캡처를 시작합니다`);
 
-    // Mock capture - in production, this would call the API
-    const mockEvents = [
+    // Simulate event capture
+    const events = [
       { time: '00:01', type: 'exec', process: 'python3', cmd: '/usr/bin/python3 app.py' },
       { time: '00:03', type: 'open', process: 'python3', path: '/etc/passwd', suspicious: true },
       { time: '00:05', type: 'tcp_connect', process: 'curl', dest: '192.168.1.100:8080' },
@@ -42,8 +42,8 @@ export function CaptureConsole() {
 
     let index = 0;
     const interval = setInterval(() => {
-      if (index < mockEvents.length) {
-        setCaptureEvents((prev) => [...prev, mockEvents[index]]);
+      if (index < events.length) {
+        setCaptureEvents((prev) => [...prev, events[index]]);
         index++;
       } else {
         clearInterval(interval);
@@ -105,7 +105,7 @@ export function CaptureConsole() {
               className="mt-1"
             />
           </div>
-          
+
           {isCapturing ? (
             <Button onClick={handleStopCapture} variant="destructive" className="gap-2">
               <Square className="w-4 h-4" />
@@ -144,9 +144,8 @@ export function CaptureConsole() {
                 captureEvents.map((event, index) => (
                   <div
                     key={index}
-                    className={`p-2 rounded ${
-                      event.suspicious ? 'bg-orange-900/30 border border-orange-700' : 'bg-gray-800'
-                    }`}
+                    className={`p-2 rounded ${event.suspicious ? 'bg-orange-900/30 border border-orange-700' : 'bg-gray-800'
+                      }`}
                   >
                     <span className="text-blue-400">[{event.time}]</span>{' '}
                     <span className="text-purple-400">{event.type}</span>{' '}

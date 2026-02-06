@@ -11,8 +11,8 @@ interface MessageListProps {
   onSelectModel?: (modelId: string) => void;
 }
 
-export function MessageList({ 
-  messages, 
+export function MessageList({
+  messages,
   onRegenerate,
   selectedModelId,
   onSelectModel,
@@ -114,6 +114,13 @@ export function MessageList({
   // 메시지 그룹핑 로직 - 연속된 같은 발신자의 메시지 감지
   const getMessageGrouping = (index: number) => {
     const current = messages[index];
+    if (!current) {
+      return {
+        isFirstInGroup: false,
+        isLastInGroup: false,
+        isSingleMessage: false,
+      };
+    }
     const previous = index > 0 ? messages[index - 1] : null;
     const next = index < messages.length - 1 ? messages[index + 1] : null;
 
