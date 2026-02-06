@@ -7,8 +7,6 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 from fastapi.responses import StreamingResponse
 
-from app.domain.analysis.models import AnalysisResult, ChartResult 
-
 class ExportService:
     def __init__(self, db: Session):
         self.db = db
