@@ -205,7 +205,7 @@ export function DataPreprocessing({ isDark, selectedSourceId }: DataPreprocessin
   // 결측치 채우기 → 큐에 추가
   const handleFillMissing = (column: string, method: 'mean' | 'median' | 'mode' | 'custom', customValue?: string) => {
     const strategy = method === 'custom' ? 'value' : method;
-    const op = strategy === 'value'
+    const op: QueueOp = strategy === 'value'
       ? { type: 'fill_missing', target_columns: [column], strategy: 'value' as const, value: customValue || '' }
       : { type: 'fill_missing', target_columns: [column], strategy: strategy as any };
     pushOp(op);
@@ -312,18 +312,28 @@ export function DataPreprocessing({ isDark, selectedSourceId }: DataPreprocessin
 
   // 전처리 작업 큐 + 서버 연동 상태
   type QueueOp =
-    | { type: 'fill_missing'; target_columns: string[]; strategy: 'mean'|'median'|'mode'|'value'; value?: string }
-    | { type: 'scale'; target_columns: string[]; method: 'minmax'|'zscore' }
+    | { type: 'fill_missing'; target_columns: string[]; strategy: 'mean' | 'median' | 'mode' | 'value'; value?: string }
+    | { type: 'scale'; target_columns: string[]; method: 'minmax' | 'zscore' }
     | { type: 'drop_columns'; target_columns: string[] }
-    | { type: 'rename_columns'; mapping: Record<string,string> }
+    | { type: 'rename_columns'; mapping: Record<string, string> }
     | { type: 'derived_column'; name: string; expression: string };
   type ApplyResponse = { dataset_id: number; base_version_id?: number | null; new_version_id: number; version_no: number; row_count: number; col_count: number };
 
   const [opsQueue, setOpsQueue] = useState<QueueOp[]>([]);
   const pushOp = (op: QueueOp) => setOpsQueue(prev => [...prev, op]);
   const removeOp = (idx: number) => setOpsQueue(prev => prev.filter((_, i) => i !== idx));
-  const moveUp = (idx: number) => setOpsQueue(prev => idx<=0?prev:[...prev.slice(0,idx-1), prev[idx], prev[idx-1], ...prev.slice(idx+1)]);
-  const moveDown = (idx: number) => setOpsQueue(prev => idx>=prev.length-1?prev:[...prev.slice(0,idx), prev[idx+1], prev[idx], ...prev.slice(idx+2)]);
+  const moveUp = (idx: number) => setOpsQueue(prev => {
+    if (idx <= 0 || idx >= prev.length) return prev;
+    const newQueue = [...prev];
+    [newQueue[idx], newQueue[idx - 1]] = [newQueue[idx - 1]!, newQueue[idx]!];
+    return newQueue;
+  });
+  const moveDown = (idx: number) => setOpsQueue(prev => {
+    if (idx < 0 || idx >= prev.length - 1) return prev;
+    const newQueue = [...prev];
+    [newQueue[idx], newQueue[idx + 1]] = [newQueue[idx + 1]!, newQueue[idx]!];
+    return newQueue;
+  });
   // 현재 선택된 소스(source_id)를 dataset_id로 매핑
   const [selectedDatasetId, setSelectedDatasetId] = useState<number | null>(null);
   const [applyBaseVersionId, setApplyBaseVersionId] = useState('');
@@ -337,7 +347,7 @@ export function DataPreprocessing({ isDark, selectedSourceId }: DataPreprocessin
         return;
       }
       try {
-        const res = await apiRequest<{ total:number; items: { id:number; filename:string; source_id:string }[] }>(`/datasets?skip=0&limit=1000`);
+        const res = await apiRequest<{ total: number; items: { id: number; filename: string; source_id: string }[] }>(`/datasets?skip=0&limit=1000`);
         const found = (res.items || []).find(it => it.source_id === selectedSourceId);
         setSelectedDatasetId(found ? found.id : null);
       } catch (e) {
@@ -348,7 +358,7 @@ export function DataPreprocessing({ isDark, selectedSourceId }: DataPreprocessin
 
   const toBackendOps = (ops: QueueOp[]) => ops.map(op => {
     if (op.type === 'fill_missing') {
-      return { op: 'impute', params: { columns: op.target_columns, method: op.strategy, ...(op.strategy==='value'?{value:op.value}: {}) } };
+      return { op: 'impute', params: { columns: op.target_columns, method: op.strategy, ...(op.strategy === 'value' ? { value: op.value } : {}) } };
     }
     if (op.type === 'scale') {
       return { op: 'scale', params: { columns: op.target_columns, method: op.method === 'minmax' ? 'normalize' : 'standardize' } };
@@ -365,18 +375,18 @@ export function DataPreprocessing({ isDark, selectedSourceId }: DataPreprocessin
     return op as any;
   });
 
-  const applyOpsToSample = (rows: Record<string,any>[], ops: QueueOp[]) => {
-    let out = rows.map(r => ({...r}));
+  const applyOpsToSample = (rows: Record<string, any>[], ops: QueueOp[]) => {
+    let out = rows.map(r => ({ ...r }));
     for (const op of ops) {
       if (op.type === 'drop_columns') {
         out = out.map(r => {
-          const nr:any = {...r};
+          const nr: any = { ...r };
           op.target_columns.forEach(c => delete nr[c]);
           return nr;
         });
       } else if (op.type === 'rename_columns') {
         out = out.map(r => {
-          const nr:any = {};
+          const nr: any = {};
           Object.keys(r).forEach(k => {
             const nk = (op.mapping as any)[k] || k;
             nr[nk] = (r as any)[k];
@@ -385,45 +395,45 @@ export function DataPreprocessing({ isDark, selectedSourceId }: DataPreprocessin
         });
       } else if (op.type === 'fill_missing') {
         for (const col of op.target_columns) {
-          let fill:any = '';
-          const vals = out.map(r => r[col]).filter(v => v!=='' && v!==null && v!==undefined);
+          let fill: any = '';
+          const vals = out.map(r => r[col]).filter(v => v !== '' && v !== null && v !== undefined);
           if (op.strategy === 'value') fill = op.value ?? '';
           else if (op.strategy === 'mean') {
             const nums = vals.map(v => parseFloat(v)).filter(v => !isNaN(v));
-            const mean = nums.length? nums.reduce((a,b)=>a+b,0)/nums.length : 0;
+            const mean = nums.length ? nums.reduce((a, b) => a + b, 0) / nums.length : 0;
             fill = mean;
           } else if (op.strategy === 'median') {
-            const nums = vals.map(v => parseFloat(v)).filter(v => !isNaN(v)).sort((a,b)=>a-b);
-            const mid = nums.length? nums[Math.floor(nums.length/2)] : 0;
+            const nums = vals.map(v => parseFloat(v)).filter(v => !isNaN(v)).sort((a, b) => a - b);
+            const mid = nums.length ? nums[Math.floor(nums.length / 2)] : 0;
             fill = mid;
           } else if (op.strategy === 'mode') {
-            const freq:Record<string,number> = {};
-            vals.forEach(v => { const k=String(v); freq[k]=(freq[k]||0)+1; });
-            fill = Object.keys(freq).reduce((a,b)=>freq[a]>freq[b]?a:b, '');
+            const freq: Record<string, number> = {};
+            vals.forEach(v => { const k = String(v); freq[k] = (freq[k] || 0) + 1; });
+            fill = Object.keys(freq).reduce((a, b) => (freq[a] || 0) > (freq[b] || 0) ? a : b, '');
           }
-          out = out.map(r => (r[col]===undefined||r[col]===null||r[col]==='') ? {...r, [col]: fill} : r);
+          out = out.map(r => (r[col] === undefined || r[col] === null || r[col] === '') ? { ...r, [col]: fill } : r);
         }
       } else if (op.type === 'scale') {
         for (const col of op.target_columns) {
           const nums = out.map(r => parseFloat(r[col])).filter(v => !isNaN(v));
           const min = Math.min(...nums);
           const max = Math.max(...nums);
-          const mean = nums.reduce((a,b)=>a+b,0)/(nums.length||1);
-          const std = Math.sqrt(nums.reduce((acc,v)=>acc+Math.pow(v-mean,2),0)/(nums.length||1)) || 1;
+          const mean = nums.reduce((a, b) => a + b, 0) / (nums.length || 1);
+          const std = Math.sqrt(nums.reduce((acc, v) => acc + Math.pow(v - mean, 2), 0) / (nums.length || 1)) || 1;
           out = out.map(r => {
             const v = parseFloat(r[col]);
             if (isNaN(v)) return r;
             if (op.method === 'minmax') {
-              const denom = (max-min)||1;
-              return { ...r, [col]: (v-min)/denom };
+              const denom = (max - min) || 1;
+              return { ...r, [col]: (v - min) / denom };
             } else {
-              return { ...r, [col]: (v-mean)/std };
+              return { ...r, [col]: (v - mean) / std };
             }
           });
         }
       }
     }
-    const columns = out.length? Object.keys(out[0]) : [];
+    const columns = (out.length > 0 && out[0]) ? Object.keys(out[0]) : [];
     return { columns, rows: out };
   };
 
@@ -1004,7 +1014,7 @@ export function DataPreprocessing({ isDark, selectedSourceId }: DataPreprocessin
                       <Button variant="outline" onClick={async () => {
                         try {
                           const payload: any = { dataset_id: Number(selectedDatasetId), operations: toBackendOps(opsQueue) };
-                          const res = await apiRequest<{ dataset_id:number; version_id?:number|null; columns: {name:string;dtype:string;missing:number}[]; sample_rows: Record<string, any>[] }>('/preprocess/preview', { method: 'POST', body: JSON.stringify(payload) });
+                          const res = await apiRequest<{ dataset_id: number; version_id?: number | null; columns: { name: string; dtype: string; missing: number }[]; sample_rows: Record<string, any>[] }>('/preprocess/preview', { method: 'POST', body: JSON.stringify(payload) });
                           const applied = applyOpsToSample(res.sample_rows || [], opsQueue);
                           const win = window.open('', '_blank');
                           if (win) {
@@ -1019,8 +1029,8 @@ export function DataPreprocessing({ isDark, selectedSourceId }: DataPreprocessin
                             const cols = applied.columns;
                             const outRows = applied.rows;
                             const header = `<caption>데이터 미리보기 (작업 큐 적용됨) · 행: ${outRows.length}, 열: ${cols.length}</caption>`;
-                            const thead = `<thead><tr>${cols.map(c=>`<th>${c}</th>`).join('')}</tr></thead>`;
-                            const tbody = `<tbody>${outRows.map(r=>`<tr>${cols.map(c=>`<td>${String(r[c] ?? '')}</td>`).join('')}</tr>`).join('')}</tbody>`;
+                            const thead = `<thead><tr>${cols.map(c => `<th>${c}</th>`).join('')}</tr></thead>`;
+                            const tbody = `<tbody>${outRows.map(r => `<tr>${cols.map(c => `<td>${String(r[c] ?? '')}</td>`).join('')}</tr>`).join('')}</tbody>`;
                             const html = `<!doctype html>${head}<body><table>${header}${thead}${tbody}</table></body>`;
                             win.document.open();
                             win.document.write(html);
@@ -1056,7 +1066,7 @@ export function DataPreprocessing({ isDark, selectedSourceId }: DataPreprocessin
                         </div>
                       </div>
                     )}
-                    
+
                   </div>
 
                 </ScrollArea>
@@ -1065,7 +1075,7 @@ export function DataPreprocessing({ isDark, selectedSourceId }: DataPreprocessin
           </div>
         </div>
       )}
-      
+
     </div>
   );
 }
