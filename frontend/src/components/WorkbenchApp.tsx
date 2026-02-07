@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
+import { CopilotKit } from '@copilotkit/react-core';
+import '@copilotkit/react-ui/styles.css';
 import { WorkbenchNav, FeatureType } from './layout/WorkbenchNav';
 import { FeatureToggle } from './layout/FeatureToggle';
 import { WorkbenchUpload } from './chat/WorkbenchUpload';
@@ -12,6 +14,7 @@ import { ChatMessages } from './workbench/ChatMessages';
 import { ChatInputBar } from './workbench/ChatInputBar';
 import { apiRequest } from '../lib/api';
 import { toast } from 'sonner';
+import { useChartRenderer, useDataTableRenderer } from './genui';
 
 // 데이터 분석(AI 챗봇)과 데이터 전처리 2가지 기능만
 type AppFeature = 'analysis' | 'preprocessing';
@@ -54,6 +57,10 @@ export function WorkbenchApp({ initialFeature = 'analysis' }: WorkbenchAppProps)
     removeFile,
     toggleFileSelection,
   } = useStore();
+
+  // Register GenUI components with CopilotKit
+  useChartRenderer();
+  useDataTableRenderer();
 
   const activeSession = sessions.find(s => s.id === activeSessionId);
 
@@ -217,6 +224,7 @@ export function WorkbenchApp({ initialFeature = 'analysis' }: WorkbenchAppProps)
   }));
 
   return (
+    // <CopilotKit runtimeUrl="/api/copilotkit">
     <div className={isDark ? 'dark' : ''}>
       <div className="flex h-screen bg-gray-50 dark:bg-[#212121]">
         {/* 데이터 전처리 화면 */}
@@ -332,5 +340,6 @@ export function WorkbenchApp({ initialFeature = 'analysis' }: WorkbenchAppProps)
         )}
       </div>
     </div>
+    // </CopilotKit>
   );
 }
