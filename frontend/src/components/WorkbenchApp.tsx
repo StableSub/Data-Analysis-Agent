@@ -234,7 +234,11 @@ export function WorkbenchApp({ initialFeature = 'analysis' }: WorkbenchAppProps)
                 />
               }
             />
-            <DataPreprocessing isDark={isDark} />
+            {(() => {
+              const selectedDatasetSourceId = (activeSession?.files || [])
+                .find(f => f.selected && f.type === 'dataset' && f.sourceId)?.sourceId || null;
+              return <DataPreprocessing isDark={isDark} selectedSourceId={selectedDatasetSourceId} />;
+            })()}
           </div>
         ) : (
           <>

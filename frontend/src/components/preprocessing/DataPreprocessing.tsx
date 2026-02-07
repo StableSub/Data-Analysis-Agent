@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useMemo } from 'react';
 import { Upload, Download, FileSpreadsheet, CheckCircle2, Settings, Database, Info, TrendingUp, MoreVertical, Trash2, Undo2, Redo2 } from 'lucide-react';
 import { Button } from '../ui/button';
 import { Card } from '../ui/card';
@@ -11,12 +11,14 @@ import { RadioGroup, RadioGroupItem } from '../ui/radio-group';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger } from '../ui/dropdown-menu';
 import { useDataStore, ColumnInfo } from '../../store/useDataStore';
 import * as XLSX from 'xlsx';
+import { apiRequest } from '../../lib/api';
 
 interface DataPreprocessingProps {
   isDark: boolean;
+  selectedSourceId?: string | null; // 상위(워크벤치)에서 전달된 현재 선택 소스
 }
 
-export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
+export function DataPreprocessing({ isDark, selectedSourceId }: DataPreprocessingProps) {
   const {
     file,
     data,
@@ -33,6 +35,7 @@ export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
 
   const [selectedColumns, setSelectedColumns] = useState<string[]>([]);
   const [isDragging, setIsDragging] = useState(false);
+  const [isParsing, setIsParsing] = useState(false);
   const [scalingMethod, setScalingMethod] = useState<'standardization' | 'normalization'>('standardization');
 
   // 키보드 단축키 (Ctrl+Z, Ctrl+Y)
@@ -53,37 +56,62 @@ export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
 
   // 파일 업로드 처리
   const handleFileUpload = useCallback((uploadedFile: File) => {
-    const fileExtension = uploadedFile.name.split('.').pop()?.toLowerCase();
-
-    if (fileExtension === 'csv') {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const text = e.target?.result as string;
-        parseCSV(text, uploadedFile);
-      };
-      reader.readAsText(uploadedFile);
-    } else if (fileExtension === 'xlsx' || fileExtension === 'xls') {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const data = e.target?.result;
-        parseExcel(data as ArrayBuffer, uploadedFile);
-      };
-      reader.readAsArrayBuffer(uploadedFile);
+    try {
+      setIsParsing(true);
+      const fileExtension = uploadedFile.name.split('.').pop()?.toLowerCase();
+      if (fileExtension === 'csv') {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          try {
+            const text = (e.target?.result as string) ?? '';
+            parseCSV(text, uploadedFile);
+          } finally {
+            setIsParsing(false);
+          }
+        };
+        reader.onerror = () => setIsParsing(false);
+        reader.readAsText(uploadedFile);
+      } else if (fileExtension === 'xlsx' || fileExtension === 'xls') {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          try {
+            const data = e.target?.result as ArrayBuffer;
+            parseExcel(data, uploadedFile);
+          } finally {
+            setIsParsing(false);
+          }
+        };
+        reader.onerror = () => setIsParsing(false);
+        reader.readAsArrayBuffer(uploadedFile);
+      } else {
+        setIsParsing(false);
+      }
+    } catch {
+      setIsParsing(false);
     }
   }, []);
 
   // CSV 파싱
   const parseCSV = (text: string, uploadedFile: File) => {
-    const lines = text.split('\n').filter(line => line.trim());
-    const firstLine = lines[0];
-    if (!firstLine) return;
-    const headers = firstLine.split(',').map((h: string) => h.trim());
+    const rawLines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+    const lines = rawLines.filter(line => line !== '');
+    if (lines.length === 0) {
+      setFileData(uploadedFile, [], [], []);
+      return;
+    }
+    const firstLine = lines[0] ?? '';
+    let headers = firstLine.split(',').map((h: string) => h.trim());
+    // 헤더가 비었거나 단일 컬럼이면 기본 헤더 생성
+    if (headers.length === 0 || (headers.length === 1 && headers[0] === '')) {
+      const firstValues = (lines[1] ?? '').split(',');
+      headers = firstValues.map((_, i) => `col_${i + 1}`);
+    }
 
     const parsedData = lines.slice(1).map((line: string) => {
       const values = line.split(',');
       const row: any = {};
       headers.forEach((header: string, index: number) => {
-        row[header] = values[index]?.trim() || '';
+        row[header] = (values[index] ?? '').trim();
       });
       return row;
     });
@@ -96,19 +124,22 @@ export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
   const parseExcel = (arrayBuffer: ArrayBuffer, uploadedFile: File) => {
     const workbook = XLSX.read(arrayBuffer, { type: 'array' });
     const firstSheetName = workbook.SheetNames[0];
-    if (!firstSheetName) return;
+    if (!firstSheetName) { setFileData(uploadedFile, [], [], []); return; }
     const worksheet = workbook.Sheets[firstSheetName];
-    if (!worksheet) return;
+    if (!worksheet) { setFileData(uploadedFile, [], [], []); return; }
 
-    const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[][];
+    const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: false }) as any[][];
+    if (!Array.isArray(jsonData) || jsonData.length === 0) { setFileData(uploadedFile, [], [], []); return; }
 
-    if (jsonData.length === 0 || !jsonData[0]) return;
-
-    const headers = jsonData[0].map((h: any) => h?.toString() || '');
+    const headerRow = jsonData[0] || [];
+    const headers = headerRow.map((h: any, i: number) => {
+      const v = (h ?? '').toString().trim();
+      return v || `col_${i + 1}`;
+    });
     const parsedData = jsonData.slice(1).map(row => {
       const rowData: any = {};
       headers.forEach((header, index) => {
-        rowData[header] = row[index]?.toString() || '';
+        rowData[header] = (row?.[index] ?? '').toString();
       });
       return rowData;
     });
@@ -159,80 +190,25 @@ export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
     });
   };
 
-  // Standardization
+  // Standardization → 큐에 추가(zscore)
   const handleStandardization = () => {
     if (selectedColumns.length === 0) return;
-
-    const newData = data.map(row => {
-      const newRow = { ...row };
-      selectedColumns.forEach(col => {
-        const colInfo = columnInfo.find(c => c.name === col);
-        if (colInfo?.type === 'number' && colInfo.mean !== undefined && colInfo.std !== undefined) {
-          const value = parseFloat(row[col]);
-          if (!isNaN(value)) {
-            newRow[col] = ((value - colInfo.mean) / colInfo.std).toFixed(4);
-          }
-        }
-      });
-      return newRow;
-    });
-
-    const newColumnInfo = analyzeColumns(columns, newData);
-    updateData(newData, columns, newColumnInfo);
+    pushOp({ type: 'scale', target_columns: selectedColumns, method: 'zscore' });
   };
 
-  // Normalization
+  // Normalization → 큐에 추가(minmax)
   const handleNormalization = () => {
     if (selectedColumns.length === 0) return;
-
-    const newData = data.map(row => {
-      const newRow = { ...row };
-      selectedColumns.forEach(col => {
-        const colInfo = columnInfo.find(c => c.name === col);
-        if (colInfo?.type === 'number' && colInfo.min !== undefined && colInfo.max !== undefined) {
-          const value = parseFloat(row[col]);
-          if (!isNaN(value)) {
-            const range = colInfo.max - colInfo.min;
-            newRow[col] = range === 0 ? 0 : ((value - colInfo.min) / range).toFixed(4);
-          }
-        }
-      });
-      return newRow;
-    });
-
-    const newColumnInfo = analyzeColumns(columns, newData);
-    updateData(newData, columns, newColumnInfo);
+    pushOp({ type: 'scale', target_columns: selectedColumns, method: 'minmax' });
   };
 
-  // 결측치 채우기
+  // 결측치 채우기 → 큐에 추가
   const handleFillMissing = (column: string, method: 'mean' | 'median' | 'mode' | 'custom', customValue?: string) => {
-    const colInfo = columnInfo.find(c => c.name === column);
-    if (!colInfo) return;
-
-    const newData = data.map(row => {
-      if (row[column] === '' || row[column] === null || row[column] === undefined) {
-        let fillValue = '';
-
-        if (method === 'mean' && colInfo.mean !== undefined) {
-          fillValue = colInfo.mean.toString();
-        } else if (method === 'median' && colInfo.median !== undefined) {
-          fillValue = colInfo.median.toString();
-        } else if (method === 'mode') {
-          const values = data.map(r => r[column]).filter(v => v !== '' && v !== null && v !== undefined);
-          const frequency: Record<string, number> = {};
-          values.forEach(v => frequency[v] = (frequency[v] || 0) + 1);
-          fillValue = Object.keys(frequency).reduce((a, b) => (frequency[a] || 0) > (frequency[b] || 0) ? a : b);
-        } else if (method === 'custom' && customValue) {
-          fillValue = customValue;
-        }
-
-        return { ...row, [column]: fillValue };
-      }
-      return row;
-    });
-
-    const newColumnInfo = analyzeColumns(columns, newData);
-    updateData(newData, columns, newColumnInfo);
+    const strategy = method === 'custom' ? 'value' : method;
+    const op = strategy === 'value'
+      ? { type: 'fill_missing', target_columns: [column], strategy: 'value' as const, value: customValue || '' }
+      : { type: 'fill_missing', target_columns: [column], strategy: strategy as any };
+    pushOp(op);
   };
 
   // 데이터 타입 변경
@@ -274,20 +250,13 @@ export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
 
     const newColumnInfo = analyzeColumns(columns, newData);
     updateData(newData, columns, newColumnInfo);
+    // 백엔드 지원 연산 목록에는 없음 → 큐에는 추가하지 않음
   };
 
-  // 열 삭제
+  // 열 삭제 → 큐에 추가
   const handleDeleteColumn = (column: string) => {
-    const newColumns = columns.filter(c => c !== column);
-    const newData = data.map(row => {
-      const newRow = { ...row };
-      delete newRow[column];
-      return newRow;
-    });
-
-    const newColumnInfo = analyzeColumns(newColumns, newData);
-    updateData(newData, newColumns, newColumnInfo);
     setSelectedColumns(prev => prev.filter(c => c !== column));
+    pushOp({ type: 'drop_columns', target_columns: [column] });
   };
 
   // 열 선택/해제
@@ -341,6 +310,153 @@ export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
   const totalMissing = columnInfo.reduce((sum, col) => sum + col.missing, 0);
   const numericColumns = columnInfo.filter(c => c.type === 'number').length;
 
+  // 전처리 작업 큐 + 서버 연동 상태
+  type QueueOp =
+    | { type: 'fill_missing'; target_columns: string[]; strategy: 'mean'|'median'|'mode'|'value'; value?: string }
+    | { type: 'scale'; target_columns: string[]; method: 'minmax'|'zscore' }
+    | { type: 'drop_columns'; target_columns: string[] }
+    | { type: 'rename_columns'; mapping: Record<string,string> }
+    | { type: 'derived_column'; name: string; expression: string };
+  type ApplyResponse = { dataset_id: number; base_version_id?: number | null; new_version_id: number; version_no: number; row_count: number; col_count: number };
+
+  const [opsQueue, setOpsQueue] = useState<QueueOp[]>([]);
+  const pushOp = (op: QueueOp) => setOpsQueue(prev => [...prev, op]);
+  const removeOp = (idx: number) => setOpsQueue(prev => prev.filter((_, i) => i !== idx));
+  const moveUp = (idx: number) => setOpsQueue(prev => idx<=0?prev:[...prev.slice(0,idx-1), prev[idx], prev[idx-1], ...prev.slice(idx+1)]);
+  const moveDown = (idx: number) => setOpsQueue(prev => idx>=prev.length-1?prev:[...prev.slice(0,idx), prev[idx+1], prev[idx], ...prev.slice(idx+2)]);
+  // 현재 선택된 소스(source_id)를 dataset_id로 매핑
+  const [selectedDatasetId, setSelectedDatasetId] = useState<number | null>(null);
+  const [applyBaseVersionId, setApplyBaseVersionId] = useState('');
+  const [applyLoading, setApplyLoading] = useState(false);
+  const [applyResult, setApplyResult] = useState<ApplyResponse | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      if (!selectedSourceId) {
+        setSelectedDatasetId(null);
+        return;
+      }
+      try {
+        const res = await apiRequest<{ total:number; items: { id:number; filename:string; source_id:string }[] }>(`/datasets?skip=0&limit=1000`);
+        const found = (res.items || []).find(it => it.source_id === selectedSourceId);
+        setSelectedDatasetId(found ? found.id : null);
+      } catch (e) {
+        setSelectedDatasetId(null);
+      }
+    })();
+  }, [selectedSourceId]);
+
+  const toBackendOps = (ops: QueueOp[]) => ops.map(op => {
+    if (op.type === 'fill_missing') {
+      return { op: 'impute', params: { columns: op.target_columns, method: op.strategy, ...(op.strategy==='value'?{value:op.value}: {}) } };
+    }
+    if (op.type === 'scale') {
+      return { op: 'scale', params: { columns: op.target_columns, method: op.method === 'minmax' ? 'normalize' : 'standardize' } };
+    }
+    if (op.type === 'drop_columns') {
+      return { op: 'drop_columns', params: { columns: op.target_columns } };
+    }
+    if (op.type === 'rename_columns') {
+      return { op: 'rename_columns', params: { mapping: op.mapping } };
+    }
+    if (op.type === 'derived_column') {
+      return { op: 'derived_column', params: { name: op.name, expression: op.expression } };
+    }
+    return op as any;
+  });
+
+  const applyOpsToSample = (rows: Record<string,any>[], ops: QueueOp[]) => {
+    let out = rows.map(r => ({...r}));
+    for (const op of ops) {
+      if (op.type === 'drop_columns') {
+        out = out.map(r => {
+          const nr:any = {...r};
+          op.target_columns.forEach(c => delete nr[c]);
+          return nr;
+        });
+      } else if (op.type === 'rename_columns') {
+        out = out.map(r => {
+          const nr:any = {};
+          Object.keys(r).forEach(k => {
+            const nk = (op.mapping as any)[k] || k;
+            nr[nk] = (r as any)[k];
+          });
+          return nr;
+        });
+      } else if (op.type === 'fill_missing') {
+        for (const col of op.target_columns) {
+          let fill:any = '';
+          const vals = out.map(r => r[col]).filter(v => v!=='' && v!==null && v!==undefined);
+          if (op.strategy === 'value') fill = op.value ?? '';
+          else if (op.strategy === 'mean') {
+            const nums = vals.map(v => parseFloat(v)).filter(v => !isNaN(v));
+            const mean = nums.length? nums.reduce((a,b)=>a+b,0)/nums.length : 0;
+            fill = mean;
+          } else if (op.strategy === 'median') {
+            const nums = vals.map(v => parseFloat(v)).filter(v => !isNaN(v)).sort((a,b)=>a-b);
+            const mid = nums.length? nums[Math.floor(nums.length/2)] : 0;
+            fill = mid;
+          } else if (op.strategy === 'mode') {
+            const freq:Record<string,number> = {};
+            vals.forEach(v => { const k=String(v); freq[k]=(freq[k]||0)+1; });
+            fill = Object.keys(freq).reduce((a,b)=>freq[a]>freq[b]?a:b, '');
+          }
+          out = out.map(r => (r[col]===undefined||r[col]===null||r[col]==='') ? {...r, [col]: fill} : r);
+        }
+      } else if (op.type === 'scale') {
+        for (const col of op.target_columns) {
+          const nums = out.map(r => parseFloat(r[col])).filter(v => !isNaN(v));
+          const min = Math.min(...nums);
+          const max = Math.max(...nums);
+          const mean = nums.reduce((a,b)=>a+b,0)/(nums.length||1);
+          const std = Math.sqrt(nums.reduce((acc,v)=>acc+Math.pow(v-mean,2),0)/(nums.length||1)) || 1;
+          out = out.map(r => {
+            const v = parseFloat(r[col]);
+            if (isNaN(v)) return r;
+            if (op.method === 'minmax') {
+              const denom = (max-min)||1;
+              return { ...r, [col]: (v-min)/denom };
+            } else {
+              return { ...r, [col]: (v-mean)/std };
+            }
+          });
+        }
+      }
+    }
+    const columns = out.length? Object.keys(out[0]) : [];
+    return { columns, rows: out };
+  };
+
+  // 미리보기/적용 버튼 활성화 상태 관리
+  const opsSignature = useMemo(() => JSON.stringify(toBackendOps(opsQueue)), [opsQueue]);
+  const [lastPreviewSig, setLastPreviewSig] = useState<string | null>(null);
+  useEffect(() => {
+    // operations가 바뀌면 이전 미리보기는 무효화
+    setLastPreviewSig(null);
+  }, [opsSignature]);
+  const canPreview = Boolean(selectedDatasetId) && opsQueue.length > 0;
+  const canApply = canPreview && !applyLoading;
+
+  // 서버 적용 요청
+  const handleApplyToServer = async () => {
+    if (!selectedDatasetId || opsQueue.length === 0) return;
+    try {
+      setApplyLoading(true);
+      const payload: any = {
+        dataset_id: Number(selectedDatasetId),
+        base_version_id: applyBaseVersionId ? Number(applyBaseVersionId) : null,
+        operations: toBackendOps(opsQueue),
+      };
+      const res = await apiRequest<ApplyResponse>('/preprocess/apply', { method: 'POST', body: JSON.stringify(payload) });
+      setApplyResult(res);
+      setOpsQueue([]);
+    } catch (e) {
+      setApplyResult(null);
+    } finally {
+      setApplyLoading(false);
+    }
+  };
+
   return (
     <div className="h-full flex flex-col bg-gray-50 dark:bg-[#1c1c1e] overflow-hidden">
       {/* 파일이 없을 때 - 업로드 영역 */}
@@ -391,6 +507,9 @@ export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
                     </p>
                   </div>
                 </div>
+                {isParsing && (
+                  <div className="mt-4 text-xs text-gray-500">파일을 처리하는 중...</div>
+                )}
               </div>
 
               <div className="grid grid-cols-2 gap-4 pt-4">
@@ -843,12 +962,110 @@ export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
                       </div>
                     )}
                   </div>
+                  {/* --- 작업 큐 (컴팩트) 및 서버 적용 --- */}
+                  <Separator className="my-4" />
+                  <div className="space-y-3">
+                    {opsQueue.length === 0 ? (
+                      <p className="text-xs text-gray-500 dark:text-gray-400">추가된 작업이 없습니다.</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {opsQueue.map((op, idx) => {
+                          const summary = (() => {
+                            if (op.type === 'fill_missing') return `${op.type} ${op.strategy} [${op.target_columns.join(', ')}]`;
+                            if (op.type === 'scale') return `${op.type} ${op.method} [${op.target_columns.join(', ')}]`;
+                            if (op.type === 'drop_columns') return `${op.type} [${op.target_columns.join(', ')}]`;
+                            if (op.type === 'rename_columns') return `${op.type} ${Object.keys(op.mapping).length}개 매핑`;
+                            if (op.type === 'derived_column') return `${op.type} ${op.name}`;
+                            return '';
+                          })();
+                          return (
+                            <div key={idx} className="flex items-center justify-between border rounded-md px-2 py-1.5 gap-2">
+                              <div className="text-xs text-gray-700 dark:text-gray-300">
+                                <span className="font-medium mr-2">{idx + 1}.</span>
+                                <span>{summary}</span>
+                              </div>
+                              <div className="flex items-center gap-1">
+                                <Button size="sm" variant="outline" onClick={() => moveUp(idx)}>▲</Button>
+                                <Button size="sm" variant="outline" onClick={() => moveDown(idx)}>▼</Button>
+                                <Button size="sm" variant="outline" onClick={() => removeOp(idx)}>삭제</Button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="text-xs text-gray-500 dark:text-gray-400">
+                        현재 선택된 데이터셋에서 미리보기/적용이 수행됩니다.
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-end gap-2">
+                      <Button variant="outline" onClick={async () => {
+                        try {
+                          const payload: any = { dataset_id: Number(selectedDatasetId), operations: toBackendOps(opsQueue) };
+                          const res = await apiRequest<{ dataset_id:number; version_id?:number|null; columns: {name:string;dtype:string;missing:number}[]; sample_rows: Record<string, any>[] }>('/preprocess/preview', { method: 'POST', body: JSON.stringify(payload) });
+                          const applied = applyOpsToSample(res.sample_rows || [], opsQueue);
+                          const win = window.open('', '_blank');
+                          if (win) {
+                            const styles = `
+                              body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', 'Apple Color Emoji', 'Segoe UI Emoji'; padding: 16px; }
+                              table { border-collapse: collapse; width: 100%; }
+                              th, td { border: 1px solid #e5e7eb; padding: 8px; font-size: 12px; }
+                              th { background: #f9fafb; text-align: left; }
+                              caption { text-align: left; margin-bottom: 8px; color: #6b7280; font-size: 12px; }
+                            `;
+                            const head = `<head><meta charset=\"utf-8\" /><title>데이터 미리보기</title><style>${styles}</style></head>`;
+                            const cols = applied.columns;
+                            const outRows = applied.rows;
+                            const header = `<caption>데이터 미리보기 (작업 큐 적용됨) · 행: ${outRows.length}, 열: ${cols.length}</caption>`;
+                            const thead = `<thead><tr>${cols.map(c=>`<th>${c}</th>`).join('')}</tr></thead>`;
+                            const tbody = `<tbody>${outRows.map(r=>`<tr>${cols.map(c=>`<td>${String(r[c] ?? '')}</td>`).join('')}</tr>`).join('')}</tbody>`;
+                            const html = `<!doctype html>${head}<body><table>${header}${thead}${tbody}</table></body>`;
+                            win.document.open();
+                            win.document.write(html);
+                            win.document.close();
+                          }
+                          setLastPreviewSig(opsSignature);
+                        } catch (e) {
+                          // ignore
+                        }
+                      }} disabled={!canPreview}>미리보기</Button>
+                      <Button onClick={handleApplyToServer} disabled={!canApply}>
+                        {applyLoading ? '적용 중...' : '서버에 적용'}
+                      </Button>
+                    </div>
+
+                    {applyResult && (
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="border rounded-md p-2">
+                          <div className="text-[11px] text-gray-500">new_version_id</div>
+                          <div className="text-sm text-gray-900 dark:text-white">{applyResult.new_version_id}</div>
+                        </div>
+                        <div className="border rounded-md p-2">
+                          <div className="text-[11px] text-gray-500">version_no</div>
+                          <div className="text-sm text-gray-900 dark:text-white">{applyResult.version_no}</div>
+                        </div>
+                        <div className="border rounded-md p-2">
+                          <div className="text-[11px] text-gray-500">row_count</div>
+                          <div className="text-sm text-gray-900 dark:text-white">{applyResult.row_count}</div>
+                        </div>
+                        <div className="border rounded-md p-2">
+                          <div className="text-[11px] text-gray-500">col_count</div>
+                          <div className="text-sm text-gray-900 dark:text-white">{applyResult.col_count}</div>
+                        </div>
+                      </div>
+                    )}
+                    
+                  </div>
+
                 </ScrollArea>
               </Card>
             </div>
           </div>
         </div>
       )}
+      
     </div>
   );
 }
