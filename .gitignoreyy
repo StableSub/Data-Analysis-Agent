@@ -57,4 +57,4 @@ pnpm-debug.log*
 .idea/
 *.sh
 dev.sh
-
+rockapi.env
