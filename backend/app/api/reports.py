@@ -4,8 +4,8 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from ..core.db import get_db
-from ..dependencies import get_llm_client
-from ..ai.llm.client import LLMClient
+from ..dependencies import get_agent
+from ..ai.agents.client import AgentClient
 from ..domain.report.schemas import (
     ReportCreateRequest,
     ReportCreateResponse,
@@ -37,7 +37,7 @@ def export_report(
 def create_report(
     request: ReportCreateRequest,
     service: ReportService = Depends(get_report_service),
-    llm_client: LLMClient = Depends(get_llm_client),
+    agent: AgentClient = Depends(get_agent),
 ):
     """리포트 생성."""
     report = service.create_report(
@@ -45,7 +45,7 @@ def create_report(
         analysis_results=request.analysis_results,
         visualizations=request.visualizations,
         insights=request.insights,
-        llm_client=llm_client,
+        agent=agent,
     )
 
     return ReportCreateResponse(

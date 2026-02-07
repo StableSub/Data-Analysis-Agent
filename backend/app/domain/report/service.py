@@ -12,7 +12,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from ...ai.llm.client import LLMClient
+from ...ai.agents.client import AgentClient
 from .models import Report, ReportExport
 
 
@@ -31,7 +31,7 @@ class ReportService:
         analysis_results: List[Dict[str, Any]],
         visualizations: List[Dict[str, Any]],
         insights: List[Any],
-        llm_client: LLMClient,
+        agent: AgentClient,
     ) -> Report:
         if not analysis_results and not visualizations and not insights:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="NO_RESULTS")
@@ -47,7 +47,7 @@ class ReportService:
 
         try:
             # 3) LLM 호출
-            summary_text = llm_client.ask(question=question, context=context)
+            summary_text = agent.ask(question=question, context=context)
         except Exception as exc:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -61,7 +61,7 @@ class ReportService:
             version=version,
             summary_text=summary_text,
             payload_json=payload,
-            llm_model=getattr(llm_client, "preset", None),
+            llm_model=getattr(agent, "preset", None),
             prompt_version=prompt_version,
         )
         self.db.add(report)
