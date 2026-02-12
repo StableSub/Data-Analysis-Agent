@@ -5,7 +5,6 @@ import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { Checkbox } from '../ui/checkbox';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/table';
 import { toast } from 'sonner';
 import { apiRequest } from '../../lib/api';
 
@@ -48,12 +47,7 @@ export function PreprocessBackendPage() {
   const [datasetId, setDatasetId] = useState<string>('');
   const [versionId, setVersionId] = useState<string>('');
   const [baseVersionId, setBaseVersionId] = useState<string>('');
-  const [createdBy, setCreatedBy] = useState<string>('');
-  const [note, setNote] = useState<string>('');
-  const [preview, setPreview] = useState<PreviewResponse | null>(null);
-  const [loadingPreview, setLoadingPreview] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [applyResult, setApplyResult] = useState<ApplyResponse | null>(null);
+  const [columnsList, setColumnsList] = useState<string[]>([]);
 
   // Operations queue
   const [operations, setOperations] = useState<Operation[]>([]);
@@ -69,7 +63,7 @@ export function PreprocessBackendPage() {
   const [derivedName, setDerivedName] = useState<string>('');
   const [derivedExpr, setDerivedExpr] = useState<string>('');
 
-  const columns = useMemo(() => preview?.columns?.map((c) => c.name) || [], [preview]);
+  const columns = useMemo(() => columnsList, [columnsList]);
 
   const toggleColumn = (col: string) => {
     setSelectedColumns((prev) => (prev.includes(col) ? prev.filter((c) => c !== col) : [...prev, col]));
@@ -115,54 +109,60 @@ export function PreprocessBackendPage() {
   };
 
   const handlePreview = async () => {
-    setApplyResult(null);
     if (!datasetId) {
-      toast.error('dataset_id를 입력하세요');
+      alert('dataset_id를 입력하세요');
       return;
     }
     try {
-      setLoadingPreview(true);
-      const payload: any = { dataset_id: Number(datasetId) };
-      if (versionId) payload.version_id = Number(versionId);
-      const data = await apiRequest<PreviewResponse>('/preprocess/preview', {
-        method: 'POST',
-        body: JSON.stringify(payload),
-      });
-      setPreview(data);
-      toast.success('미리보기를 불러왔습니다');
+      const payload: any = {
+        dataset_id: Number(datasetId),
+        ...(versionId ? { version_id: Number(versionId) } : {}),
+        operations,
+      };
+      const res = await apiRequest<PreviewResponse>('/preprocess/preview', { method: 'POST', body: JSON.stringify(payload) });
+      // 새 창에 표 형태로 렌더링
+      const win = window.open('', '_blank');
+      if (win) {
+        const styles = `
+          body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial; padding: 16px; }
+          table { border-collapse: collapse; width: 100%; }
+          th, td { border: 1px solid #e5e7eb; padding: 8px; font-size: 12px; }
+          th { background: #f9fafb; text-align: left; }
+          caption { text-align: left; margin-bottom: 8px; color: #6b7280; font-size: 12px; }
+        `;
+        const head = `<head><meta charset=\"utf-8\" /><title>전처리 미리보기</title><style>${styles}</style></head>`;
+        const cols = res.sample_rows[0] ? Object.keys(res.sample_rows[0]) : res.columns.map(c => c.name);
+        const rows = res.sample_rows;
+        const caption = `<caption>전처리 미리보기 · 행: ${rows.length}, 열: ${cols.length}</caption>`;
+        const thead = `<thead><tr>${cols.map(c => `<th>${c}</th>`).join('')}</tr></thead>`;
+        const tbody = `<tbody>${rows.map(r => `<tr>${cols.map(c => `<td>${String((r as any)[c] ?? '')}</td>`).join('')}</tr>`).join('')}</tbody>`;
+        const html = `<!doctype html>${head}<body><table>${caption}${thead}${tbody}</table></body>`;
+        win.document.open();
+        win.document.write(html);
+        win.document.close();
+      }
+      // 컬럼 선택을 위해 컬럼 목록 갱신
+      setColumnsList(res.columns.map(c => c.name));
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '미리보기 요청 실패');
-      setPreview(null);
-    } finally {
-      setLoadingPreview(false);
+      alert('미리보기 생성 실패');
     }
   };
 
   const handleApply = async () => {
     if (!datasetId) {
-      toast.error('dataset_id를 입력하세요');
+      alert('dataset_id를 입력하세요');
       return;
     }
     try {
-      setSaving(true);
       const payload: any = {
         dataset_id: Number(datasetId),
         base_version_id: baseVersionId ? Number(baseVersionId) : null,
         operations,
-        created_by: createdBy || null,
-        note: note || null,
       };
-      const res = await apiRequest<ApplyResponse>('/preprocess/apply', {
-        method: 'POST',
-        body: JSON.stringify(payload),
-      });
-      setApplyResult(res);
-      toast.success('전처리 적용 완료');
+      await apiRequest<ApplyResponse>('/preprocess/apply', { method: 'POST', body: JSON.stringify(payload) });
+      alert('서버 적용 완료');
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '전처리 적용 실패');
-      setApplyResult(null);
-    } finally {
-      setSaving(false);
+      alert('서버 적용 실패');
     }
   };
 
@@ -185,64 +185,11 @@ export function PreprocessBackendPage() {
             <Input id="versionId" value={versionId} onChange={(e) => setVersionId(e.target.value)} placeholder="예: 10" />
           </div>
           <div className="flex items-end">
-            <Button onClick={handlePreview} disabled={loadingPreview}>
-              {loadingPreview ? '불러오는 중...' : '미리보기 호출'}
-            </Button>
+            <Button onClick={handlePreview}>미리보기</Button>
           </div>
         </div>
       </Card>
 
-      {/* Preview Result */}
-      <Card className="p-6 space-y-4">
-        <div className="flex items-center justify-between">
-          <h3 className="text-gray-900">미리보기 결과</h3>
-          {preview && (
-            <span className="text-sm text-gray-500">dataset_id: {preview.dataset_id}{preview.version_id ? `, version_id: ${preview.version_id}` : ''}</span>
-          )}
-        </div>
-
-        {!preview ? (
-          <p className="text-gray-600">미리보기를 호출하세요.</p>
-        ) : (
-          <div className="space-y-6">
-            <div>
-              <h4 className="text-gray-900 mb-2">컬럼</h4>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                {preview.columns.map((c) => (
-                  <div key={c.name} className="border rounded-lg p-3">
-                    <div className="font-medium text-gray-900">{c.name}</div>
-                    <div className="text-sm text-gray-500">{c.dtype} · 결측치 {c.missing}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div>
-              <h4 className="text-gray-900 mb-2">샘플 행 (상위 20)</h4>
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      {(preview.sample_rows[0] ? Object.keys(preview.sample_rows[0]) : columns).map((col) => (
-                        <TableHead key={col}>{col}</TableHead>
-                      ))}
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {preview.sample_rows.map((row, idx) => (
-                      <TableRow key={idx}>
-                        {(preview.sample_rows[0] ? Object.keys(preview.sample_rows[0]) : columns).map((col) => (
-                          <TableCell key={col}>{String((row as any)[col] ?? '')}</TableCell>
-                        ))}
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            </div>
-          </div>
-        )}
-      </Card>
 
       {/* Operations Builder */}
       <Card className="p-6 space-y-4">
@@ -395,46 +342,16 @@ export function PreprocessBackendPage() {
           </div>
         )}
 
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-4 pt-2">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
           <div>
             <Label>base_version_id (선택)</Label>
             <Input value={baseVersionId} onChange={(e) => setBaseVersionId(e.target.value)} placeholder="예: 10" />
           </div>
-          <div>
-            <Label>created_by (선택)</Label>
-            <Input value={createdBy} onChange={(e) => setCreatedBy(e.target.value)} placeholder="작성자" />
-          </div>
-          <div className="md:col-span-2">
-            <Label>note (선택)</Label>
-            <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="설명/메모" />
-          </div>
           <div className="flex items-end">
-            <Button onClick={handleApply} disabled={saving || !datasetId}>적용</Button>
+            <Button onClick={handleApply}>서버에 적용</Button>
           </div>
         </div>
-
-        {applyResult && (
-          <div className="mt-4 grid grid-cols-1 md:grid-cols-4 gap-4">
-            <div className="border rounded-md p-3">
-              <div className="text-sm text-gray-500">new_version_id</div>
-              <div className="text-gray-900">{applyResult.new_version_id}</div>
-            </div>
-            <div className="border rounded-md p-3">
-              <div className="text-sm text-gray-500">version_no</div>
-              <div className="text-gray-900">{applyResult.version_no}</div>
-            </div>
-            <div className="border rounded-md p-3">
-              <div className="text-sm text-gray-500">row_count</div>
-              <div className="text-gray-900">{applyResult.row_count}</div>
-            </div>
-            <div className="border rounded-md p-3">
-              <div className="text-sm text-gray-500">col_count</div>
-              <div className="text-gray-900">{applyResult.col_count}</div>
-            </div>
-          </div>
-        )}
       </Card>
     </div>
   );
 }
-
