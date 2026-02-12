@@ -1,17 +1,15 @@
 import { useState, useEffect, useRef } from 'react';
-import { CopilotKit } from '@copilotkit/react-core';
-import { CopilotSidebar } from '@copilotkit/react-ui';
-import '@copilotkit/react-ui/styles.css';
 import { WorkbenchNav, FeatureType } from './layout/WorkbenchNav';
 import { FeatureToggle } from './layout/FeatureToggle';
 import { WorkbenchUpload } from './chat/WorkbenchUpload';
 import { DataPreprocessing } from './preprocessing/DataPreprocessing';
-import { WorkspaceCanvas } from './layout/WorkspaceCanvas';
 import { useStore } from '../store/useStore';
 import { BarChart3, FileEdit } from 'lucide-react';
 import { DEFAULT_MODEL_ID } from '../lib/models';
 import { AppHeader } from './workbench/AppHeader';
 import { SelectedFilesBar } from './workbench/SelectedFilesBar';
+import { ChatMessages } from './workbench/ChatMessages';
+import { ChatInputBar } from './workbench/ChatInputBar';
 import { apiRequest } from '../lib/api';
 import { toast } from 'sonner';
 
@@ -218,12 +216,68 @@ export function WorkbenchApp({ initialFeature = 'analysis' }: WorkbenchAppProps)
   }));
 
   return (
-    <CopilotKit runtimeUrl="/api/copilotkit">
-      <div className={isDark ? 'dark' : ''}>
-        <div className="flex h-screen bg-gray-50 dark:bg-[#212121]">
-          {/* 데이터 전처리 화면 */}
-          {activeFeature === 'preprocessing' ? (
-            <div className="flex-1 flex flex-col">
+    <div className={isDark ? 'dark' : ''}>
+      <div className="flex h-screen bg-gray-50 dark:bg-[#212121]">
+        {/* 데이터 전처리 화면 */}
+        {activeFeature === 'preprocessing' ? (
+          <div className="flex-1 flex flex-col">
+            <AppHeader
+              title="AI 챗봇"
+              subtitle="제조 데이터 분석 AI 어시스턴트"
+              isDark={isDark}
+              onToggleTheme={() => setIsDark(!isDark)}
+              center={
+                <FeatureToggle
+                  items={featureButtons}
+                  activeId={activeFeature}
+                  onChange={(id) => handleFeatureChange(id as AppFeature)}
+                />
+              }
+            />
+            {(() => {
+              const selectedDatasetSourceId = (activeSession?.files || [])
+                .find(f => f.selected && f.type === 'dataset' && f.sourceId)?.sourceId || null;
+              return <DataPreprocessing isDark={isDark} selectedSourceId={selectedDatasetSourceId} />;
+            })()}
+          </div>
+        ) : (
+          <>
+            {/* 좌측 네비게이션 */}
+            <WorkbenchNav
+              onNewChat={handleNewChat}
+              sessions={chatHistorySessions}
+              activeSessionId={activeSessionId}
+              onSessionSelect={setActiveSession}
+              onSessionDelete={deleteSession}
+              onSessionRename={updateSessionTitle}
+              files={activeSession?.files || []}
+              onFileToggle={(fileId) => activeSessionId && toggleFileSelection(activeSessionId, fileId)}
+              onFileRemove={async (fileId) => {
+                if (!activeSessionId) return;
+
+                const currentSession = sessions.find(s => s.id === activeSessionId);
+                const file = currentSession?.files.find(f => f.id === fileId);
+
+                if (file && file.sourceId) {
+                  try {
+                    const deleteToast = toast.loading('파일 삭제 중...');
+                    await apiRequest(`/datasets/${file.sourceId}`, { method: 'DELETE' });
+                    toast.dismiss(deleteToast);
+                    toast.success('파일이 삭제되었습니다.');
+                  } catch (error) {
+                    console.error('Failed to delete file from backend:', error);
+                    toast.error('파일 삭제 실패: 서버 오류');
+                    // 서버 삭제 실패해도 로컬에서는 지우고 싶다면 아래 코드를 try 밖으로 뺍니다.
+                  }
+                }
+
+                // Ensure store update happens
+                removeFile(activeSessionId, fileId);
+              }}
+            />
+
+            {/* 우측 대화 영역 */}
+            <div className="flex-1 flex flex-col bg-white dark:bg-[#212121]">
               <AppHeader
                 title="AI 챗봇"
                 subtitle="제조 데이터 분석 AI 어시스턴트"
@@ -237,91 +291,45 @@ export function WorkbenchApp({ initialFeature = 'analysis' }: WorkbenchAppProps)
                   />
                 }
               />
-              {(() => {
-                const selectedDatasetSourceId = (activeSession?.files || [])
-                  .find(f => f.selected && f.type === 'dataset' && f.sourceId)?.sourceId || null;
-                return <DataPreprocessing isDark={isDark} selectedSourceId={selectedDatasetSourceId} />;
-              })()}
+
+              {activeSession && <SelectedFilesBar files={activeSession.files} />}
+
+              <ChatMessages
+                messages={activeSession?.messages || []}
+                isGenerating={isGenerating}
+                streamingContent={streamingContent}
+                emptyTitle={activeFeature === 'analysis' ? 'AI 챗봇' : '데이터 전처리'}
+                emptySubtitle={
+                  activeFeature === 'analysis'
+                    ? '제조 데이터 분석 AI 어시스턴트'
+                    : '데이터 정제, 변환 및 특성 추출'
+                }
+                endRef={messagesEndRef}
+              />
+
+              <ChatInputBar
+                message={message}
+                setMessage={setMessage}
+                isGenerating={isGenerating}
+                onSend={handleSend}
+                onStop={handleStopGenerating}
+                onOpenUpload={() => setShowUpload(true)}
+                selectedModelId={selectedModelId}
+                setSelectedModelId={setSelectedModelId}
+                textareaRef={textareaRef as React.RefObject<HTMLTextAreaElement>}
+              />
             </div>
-          ) : (
-            <>
-              {/* 좌측 네비게이션 */}
-              <WorkbenchNav
-                onNewChat={handleNewChat}
-                sessions={chatHistorySessions}
-                activeSessionId={activeSessionId}
-                onSessionSelect={setActiveSession}
-                onSessionDelete={deleteSession}
-                onSessionRename={updateSessionTitle}
-                files={activeSession?.files || []}
-                onFileToggle={(fileId) => activeSessionId && toggleFileSelection(activeSessionId, fileId)}
-                onFileRemove={async (fileId) => {
-                  if (!activeSessionId) return;
 
-                  const currentSession = sessions.find(s => s.id === activeSessionId);
-                  const file = currentSession?.files.find(f => f.id === fileId);
-
-                  if (file && file.sourceId) {
-                    try {
-                      const deleteToast = toast.loading('파일 삭제 중...');
-                      await apiRequest(`/datasets/${file.sourceId}`, { method: 'DELETE' });
-                      toast.dismiss(deleteToast);
-                      toast.success('파일이 삭제되었습니다.');
-                    } catch (error) {
-                      console.error('Failed to delete file from backend:', error);
-                      toast.error('파일 삭제 실패: 서버 오류');
-                      // 서버 삭제 실패해도 로컬에서는 지우고 싶다면 아래 코드를 try 밖으로 뺍니다.
-                    }
-                  }
-
-                  // Ensure store update happens
-                  removeFile(activeSessionId, fileId);
-                }}
+            {/* Upload Modal */}
+            {showUpload && (
+              <WorkbenchUpload
+                onClose={() => setShowUpload(false)}
+                onUpload={handleFileUpload}
               />
-
-              {/* 우측 대화 영역 */}
-              <div className="flex-1 flex flex-col bg-white dark:bg-[#212121]">
-                <AppHeader
-                  title="AI 챗봇"
-                  subtitle="제조 데이터 분석 AI 어시스턴트"
-                  isDark={isDark}
-                  onToggleTheme={() => setIsDark(!isDark)}
-                  center={
-                    <FeatureToggle
-                      items={featureButtons}
-                      activeId={activeFeature}
-                      onChange={(id) => handleFeatureChange(id as AppFeature)}
-                    />
-                  }
-                />
-
-                {activeSession && <SelectedFilesBar files={activeSession.files} />}
-
-                {/* 메인 작업 공간 (캔버스) */}
-                <WorkspaceCanvas isDark={isDark} />
-              </div>
-
-              {/* 우측: CopilotSidebar */}
-              <CopilotSidebar
-                defaultOpen={true}
-                clickOutsideToClose={false}
-                labels={{
-                  title: 'AI 코파일럿',
-                  initial: '안녕하세요! 데이터 분석을 도와드리겠습니다. 무엇을 도와드릴까요?',
-                }}
-              />
-
-              {/* Upload Modal */}
-              {showUpload && (
-                <WorkbenchUpload
-                  onClose={() => setShowUpload(false)}
-                  onUpload={handleFileUpload}
-                />
-              )}
-            </>
-          )}
-        </div>
+            )}
+          </>
+        )}
       </div>
-    </CopilotKit>
+    </div>
   );
 }
