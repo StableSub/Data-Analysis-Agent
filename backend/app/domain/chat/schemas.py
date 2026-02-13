@@ -15,6 +15,8 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     question: str = Field(..., description="The natural language question from the user.")
     session_id: Optional[int] = Field(default=None, description="Existing chat session identifier.")
+    model_id: Optional[str] = Field(default=None, description="Optional model identifier.")
+    source_id: Optional[str] = Field(default=None, description="Optional dataset source identifier.")
 
 
 class ChatResponse(BaseModel):

@@ -28,7 +28,7 @@ def get_data_source_service(
     DB 세션으로 Repository 생성
     """
     repository = DataSourceRepository(db)
-    storage_dir = Path("storage") / "datasets"
+    storage_dir = Path(__file__).resolve().parents[3] / "storage" / "datasets"
     return DataSourceService(repository=repository, storage_dir=storage_dir)
 
 

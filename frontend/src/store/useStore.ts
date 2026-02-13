@@ -286,7 +286,7 @@ export const useStore = create<AppState>()(
               id: number;
               role: string;
               content: string;
-              created_at: string;
+              created_at?: string;
             }[];
           }
 
@@ -296,7 +296,7 @@ export const useStore = create<AppState>()(
             id: `msg-${msg.id}`,
             role: msg.role as 'user' | 'assistant',
             content: msg.content,
-            timestamp: new Date(msg.created_at),
+            timestamp: msg.created_at ? new Date(msg.created_at) : new Date(),
           }));
 
           set((state) => ({

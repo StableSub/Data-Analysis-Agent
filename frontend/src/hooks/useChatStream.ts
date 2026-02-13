@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef } from 'react';
 import { ChatMessage } from '../types/chat';
 import { toast } from 'sonner';
-import { DEFAULT_MODEL_ID } from '../lib/models';
+import { apiRequest } from '../lib/api';
 
 export function useChatStream() {
   const [isStreaming, setIsStreaming] = useState(false);
@@ -11,7 +11,7 @@ export function useChatStream() {
     messages: ChatMessage[],
     onChunk: (delta: string, messageId: string) => void,
     onComplete: (messageId: string, usage?: any) => void,
-    options?: { modelId?: string; sessionId?: string; data_source_id?: string; assistantMessageId?: string }
+    options?: { modelId?: string; sessionId?: string; sourceId?: string; assistantMessageId?: string }
   ) => {
     try {
       setIsStreaming(true);
@@ -26,33 +26,31 @@ export function useChatStream() {
         const parts = options.sessionId.split('-');
         const lastPart = parts[parts.length - 1];
         if (lastPart) {
-          numericSessionId = parseInt(lastPart);
+          const parsed = parseInt(lastPart, 10);
+          if (!Number.isNaN(parsed)) {
+            numericSessionId = parsed;
+          }
         }
       }
 
-      const body = {
+      const body: { question: string; session_id?: number; model_id?: string; source_id?: string } = {
         question: lastMessage.content,
-        session_id: numericSessionId,
-        model_id: options?.modelId || DEFAULT_MODEL_ID,
-        data_source_id: options?.data_source_id,
       };
+      if (numericSessionId !== undefined) {
+        body.session_id = numericSessionId;
+      }
+      if (options?.modelId) {
+        body.model_id = options.modelId;
+      }
+      if (options?.sourceId) {
+        body.source_id = options.sourceId;
+      }
 
-      console.log('Sending request to backend:', body);
-
-      const response = await fetch('http://localhost:8000/chats/', {
+      const data = await apiRequest<{ answer: string }>('/chats', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
         body: JSON.stringify(body),
         signal: abortControllerRef.current.signal,
       });
-
-      if (!response.ok) {
-        throw new Error('Failed to fetch response');
-      }
-
-      const data = await response.json();
       const messageId = options?.assistantMessageId || `assistant-${Date.now()}`;
 
       // Since backend doesn't support streaming yet, we return the whole answer as one chunk

@@ -1,4 +1,3 @@
-import os
 import uuid
 from pathlib import Path
 from typing import IO, Any, Dict, List, Optional, Tuple
@@ -108,12 +107,13 @@ class DataSourceService:
         }
 
         file_path = Path(dataset.storage_path)
-        if file_path.exists() and file_path.is_file():
-            try:
-                os.remove(file_path)
-            except OSError:
-                pass
-
+        try:
+            file_path.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError as e:
+            raise
+        
         self.repository.delete(dataset)
         return {
             "success": True,
