@@ -19,9 +19,6 @@ async def ask_chat(
     return chat_service.ask(
         question=request.question,
         session_id=request.session_id,
-        context=request.context,
-        data_source_id=request.data_source_id,
-        model_id=request.model_id,
     )
 
 
