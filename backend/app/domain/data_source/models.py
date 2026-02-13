@@ -6,6 +6,8 @@ from ...core.db import Base
 
 
 class Dataset(Base):
+    """업로드된 데이터 파일의 최소 메타데이터를 저장하는 ORM 모델."""
+
     __tablename__ = "datasets"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -16,6 +18,8 @@ class Dataset(Base):
 
 
 class SessionSource(Base):
+    """채팅 세션과 데이터셋(source_id) 연결 관계를 저장하는 ORM 모델."""
+
     __tablename__ = "session_sources"
 
     id = Column(Integer, primary_key=True, index=True)
