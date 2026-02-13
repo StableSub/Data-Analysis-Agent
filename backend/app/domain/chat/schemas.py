@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 from pydantic import ConfigDict
 
 
-class ChatMessageSchema(BaseModel):
+class ChatMessage(BaseModel):
     id: int
     role: str
     content: str
@@ -32,4 +32,4 @@ class ChatResponse(BaseModel):
 
 class ChatHistoryResponse(BaseModel):
     session_id: int
-    messages: List[ChatMessageSchema]
+    messages: List[ChatMessage]

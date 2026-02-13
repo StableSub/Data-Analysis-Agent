@@ -194,7 +194,7 @@ class RagService:
         path = Path(dataset.storage_path)
         if path.suffix.lower() == ".pdf":
             return AgentClient.load_text_from_file(str(path), max_chars=200000)
-        encoding = dataset.encoding or "utf-8"
+        encoding = getattr(dataset, "encoding", None) or "utf-8"
         return path.read_text(encoding=encoding, errors="ignore")
 
     def _chunk_text(self, text: str) -> List[str]:

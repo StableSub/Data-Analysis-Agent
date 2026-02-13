@@ -21,7 +21,6 @@ def preview(req: PreprocessPreviewRequest, db: Session = Depends(get_db)):
     try:
         return PreprocessService(db).preview(
             dataset_id=req.dataset_id,
-            version_id=req.version_id,
         )
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -32,16 +31,12 @@ def preview(req: PreprocessPreviewRequest, db: Session = Depends(get_db)):
 @router.post("/apply", response_model=PreprocessApplyResponse)
 def apply(req: PreprocessApplyRequest, db: Session = Depends(get_db)):
     """
-    GUI에서 설정한 전처리 작업을 실제 데이터에 적용하고
-    새로운 데이터 버전을 생성
+    GUI에서 설정한 전처리 작업을 실제 데이터 파일에 바로 적용
     """
     try:
         return PreprocessService(db).apply(
             dataset_id=req.dataset_id,
-            base_version_id=req.base_version_id,
             operations=req.operations,
-            created_by=req.created_by,
-            note=req.note,
         )
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
