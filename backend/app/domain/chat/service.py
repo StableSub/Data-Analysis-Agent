@@ -1,6 +1,7 @@
 from typing import Optional
 
 from ...ai.agents.client import AgentClient
+from ..data_source.repository import DataSourceRepository
 from .repository import ChatRepository
 from .schemas import ChatHistoryResponse, ChatResponse
 
@@ -12,22 +13,37 @@ class ChatService:
         self,
         agent: AgentClient,
         repository: ChatRepository,
+        data_source_repository: DataSourceRepository,
     ) -> None:
         self.agent = agent
         self.repository = repository
+        self.data_source_repository = data_source_repository
 
     def ask(
         self,
         *,
         question: str,
         session_id: Optional[int] = None,
+        model_id: Optional[str] = None,
+        source_id: Optional[str] = None,
     ) -> ChatResponse:
         """질문을 저장하고 모델 응답을 반환한다."""
         session = self.repository.get_session(session_id) if session_id else None
         if session is None:
             session = self.repository.create_session(title=question[:60])
 
-        answer = self.agent.ask(session_id=str(session.id), question=question)
+        dataset = (
+            self.data_source_repository.get_by_source_id(source_id)
+            if source_id
+            else None
+        )
+
+        answer = self.agent.ask(
+            session_id=str(session.id),
+            question=question,
+            dataset=dataset,
+            model_id=model_id,
+        )
         self.repository.append_message(session, "user", question)
         self.repository.append_message(session, "assistant", answer)
         return ChatResponse(answer=answer, session_id=session.id)

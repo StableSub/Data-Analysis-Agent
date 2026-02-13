@@ -120,18 +120,17 @@ export function WorkbenchApp({ initialFeature = 'analysis' }: WorkbenchAppProps)
     abortControllerRef.current = abortController;
 
     try {
-      // Collect selected file source IDs
-      const selectedSourceIds = currentSession?.files
-        .filter(f => f.selected && f.sourceId)
-        .map(f => f.sourceId!) || [];
+      const selectedSourceId = currentSession?.files.find(
+        (f) => f.selected && typeof f.sourceId === 'string'
+      )?.sourceId;
 
       const response = await apiRequest<{ answer: string; session_id: number }>('/chats', {
         method: 'POST',
         body: JSON.stringify({
           question: userMessage,
           session_id: currentSession?.backendSessionId ?? undefined,
-          data_source_id: selectedSourceIds.length > 0 ? selectedSourceIds[0] : undefined,
           model_id: selectedModelId,
+          source_id: selectedSourceId,
         }),
         signal: abortController.signal,
       });
