@@ -1,210 +1,29 @@
 from typing import List, Optional
+
 from sqlalchemy.orm import Session
-from .models import Dataset, SessionSource, DatasetVersion
-from sqlalchemy import text, func
+
+from .models import Dataset
+
 
 class DataSourceRepository:
-    """
-    Dataset 테이블에 대해 DB에 직접 접근
-    DB 읽기 및 쓰기만 담당
-    """
     def __init__(self, db: Session):
         self.db = db
 
     def create(self, dataset: Dataset) -> Dataset:
-        """
-        Dataset ORM 객체를 DB에 저장(create)
-        refresh: commit 후 DB에서 최신 값을 다시 로드
-        """
         self.db.add(dataset)
         self.db.commit()
         self.db.refresh(dataset)
         return dataset
 
     def list_all(self) -> List[Dataset]:
-        """
-        모든 Dataset 목록 조회
-        업로드 시각(uploaded_at) 순으로 최신순 정렬
-        """
-        return self.db.query(Dataset).order_by(Dataset.uploaded_at.desc()).all()
-    
+        return self.db.query(Dataset).order_by(Dataset.id.desc()).all()
 
-    def list_by_workspace(self, workspace_id: str) -> List[Dataset]:
-        """
-        특정 workspace_id에 해당하는 Dataset 목록 조회
-        """
-        return (
-            self.db.query(Dataset)
-            .filter(Dataset.workspace_id == workspace_id)
-            .order_by(Dataset.uploaded_at.desc())
-            .all()
-        )
-    
     def get_by_id(self, dataset_id: int) -> Optional[Dataset]:
-        """
-        내부 ID 기준으로 Dataset 조회
-        """
         return self.db.query(Dataset).filter(Dataset.id == dataset_id).first()
 
     def get_by_source_id(self, source_id: str) -> Optional[Dataset]:
-        """
-        외부 공개용 source_id 기준 조회
-        """
-        return (
-            self.db.query(Dataset)
-            .filter(Dataset.source_id == source_id)
-            .first()
-        )
+        return self.db.query(Dataset).filter(Dataset.source_id == source_id).first()
 
     def delete(self, dataset: Dataset) -> None:
-        """
-        주어진 Dataset ORM 객체 삭제
-        이미 get() 등을 통해 가져온 ORM 객체를 받아 삭제하는 방식
-        """
         self.db.delete(dataset)
         self.db.commit()
-
-    def is_dataset_in_use(self, source_id: str) -> bool:
-        """
-        데이터셋이 세션에서 사용 중인지 확인
-        session_sources 테이블을 참조하여 연결 여부 확인
-        
-        Returns:
-            bool: 사용 중이면 True, 아니면 False
-        """
-        # SessionSource 모델을 import 해야 합니다
-        
-        count = (
-            self.db.query(SessionSource)
-            .filter(SessionSource.source_id == source_id)
-            .count()
-        )
-        
-        return count > 0
-
-    def delete_by_source_id(self, source_id: str) -> bool:
-        """
-        source_id 기준으로 Dataset 삭제
-        Returns:
-            bool: 삭제 성공 여부
-        """
-        dataset = self.get_by_source_id(source_id)
-        if dataset:
-            self.delete(dataset)
-            return True
-        return False
-
-    def update_metadata(
-        self, 
-        source_id: str, 
-        encoding: Optional[str] = None,
-        delimiter: Optional[str] = None,
-        has_header: Optional[bool] = None
-    ) -> Optional[Dataset]:
-        """
-        데이터셋의 메타데이터 필드 수정
-        
-        Args:
-            source_id: 데이터셋 ID
-            encoding: 새로운 인코딩
-            delimiter: 새로운 구분자
-            has_header: 헤더 존재 여부
-            
-        Returns:
-            Dataset: 수정된 Dataset 객체
-        """
-        dataset = self.get_by_source_id(source_id)
-        if not dataset:
-            return None
-        
-        # 전달된 필드만 업데이트
-        if encoding is not None:
-            dataset.encoding = encoding
-        if delimiter is not None:
-            dataset.delimiter = delimiter
-        if has_header is not None:
-            dataset.has_header = has_header
-        
-        self.db.commit()
-        self.db.refresh(dataset)
-        return dataset
-    
-class DatasetVersionRepository:
-    """
-    데이터셋 버전 DB 접근 
-    """
-    def __init__(self, db: Session):
-        self.db = db
-
-    def get_dataset(self, dataset_id: int) -> Dataset:
-        """
-        데이터셋 존재 여부 확인
-        """
-        ds = self.db.query(Dataset).filter(Dataset.id == dataset_id).first()
-        if not ds:
-            raise FileNotFoundError(f"Dataset not found: {dataset_id}")
-        return ds
-
-    def get_version(self, version_id: int) -> DatasetVersion:
-        """
-        특정 데이터 버전 조회
-        """
-        v = self.db.query(DatasetVersion).filter(DatasetVersion.id == version_id).first()
-        if not v:
-            raise FileNotFoundError(f"Dataset version not found: {version_id}")
-        return v
-
-    def list_versions(self, dataset_id: int) -> List[DatasetVersion]:
-        """
-        데이터셋의 모든 버전 목록 조회
-        """
-        self.get_dataset(dataset_id)
-        return (
-            self.db.query(DatasetVersion)
-            .filter(DatasetVersion.dataset_id == dataset_id)
-            .order_by(DatasetVersion.version_no.asc(), DatasetVersion.created_at.asc())
-            .all()
-        )
-
-    def next_version_no(self, dataset_id: int) -> int:
-        """
-        다음 버전 번호 계산
-        """
-        n = (
-            self.db.query(func.max(DatasetVersion.version_no))
-            .filter(DatasetVersion.dataset_id == dataset_id)
-            .scalar()
-        )
-        return int(n or 0) + 1
-
-    def create_version(
-        self,
-        dataset_id: int,
-        file_path: str,
-        operations_json: str,
-        base_version_id: Optional[int],
-        row_count: Optional[int] = None,
-        col_count: Optional[int] = None,
-        created_by: Optional[str] = None,
-        note: Optional[str] = None,
-    ) -> DatasetVersion:
-        """
-        새 전처리 버전 생성
-        """
-        self.get_dataset(dataset_id)
-
-        v = DatasetVersion(
-            dataset_id=dataset_id,
-            base_version_id=base_version_id,
-            version_no=self.next_version_no(dataset_id),
-            file_path=file_path,
-            operations_json=operations_json,
-            row_count=row_count,
-            col_count=col_count,
-            created_by=created_by,
-            note=note,
-        )
-        self.db.add(v)
-        self.db.commit()
-        self.db.refresh(v)
-        return v
