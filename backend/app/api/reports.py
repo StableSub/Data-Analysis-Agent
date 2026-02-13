@@ -1,17 +1,10 @@
-from pathlib import Path
-
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
+from ..ai.agents.client import AgentClient
 from ..core.db import get_db
 from ..dependencies import get_agent
-from ..ai.agents.client import AgentClient
-from ..domain.report.schemas import (
-    ReportCreateRequest,
-    ReportCreateResponse,
-    ReportListResponse,
-    ReportReadResponse,
-)
+from ..domain.report.schemas import ReportBase, ReportCreateRequest, ReportListResponse
 from ..domain.report.service import ReportService
 
 router = APIRouter(prefix="/report", tags=["report"])
@@ -19,27 +12,16 @@ router = APIRouter(prefix="/report", tags=["report"])
 
 def get_report_service(db: Session = Depends(get_db)) -> ReportService:
     """ReportService 의존성 주입."""
-    storage_dir = Path("storage") / "reports"
-    return ReportService(db=db, storage_dir=storage_dir)
+    return ReportService(db=db)
 
 
-@router.get("/export")
-def export_report(
-    report_id: str = Query(..., description="Report ID"),
-    format: str = Query("pdf", description="txt | md | pdf"),
-    service: ReportService = Depends(get_report_service),
-):
-    """리포트 내보내기 (txt/md/pdf)."""
-    return service.export_report(report_id=report_id, fmt=format)
-
-
-@router.post("/", response_model=ReportCreateResponse)
+@router.post("/", response_model=ReportBase)
 def create_report(
     request: ReportCreateRequest,
     service: ReportService = Depends(get_report_service),
     agent: AgentClient = Depends(get_agent),
 ):
-    """리포트 생성."""
+    """리포트를 생성한다."""
     report = service.create_report(
         session_id=request.session_id,
         analysis_results=request.analysis_results,
@@ -47,13 +29,10 @@ def create_report(
         insights=request.insights,
         agent=agent,
     )
-
-    return ReportCreateResponse(
+    return ReportBase(
         report_id=report.id,
         session_id=report.session_id,
-        version=report.version,
         summary_text=report.summary_text,
-        created_at=report.created_at,
     )
 
 
@@ -70,29 +49,22 @@ def list_reports(
             {
                 "report_id": item.id,
                 "session_id": item.session_id,
-                "version": item.version,
-                "created_at": item.created_at,
+                "summary_text": item.summary_text,
             }
             for item in items
         ],
     )
 
 
-@router.get("/{report_id}", response_model=ReportReadResponse)
+@router.get("/{report_id}", response_model=ReportBase)
 def get_report(
     report_id: str,
     service: ReportService = Depends(get_report_service),
 ):
     """리포트 단건 조회."""
     report = service.get_report(report_id)
-
-    return ReportReadResponse(
+    return ReportBase(
         report_id=report.id,
         session_id=report.session_id,
-        version=report.version,
         summary_text=report.summary_text,
-        payload_json=report.payload_json,
-        llm_model=report.llm_model,
-        prompt_version=report.prompt_version,
-        created_at=report.created_at,
     )
