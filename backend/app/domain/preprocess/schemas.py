@@ -12,37 +12,19 @@ PreprocessOpType = Literal[
     "derived_column",
 ]
 
-
 class PreprocessOperation(BaseModel):
+    """단일 전처리 작업 정의."""
+
     op: PreprocessOpType
     params: Dict[str, Any] = Field(default_factory=dict)
 
+class PreprocessApplyRequest(BaseModel):
+    """전처리 적용 요청."""
 
-class _DatasetReq(BaseModel):
     dataset_id: int
-
-
-class PreprocessPreviewRequest(_DatasetReq):
-    pass
-
-
-class ColumnPreview(BaseModel):
-    name: str
-    dtype: str
-    missing: int
-
-
-class PreprocessPreviewResponse(BaseModel):
-    dataset_id: int
-    columns: List[ColumnPreview]
-    sample_rows: List[Dict[str, Any]]
-
-
-class PreprocessApplyRequest(_DatasetReq):
-    operations: List[PreprocessOperation]
-
+    operations: List[PreprocessOperation] = Field(min_length=1)
 
 class PreprocessApplyResponse(BaseModel):
+    """전처리 적용 결과."""
+
     dataset_id: int
-    row_count: int
-    col_count: int
