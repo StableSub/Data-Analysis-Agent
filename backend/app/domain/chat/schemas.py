@@ -1,11 +1,11 @@
-from datetime import datetime
 from typing import List, Optional
+from datetime import datetime
 
 from pydantic import BaseModel, Field
 from pydantic import ConfigDict
 
 
-class ChatMessageSchema(BaseModel):
+class ChatMessage(BaseModel):
     id: int
     role: str
     content: str
@@ -17,12 +17,8 @@ class ChatMessageSchema(BaseModel):
 class ChatRequest(BaseModel):
     question: str = Field(..., description="The natural language question from the user.")
     session_id: Optional[int] = Field(default=None, description="Existing chat session identifier.")
-    context: Optional[str] = Field(default=None, description="Optional extra context string.")
-    data_source_id: Optional[str] = Field(
-        default=None,
-        description="Optional dataset source_id to load file content as context.",
-    )
-    model_id: Optional[str] = Field(default=None, description="Identifier for the AI model to use.")
+    model_id: Optional[str] = Field(default=None, description="Optional model identifier.")
+    source_id: Optional[str] = Field(default=None, description="Optional dataset source identifier.")
 
 
 class ChatResponse(BaseModel):
@@ -32,4 +28,4 @@ class ChatResponse(BaseModel):
 
 class ChatHistoryResponse(BaseModel):
     session_id: int
-    messages: List[ChatMessageSchema]
+    messages: List[ChatMessage]
