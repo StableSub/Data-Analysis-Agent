@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useMemo } from 'react';
 import { Upload, Download, FileSpreadsheet, CheckCircle2, Settings, Database, Info, TrendingUp, MoreVertical, Trash2, Undo2, Redo2 } from 'lucide-react';
 import { Button } from '../ui/button';
 import { Card } from '../ui/card';
@@ -11,12 +11,14 @@ import { RadioGroup, RadioGroupItem } from '../ui/radio-group';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger } from '../ui/dropdown-menu';
 import { useDataStore, ColumnInfo } from '../../store/useDataStore';
 import * as XLSX from 'xlsx';
+import { apiRequest } from '../../lib/api';
 
 interface DataPreprocessingProps {
   isDark: boolean;
+  selectedSourceId?: string | null; // 상위(워크벤치)에서 전달된 현재 선택 소스
 }
 
-export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
+export function DataPreprocessing({ isDark, selectedSourceId }: DataPreprocessingProps) {
   const {
     file,
     data,
@@ -33,6 +35,7 @@ export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
 
   const [selectedColumns, setSelectedColumns] = useState<string[]>([]);
   const [isDragging, setIsDragging] = useState(false);
+  const [isParsing, setIsParsing] = useState(false);
   const [scalingMethod, setScalingMethod] = useState<'standardization' | 'normalization'>('standardization');
 
   // 키보드 단축키 (Ctrl+Z, Ctrl+Y)
@@ -53,37 +56,62 @@ export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
 
   // 파일 업로드 처리
   const handleFileUpload = useCallback((uploadedFile: File) => {
-    const fileExtension = uploadedFile.name.split('.').pop()?.toLowerCase();
-
-    if (fileExtension === 'csv') {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const text = e.target?.result as string;
-        parseCSV(text, uploadedFile);
-      };
-      reader.readAsText(uploadedFile);
-    } else if (fileExtension === 'xlsx' || fileExtension === 'xls') {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const data = e.target?.result;
-        parseExcel(data as ArrayBuffer, uploadedFile);
-      };
-      reader.readAsArrayBuffer(uploadedFile);
+    try {
+      setIsParsing(true);
+      const fileExtension = uploadedFile.name.split('.').pop()?.toLowerCase();
+      if (fileExtension === 'csv') {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          try {
+            const text = (e.target?.result as string) ?? '';
+            parseCSV(text, uploadedFile);
+          } finally {
+            setIsParsing(false);
+          }
+        };
+        reader.onerror = () => setIsParsing(false);
+        reader.readAsText(uploadedFile);
+      } else if (fileExtension === 'xlsx' || fileExtension === 'xls') {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          try {
+            const data = e.target?.result as ArrayBuffer;
+            parseExcel(data, uploadedFile);
+          } finally {
+            setIsParsing(false);
+          }
+        };
+        reader.onerror = () => setIsParsing(false);
+        reader.readAsArrayBuffer(uploadedFile);
+      } else {
+        setIsParsing(false);
+      }
+    } catch {
+      setIsParsing(false);
     }
   }, []);
 
   // CSV 파싱
   const parseCSV = (text: string, uploadedFile: File) => {
-    const lines = text.split('\n').filter(line => line.trim());
-    const firstLine = lines[0];
-    if (!firstLine) return;
-    const headers = firstLine.split(',').map((h: string) => h.trim());
+    const rawLines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+    const lines = rawLines.filter(line => line !== '');
+    if (lines.length === 0) {
+      setFileData(uploadedFile, [], [], []);
+      return;
+    }
+    const firstLine = lines[0] ?? '';
+    let headers = firstLine.split(',').map((h: string) => h.trim());
+    // 헤더가 비었거나 단일 컬럼이면 기본 헤더 생성
+    if (headers.length === 0 || (headers.length === 1 && headers[0] === '')) {
+      const firstValues = (lines[1] ?? '').split(',');
+      headers = firstValues.map((_, i) => `col_${i + 1}`);
+    }
 
     const parsedData = lines.slice(1).map((line: string) => {
       const values = line.split(',');
       const row: any = {};
       headers.forEach((header: string, index: number) => {
-        row[header] = values[index]?.trim() || '';
+        row[header] = (values[index] ?? '').trim();
       });
       return row;
     });
@@ -96,19 +124,22 @@ export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
   const parseExcel = (arrayBuffer: ArrayBuffer, uploadedFile: File) => {
     const workbook = XLSX.read(arrayBuffer, { type: 'array' });
     const firstSheetName = workbook.SheetNames[0];
-    if (!firstSheetName) return;
+    if (!firstSheetName) { setFileData(uploadedFile, [], [], []); return; }
     const worksheet = workbook.Sheets[firstSheetName];
-    if (!worksheet) return;
+    if (!worksheet) { setFileData(uploadedFile, [], [], []); return; }
 
-    const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[][];
+    const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: false }) as any[][];
+    if (!Array.isArray(jsonData) || jsonData.length === 0) { setFileData(uploadedFile, [], [], []); return; }
 
-    if (jsonData.length === 0 || !jsonData[0]) return;
-
-    const headers = jsonData[0].map((h: any) => h?.toString() || '');
+    const headerRow = jsonData[0] || [];
+    const headers = headerRow.map((h: any, i: number) => {
+      const v = (h ?? '').toString().trim();
+      return v || `col_${i + 1}`;
+    });
     const parsedData = jsonData.slice(1).map(row => {
       const rowData: any = {};
       headers.forEach((header, index) => {
-        rowData[header] = row[index]?.toString() || '';
+        rowData[header] = (row?.[index] ?? '').toString();
       });
       return rowData;
     });
@@ -159,81 +190,35 @@ export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
     });
   };
 
-  // Standardization
+  // Standardization → 큐에 추가(zscore)
   const handleStandardization = () => {
     if (selectedColumns.length === 0) return;
-
-    const newData = data.map(row => {
-      const newRow = { ...row };
-      selectedColumns.forEach(col => {
-        const colInfo = columnInfo.find(c => c.name === col);
-        if (colInfo?.type === 'number' && colInfo.mean !== undefined && colInfo.std !== undefined) {
-          const value = parseFloat(row[col]);
-          if (!isNaN(value)) {
-            newRow[col] = ((value - colInfo.mean) / colInfo.std).toFixed(4);
-          }
-        }
-      });
-      return newRow;
-    });
-
-    const newColumnInfo = analyzeColumns(columns, newData);
-    updateData(newData, columns, newColumnInfo);
+    pushOp({ type: 'scale', target_columns: selectedColumns, method: 'zscore' });
   };
 
-  // Normalization
+  // Normalization → 큐에 추가(minmax)
   const handleNormalization = () => {
     if (selectedColumns.length === 0) return;
-
-    const newData = data.map(row => {
-      const newRow = { ...row };
-      selectedColumns.forEach(col => {
-        const colInfo = columnInfo.find(c => c.name === col);
-        if (colInfo?.type === 'number' && colInfo.min !== undefined && colInfo.max !== undefined) {
-          const value = parseFloat(row[col]);
-          if (!isNaN(value)) {
-            const range = colInfo.max - colInfo.min;
-            newRow[col] = range === 0 ? 0 : ((value - colInfo.min) / range).toFixed(4);
-          }
-        }
-      });
-      return newRow;
-    });
-
-    const newColumnInfo = analyzeColumns(columns, newData);
-    updateData(newData, columns, newColumnInfo);
+    pushOp({ type: 'scale', target_columns: selectedColumns, method: 'minmax' });
   };
 
-  // 결측치 채우기
+  // 결측치 채우기 → 큐에 추가
   const handleFillMissing = (column: string, method: 'mean' | 'median' | 'mode' | 'custom', customValue?: string) => {
-    const colInfo = columnInfo.find(c => c.name === column);
-    if (!colInfo) return;
-
-    const newData = data.map(row => {
-      if (row[column] === '' || row[column] === null || row[column] === undefined) {
-        let fillValue = '';
-
-        if (method === 'mean' && colInfo.mean !== undefined) {
-          fillValue = colInfo.mean.toString();
-        } else if (method === 'median' && colInfo.median !== undefined) {
-          fillValue = colInfo.median.toString();
-        } else if (method === 'mode') {
-          const values = data.map(r => r[column]).filter(v => v !== '' && v !== null && v !== undefined);
-          const frequency: Record<string, number> = {};
-          values.forEach(v => frequency[v] = (frequency[v] || 0) + 1);
-          fillValue = Object.keys(frequency).reduce((a, b) => (frequency[a] || 0) > (frequency[b] || 0) ? a : b);
-        } else if (method === 'custom' && customValue) {
-          fillValue = customValue;
+    const strategy = method === 'custom' ? 'value' : method;
+    const op: QueueOp =
+      strategy === 'value'
+      ? {
+          type: 'fill_missing',
+          target_columns: [column],
+          strategy: 'value',
+          value: customValue || ''
         }
-
-        return { ...row, [column]: fillValue };
-      }
-      return row;
-    });
-
-    const newColumnInfo = analyzeColumns(columns, newData);
-    updateData(newData, columns, newColumnInfo);
-  };
+      : {
+          type: 'fill_missing',
+          target_columns: [column],
+          strategy: strategy
+        };
+    };
 
   // 데이터 타입 변경
   const handleChangeType = (column: string, newType: 'number' | 'string') => {
@@ -274,20 +259,13 @@ export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
 
     const newColumnInfo = analyzeColumns(columns, newData);
     updateData(newData, columns, newColumnInfo);
+    // 백엔드 지원 연산 목록에는 없음 → 큐에는 추가하지 않음
   };
 
-  // 열 삭제
+  // 열 삭제 → 큐에 추가
   const handleDeleteColumn = (column: string) => {
-    const newColumns = columns.filter(c => c !== column);
-    const newData = data.map(row => {
-      const newRow = { ...row };
-      delete newRow[column];
-      return newRow;
-    });
-
-    const newColumnInfo = analyzeColumns(newColumns, newData);
-    updateData(newData, newColumns, newColumnInfo);
     setSelectedColumns(prev => prev.filter(c => c !== column));
+    pushOp({ type: 'drop_columns', target_columns: [column] });
   };
 
   // 열 선택/해제
@@ -341,9 +319,172 @@ export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
   const totalMissing = columnInfo.reduce((sum, col) => sum + col.missing, 0);
   const numericColumns = columnInfo.filter(c => c.type === 'number').length;
 
+  // 전처리 작업 큐 + 서버 연동 상태
+  type QueueOp =
+    | { type: 'fill_missing'; target_columns: string[]; strategy: 'mean'|'median'|'mode'|'value'; value?: string }
+    | { type: 'scale'; target_columns: string[]; method: 'minmax'|'zscore' }
+    | { type: 'drop_columns'; target_columns: string[] }
+    | { type: 'rename_columns'; mapping: Record<string,string> }
+    | { type: 'derived_column'; name: string; expression: string };
+  type ApplyResponse = { dataset_id: number; base_version_id?: number | null; new_version_id: number; version_no: number; row_count: number; col_count: number };
+
+  const [opsQueue, setOpsQueue] = useState<QueueOp[]>([]);
+  const pushOp = (op: QueueOp) => setOpsQueue(prev => [...prev, op]);
+  const removeOp = (idx: number) => setOpsQueue(prev => prev.filter((_, i) => i !== idx));
+  const moveUp = (idx: number) =>
+    setOpsQueue(prev => {
+      if (idx <= 0) return prev;
+
+      const copy = [...prev];
+      const temp = copy[idx - 1]!;
+      copy[idx - 1] = copy[idx]!;
+      copy[idx] = temp;
+
+      return copy;
+    });
+
+  const moveDown = (idx: number) =>
+    setOpsQueue(prev => {
+      if (idx >= prev.length - 1) return prev;
+
+      const copy = [...prev];
+      const temp = copy[idx + 1]!;
+      copy[idx + 1] = copy[idx]!;
+      copy[idx] = temp;
+
+      return copy;
+    });
+  // 현재 선택된 소스(source_id)를 dataset_id로 매핑
+  const [selectedDatasetId, setSelectedDatasetId] = useState<number | null>(null);
+  const [applyBaseVersionId, setApplyBaseVersionId] = useState('');
+  const [applyLoading, setApplyLoading] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      if (!selectedSourceId) {
+        setSelectedDatasetId(null);
+        return;
+      }
+      try {
+        const res = await apiRequest<{ total:number; items: { id:number; filename:string; source_id:string }[] }>(`/datasets?skip=0&limit=1000`);
+        const found = (res.items || []).find(it => it.source_id === selectedSourceId);
+        setSelectedDatasetId(found ? found.id : null);
+      } catch (e) {
+        setSelectedDatasetId(null);
+      }
+    })();
+  }, [selectedSourceId]);
+
+  const toBackendOps = (ops: QueueOp[]) => ops.map(op => {
+    if (op.type === 'fill_missing') {
+      return { op: 'impute', params: { columns: op.target_columns, method: op.strategy, ...(op.strategy==='value'?{value:op.value}: {}) } };
+    }
+    if (op.type === 'scale') {
+      return { op: 'scale', params: { columns: op.target_columns, method: op.method === 'minmax' ? 'normalize' : 'standardize' } };
+    }
+    if (op.type === 'drop_columns') {
+      return { op: 'drop_columns', params: { columns: op.target_columns } };
+    }
+    if (op.type === 'rename_columns') {
+      return { op: 'rename_columns', params: { mapping: op.mapping } };
+    }
+    if (op.type === 'derived_column') {
+      return { op: 'derived_column', params: { name: op.name, expression: op.expression } };
+    }
+    return op as any;
+  });
+
+  const applyOpsToSample = (rows: Record<string,any>[], ops: QueueOp[]) => {
+    let out = rows.map(r => ({...r}));
+    for (const op of ops) {
+      if (op.type === 'drop_columns') {
+        out = out.map(r => {
+          const nr:any = {...r};
+          op.target_columns.forEach(c => delete nr[c]);
+          return nr;
+        });
+      } else if (op.type === 'rename_columns') {
+        out = out.map(r => {
+          const nr:any = {};
+          Object.keys(r).forEach(k => {
+            const nk = (op.mapping as any)[k] || k;
+            nr[nk] = (r as any)[k];
+          });
+          return nr;
+        });
+      } else if (op.type === 'fill_missing') {
+        for (const col of op.target_columns) {
+          let fill:any = '';
+          const vals = out.map(r => r[col]).filter(v => v!=='' && v!==null && v!==undefined);
+          if (op.strategy === 'value') fill = op.value ?? '';
+          else if (op.strategy === 'mean') {
+            const nums = vals.map(v => parseFloat(v)).filter(v => !isNaN(v));
+            const mean = nums.length? nums.reduce((a,b)=>a+b,0)/nums.length : 0;
+            fill = mean;
+          } else if (op.strategy === 'median') {
+            const nums = vals.map(v => parseFloat(v)).filter(v => !isNaN(v)).sort((a,b)=>a-b);
+            const mid = nums.length? nums[Math.floor(nums.length/2)] : 0;
+            fill = mid;
+          } else if (op.strategy === 'mode') {
+            const freq:Record<string,number> = {};
+            vals.forEach(v => { const k=String(v); freq[k]=(freq[k]||0)+1; });
+            fill = Object.keys(freq).reduce((a, b) =>
+              (freq[a] ?? 0) > (freq[b] ?? 0) ? a : b
+            , '');
+          }
+          out = out.map(r => (r[col]===undefined||r[col]===null||r[col]==='') ? {...r, [col]: fill} : r);
+        }
+      } else if (op.type === 'scale') {
+        for (const col of op.target_columns) {
+          const nums = out.map(r => parseFloat(r[col])).filter(v => !isNaN(v));
+          const min = Math.min(...nums);
+          const max = Math.max(...nums);
+          const mean = nums.reduce((a,b)=>a+b,0)/(nums.length||1);
+          const std = Math.sqrt(nums.reduce((acc,v)=>acc+Math.pow(v-mean,2),0)/(nums.length||1)) || 1;
+          out = out.map(r => {
+            const v = parseFloat(r[col]);
+            if (isNaN(v)) return r;
+            if (op.method === 'minmax') {
+              const denom = (max-min)||1;
+              return { ...r, [col]: (v-min)/denom };
+            } else {
+              return { ...r, [col]: (v-mean)/std };
+            }
+          });
+        }
+      }
+    }
+    const columns = out.length > 0 ? Object.keys(out[0]!) : [];
+    return { columns, rows: out };
+  };
+
+  // 버튼 활성화 로직 단순화: 항상 클릭 가능 (필요 시 핸들러 내에서 안내)
+
+  // 서버 적용 요청
+  const handleApplyToServer = async () => {
+    if (!selectedDatasetId) {
+      alert('dataset_id를 선택하세요');
+      return;
+    }
+    try {
+      setApplyLoading(true);
+      const payload: any = {
+        dataset_id: Number(selectedDatasetId),
+        base_version_id: applyBaseVersionId ? Number(applyBaseVersionId) : null,
+        operations: toBackendOps(opsQueue),
+      };
+      await apiRequest<ApplyResponse>('/preprocess/apply', { method: 'POST', body: JSON.stringify(payload) });
+      alert('서버 적용 완료');
+      setOpsQueue([]);
+    } catch (e) {
+      alert('서버 적용 실패');
+    } finally {
+      setApplyLoading(false);
+    }
+  };
+
   return (
-    <div className="h-full flex flex-col bg-gray-50 dark:bg-[#1c1c1e] overflow-hidden">
-      {/* 파일이 없을 때 - 업로드 영역 */}
+    <div className="min-h-screen flex flex-col overflow-hidden">
       {!file ? (
         <div className="flex-1 flex items-center justify-center p-8 overflow-auto">
           <Card className="max-w-2xl w-full p-8">
@@ -351,26 +492,17 @@ export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
               <div className="inline-flex items-center justify-center w-20 h-20 rounded-3xl bg-gradient-to-br from-blue-500 to-purple-600 text-white text-4xl">
                 <FileSpreadsheet className="w-10 h-10" />
               </div>
-
               <div>
-                <h2 className="text-2xl text-gray-900 dark:text-white mb-2">
-                  데이터 전처리
-                </h2>
-                <p className="text-gray-600 dark:text-gray-400">
-                  CSV 또는 Excel 파일을 업로드하여 데이터를 정제하고 변환하세요
-                </p>
+                <h2 className="text-2xl text-gray-900 dark:text-white mb-2">데이터 전처리</h2>
+                <p className="text-gray-600 dark:text-gray-400">CSV 또는 Excel 파일을 업로드하여 데이터를 정제하고 변환하세요</p>
               </div>
-
               <div
                 onDragOver={handleDragOver}
                 onDragLeave={handleDragLeave}
                 onDrop={handleDrop}
                 className={`
                   relative border-2 border-dashed rounded-xl p-12 transition-all cursor-pointer
-                  ${isDragging
-                    ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
-                    : 'border-gray-300 dark:border-gray-700 hover:border-blue-400 dark:hover:border-blue-600'
-                  }
+                  ${isDragging ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20' : 'border-gray-300 dark:border-gray-700 hover:border-blue-400 dark:hover:border-blue-600'}
                 `}
               >
                 <input
@@ -379,20 +511,15 @@ export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
                   onChange={(e) => e.target.files?.[0] && handleFileUpload(e.target.files[0])}
                   className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
                 />
-
                 <div className="space-y-3">
                   <Upload className="w-12 h-12 mx-auto text-gray-400" />
                   <div>
-                    <p className="text-gray-900 dark:text-white mb-1">
-                      파일을 드래그하거나 클릭하여 업로드
-                    </p>
-                    <p className="text-sm text-gray-500 dark:text-gray-400">
-                      CSV, XLSX, XLS 형식 지원 (최대 50MB)
-                    </p>
+                    <p className="text-gray-900 dark:text-white mb-1">파일을 드래그하거나 클릭하여 업로드</p>
+                    <p className="text-sm text-gray-500 dark:text-gray-400">CSV, XLSX, XLS 형식 지원 (최대 50MB)</p>
                   </div>
                 </div>
+                {isParsing && <div className="mt-4 text-xs text-gray-500">파일을 처리하는 중...</div>}
               </div>
-
               <div className="grid grid-cols-2 gap-4 pt-4">
                 <div className="text-left p-4 bg-gray-50 dark:bg-gray-800/50 rounded-lg">
                   <CheckCircle2 className="w-5 h-5 text-green-500 mb-2" />
@@ -409,9 +536,8 @@ export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
           </Card>
         </div>
       ) : (
-        /* 파일이 있을 때 - 전처리 작업 영역 */
-        <div className="flex-1 flex flex-col overflow-hidden">
-          {/* 파일 정보 헤더 */}
+        <>
+          {/* 헤더 */}
           <div className="flex items-center justify-between px-6 py-4 bg-white dark:bg-[#171717] border-b border-gray-200 dark:border-white/10">
             <div className="flex items-center gap-3">
               <div className="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-lg">
@@ -419,58 +545,29 @@ export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
               </div>
               <div>
                 <h3 className="text-lg text-gray-900 dark:text-white">{file.name}</h3>
-                <p className="text-sm text-gray-500 dark:text-gray-400">
-                  {data.length}행 × {columns.length}열
-                </p>
+                <p className="text-sm text-gray-500 dark:text-gray-400">{data.length}행 × {columns.length}열</p>
               </div>
             </div>
-
             <div className="flex items-center gap-2">
-              {/* Undo/Redo 버튼 */}
               <div className="flex items-center gap-1 mr-2">
-                <Button
-                  variant="outline"
-                  size="icon"
-                  onClick={undo}
-                  disabled={!canUndo()}
-                  title="실행 취소 (Ctrl+Z)"
-                >
+                <Button variant="outline" size="icon" onClick={undo} disabled={!canUndo()} title="실행 취소 (Ctrl+Z)">
                   <Undo2 className="w-4 h-4" />
                 </Button>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  onClick={redo}
-                  disabled={!canRedo()}
-                  title="다시 실행 (Ctrl+Y)"
-                >
+                <Button variant="outline" size="icon" onClick={redo} disabled={!canRedo()} title="다시 실행 (Ctrl+Y)">
                   <Redo2 className="w-4 h-4" />
                 </Button>
               </div>
-
-              <Button
-                variant="outline"
-                onClick={() => {
-                  clearData();
-                  setSelectedColumns([]);
-                }}
-              >
-                새 파일
-              </Button>
-              <Button
-                onClick={handleDownload}
-                className="gap-2 bg-blue-600 hover:bg-blue-700"
-              >
-                <Download className="w-4 h-4" />
-                전처리 완료 및 다운로드
+              <Button variant="outline" onClick={() => { clearData(); setSelectedColumns([]); }}>새 파일</Button>
+              <Button onClick={handleDownload} className="gap-2 bg-blue-600 hover:bg-blue-700">
+                <Download className="w-4 h-4" /> 전처리 완료 및 다운로드
               </Button>
             </div>
           </div>
 
-          {/* 2분할 레이아웃 */}
-          <div className="flex-1 flex flex-col gap-0 overflow-hidden bg-gray-50 dark:bg-[#1c1c1e]">
-            {/* 상단: 데이터 요약 */}
-            <div className="px-6 pt-6 pb-4">
+          {/* 본문: 좌우 고정 2:1 flex 레이아웃 */}
+          <div className="flex flex-1 min-h-0 pl-6 pr-0 py-6 gap-6">
+            {/* 왼쪽: 요약 + 열 상세 */}
+            <div className="basis-[78%] flex flex-col min-h-0 overflow-hidden space-y-6">
               <Card className="p-6">
                 <div className="flex items-start justify-between mb-4">
                   <div>
@@ -479,7 +576,6 @@ export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
                   </div>
                   <Info className="w-5 h-5 text-gray-400" />
                 </div>
-
                 <div className="grid grid-cols-5 gap-4">
                   <div className="p-4 bg-gray-50 dark:bg-gray-800/50 rounded-lg">
                     <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">총 행 수</p>
@@ -503,17 +599,12 @@ export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
                   </div>
                 </div>
               </Card>
-            </div>
 
-            {/* 하단: 열 정보 및 전처리 도구 */}
-            <div className="flex-1 flex gap-4 px-6 pb-6 overflow-hidden min-h-0">
-              {/* 좌측: 열 정보 테이블 */}
-              <Card className="flex-1 overflow-hidden flex flex-col">
+              <Card className="flex-1 flex flex-col overflow-hidden">
                 <div className="p-4 border-b border-gray-200 dark:border-gray-700">
                   <h3 className="text-lg text-gray-900 dark:text-white">열 상세 정보</h3>
                   <p className="text-sm text-gray-500 dark:text-gray-400">각 열의 통계 정보 및 데이터 품질</p>
                 </div>
-
                 <div className="flex-1 overflow-auto">
                   <ScrollArea className="h-full">
                     <table className="w-full">
@@ -524,11 +615,7 @@ export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
                               type="checkbox"
                               checked={selectedColumns.length === columns.length}
                               onChange={(e) => {
-                                if (e.target.checked) {
-                                  setSelectedColumns([...columns]);
-                                } else {
-                                  setSelectedColumns([]);
-                                }
+                                if (e.target.checked) setSelectedColumns([...columns]); else setSelectedColumns([]);
                               }}
                               className="rounded"
                             />
@@ -546,10 +633,7 @@ export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
                       </thead>
                       <tbody>
                         {columnInfo.map((col) => (
-                          <tr
-                            key={col.name}
-                            className="border-b border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800/50"
-                          >
+                          <tr key={col.name} className="border-b border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800/50">
                             <td className="px-4 py-3">
                               <input
                                 type="checkbox"
@@ -558,105 +642,61 @@ export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
                                 className="rounded"
                               />
                             </td>
-                            <td className="px-4 py-3 text-sm text-gray-900 dark:text-white">
-                              {col.name}
-                            </td>
-                            <td className="px-4 py-3">
-                              <Badge variant="outline" className="text-xs">
-                                {col.type}
-                              </Badge>
-                            </td>
+                            <td className="px-4 py-3 text-sm text-gray-900 dark:text-white">{col.name}</td>
+                            <td className="px-4 py-3"><Badge variant="outline" className="text-xs">{col.type}</Badge></td>
                             <td className="px-4 py-3 text-sm">
                               {col.missing > 0 ? (
-                                <span className="text-red-600 dark:text-red-400">
-                                  {col.missing} ({((col.missing / data.length) * 100).toFixed(1)}%)
-                                </span>
+                                <span className="text-red-600 dark:text-red-400">{col.missing} ({((col.missing / data.length) * 100).toFixed(1)}%)</span>
                               ) : (
                                 <span className="text-green-600 dark:text-green-400">0</span>
                               )}
                             </td>
                             <td className="px-4 py-3 text-sm text-gray-900 dark:text-white">{col.unique}</td>
-                            <td className="px-4 py-3 text-sm text-gray-900 dark:text-white">
-                              {col.mean !== undefined ? col.mean : '-'}
-                            </td>
-                            <td className="px-4 py-3 text-sm text-gray-900 dark:text-white">
-                              {col.std !== undefined ? col.std : '-'}
-                            </td>
-                            <td className="px-4 py-3 text-sm text-gray-900 dark:text-white">
-                              {col.min !== undefined ? col.min : '-'}
-                            </td>
-                            <td className="px-4 py-3 text-sm text-gray-900 dark:text-white">
-                              {col.max !== undefined ? col.max : '-'}
-                            </td>
+                            <td className="px-4 py-3 text-sm text-gray-900 dark:text-white">{col.mean !== undefined ? col.mean : '-'}</td>
+                            <td className="px-4 py-3 text-sm text-gray-900 dark:text-white">{col.std !== undefined ? col.std : '-'}</td>
+                            <td className="px-4 py-3 text-sm text-gray-900 dark:text-white">{col.min !== undefined ? col.min : '-'}</td>
+                            <td className="px-4 py-3 text-sm text-gray-900 dark:text-white">{col.max !== undefined ? col.max : '-'}</td>
                             <td className="px-4 py-3">
                               <DropdownMenu>
                                 <DropdownMenuTrigger asChild>
-                                  <Button variant="ghost" size="icon" className="h-8 w-8">
-                                    <MoreVertical className="w-4 h-4" />
-                                  </Button>
+                                  <Button variant="ghost" size="icon" className="h-8 w-8"><MoreVertical className="w-4 h-4" /></Button>
                                 </DropdownMenuTrigger>
                                 <DropdownMenuContent align="end" className="w-56">
-                                  {/* 결측치 처리 */}
                                   {col.missing > 0 && (
                                     <>
                                       <DropdownMenuSub>
-                                        <DropdownMenuSubTrigger>
-                                          결측치 채우기
-                                        </DropdownMenuSubTrigger>
+                                        <DropdownMenuSubTrigger>결측치 채우기</DropdownMenuSubTrigger>
                                         <DropdownMenuSubContent>
                                           {col.type === 'number' && (
                                             <>
-                                              <DropdownMenuItem onClick={() => handleFillMissing(col.name, 'mean')}>
-                                                평균값으로
-                                              </DropdownMenuItem>
-                                              <DropdownMenuItem onClick={() => handleFillMissing(col.name, 'median')}>
-                                                중간값으로
-                                              </DropdownMenuItem>
+                                              <DropdownMenuItem onClick={() => handleFillMissing(col.name, 'mean')}>평균값으로</DropdownMenuItem>
+                                              <DropdownMenuItem onClick={() => handleFillMissing(col.name, 'median')}>중간값으로</DropdownMenuItem>
                                             </>
                                           )}
-                                          <DropdownMenuItem onClick={() => handleFillMissing(col.name, 'mode')}>
-                                            최빈값으로
-                                          </DropdownMenuItem>
+                                          <DropdownMenuItem onClick={() => handleFillMissing(col.name, 'mode')}>최빈값으로</DropdownMenuItem>
                                         </DropdownMenuSubContent>
                                       </DropdownMenuSub>
                                       <DropdownMenuSeparator />
                                     </>
                                   )}
-
-                                  {/* 타입 변경 */}
                                   <DropdownMenuSub>
-                                    <DropdownMenuSubTrigger>
-                                      타입 변경
-                                    </DropdownMenuSubTrigger>
+                                    <DropdownMenuSubTrigger>타입 변경</DropdownMenuSubTrigger>
                                     <DropdownMenuSubContent>
-                                      <DropdownMenuItem onClick={() => handleChangeType(col.name, 'number')}>
-                                        숫자형으로
-                                      </DropdownMenuItem>
-                                      <DropdownMenuItem onClick={() => handleChangeType(col.name, 'string')}>
-                                        문자형으로
-                                      </DropdownMenuItem>
+                                      <DropdownMenuItem onClick={() => handleChangeType(col.name, 'number')}>숫자형으로</DropdownMenuItem>
+                                      <DropdownMenuItem onClick={() => handleChangeType(col.name, 'string')}>문자형으로</DropdownMenuItem>
                                     </DropdownMenuSubContent>
                                   </DropdownMenuSub>
-
-                                  {/* 이상치 제거 */}
                                   {col.type === 'number' && (
                                     <>
                                       <DropdownMenuSeparator />
                                       <DropdownMenuItem onClick={() => handleRemoveOutliers(col.name)}>
-                                        <TrendingUp className="w-4 h-4 mr-2" />
-                                        이상치 제거 (IQR)
+                                        <TrendingUp className="w-4 h-4 mr-2" /> 이상치 제거 (IQR)
                                       </DropdownMenuItem>
                                     </>
                                   )}
-
-                                  {/* 열 삭제 */}
                                   <DropdownMenuSeparator />
-                                  <DropdownMenuItem
-                                    onClick={() => handleDeleteColumn(col.name)}
-                                    className="text-red-600 dark:text-red-400"
-                                  >
-                                    <Trash2 className="w-4 h-4 mr-2" />
-                                    열 삭제
+                                  <DropdownMenuItem onClick={() => handleDeleteColumn(col.name)} className="text-red-600 dark:text-red-400">
+                                    <Trash2 className="w-4 h-4 mr-2" /> 열 삭제
                                   </DropdownMenuItem>
                                 </DropdownMenuContent>
                               </DropdownMenu>
@@ -668,20 +708,16 @@ export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
                   </ScrollArea>
                 </div>
               </Card>
+            </div>
 
-              {/* 우측: 전처리 도구 */}
-              <Card className="w-80 overflow-hidden flex flex-col">
+            {/* 오른쪽: 전처리 도구 */}
+            <div className="basis-[22%] flex flex-col min-h-0">
+              <Card className="flex-1 flex flex-col overflow-hidden">
                 <div className="p-4 border-b border-gray-200 dark:border-gray-700">
                   <h3 className="text-lg text-gray-900 dark:text-white mb-1">전처리 도구</h3>
-                  <p className="text-xs text-gray-500 dark:text-gray-400">
-                    {selectedColumns.length > 0
-                      ? `${selectedColumns.length}개 열 선택됨`
-                      : '왼쪽에서 열을 선택하세요'
-                    }
-                  </p>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">{selectedColumns.length > 0 ? `${selectedColumns.length}개 열 선택됨` : '왼쪽에서 열을 선택하세요'}</p>
                 </div>
-
-                <ScrollArea className="flex-1">
+                <div className="flex-1 overflow-auto">
                   <div className="p-4 space-y-6">
                     {/* 스케일링 */}
                     <div>
@@ -689,165 +725,138 @@ export function DataPreprocessing({ isDark }: DataPreprocessingProps) {
                       <RadioGroup value={scalingMethod} onValueChange={(v) => setScalingMethod(v as any)}>
                         <div className="flex items-center space-x-2 mb-2">
                           <RadioGroupItem value="standardization" id="standardization" />
-                          <Label htmlFor="standardization" className="text-sm cursor-pointer">
-                            Standardization (Z-score)
-                          </Label>
+                          <Label htmlFor="standardization" className="text-sm cursor-pointer">Standardization (Z-score)</Label>
                         </div>
-                        <p className="text-xs text-gray-500 dark:text-gray-400 ml-6 mb-3">
-                          평균 0, 표준편차 1로 변환
-                        </p>
-
+                        <p className="text-xs text-gray-500 dark:text-gray-400 ml-6 mb-3">평균 0, 표준편차 1로 변환</p>
                         <div className="flex items-center space-x-2 mb-2">
                           <RadioGroupItem value="normalization" id="normalization" />
-                          <Label htmlFor="normalization" className="text-sm cursor-pointer">
-                            Normalization (Min-Max)
-                          </Label>
+                          <Label htmlFor="normalization" className="text-sm cursor-pointer">Normalization (Min-Max)</Label>
                         </div>
-                        <p className="text-xs text-gray-500 dark:text-gray-400 ml-6 mb-3">
-                          0과 1 사이로 변환
-                        </p>
+                        <p className="text-xs text-gray-500 dark:text-gray-400 ml-6 mb-3">0과 1 사이로 변환</p>
                       </RadioGroup>
-
-                      <Button
-                        onClick={() => {
-                          if (scalingMethod === 'standardization') {
-                            handleStandardization();
-                          } else {
-                            handleNormalization();
-                          }
-                        }}
-                        disabled={selectedColumns.length === 0}
-                        className="w-full mt-2"
-                      >
-                        선택한 열에 적용
-                      </Button>
+                      <Button onClick={() => { if (scalingMethod === 'standardization') handleStandardization(); else handleNormalization(); }} disabled={selectedColumns.length === 0} className="w-full mt-2">선택한 열에 적용</Button>
                     </div>
-
                     <Separator />
-
-                    {/* 일괄 결측치 처리 */}
-                    {selectedColumns.length === 1 && (() => {
-                      const colInfo = columnInfo.find(c => c.name === selectedColumns[0]);
-                      return colInfo && colInfo.missing > 0 ? (
-                        <div>
-                          <h4 className="text-sm text-gray-900 dark:text-white mb-3">
-                            결측치 처리 ({colInfo.missing}개)
-                          </h4>
+                    {selectedColumns.length === 1 && (() => { const colInfo = columnInfo.find(c => c.name === selectedColumns[0]); return colInfo && colInfo.missing > 0 ? (
+                      <div>
+                        <h4 className="text-sm text-gray-900 dark:text-white mb-3">결측치 처리 ({colInfo.missing}개)</h4>
+                        <div className="space-y-2">
+                          {colInfo.type === 'number' && (<>
+                            <Button variant="outline" size="sm" className="w-full justify-start" onClick={() => handleFillMissing(selectedColumns[0]!, 'mean')}>평균값으로 채우기</Button>
+                            <Button variant="outline" size="sm" className="w-full justify-start" onClick={() => handleFillMissing(selectedColumns[0]!, 'median')}>중간값으로 채우기</Button>
+                          </>)}
+                          <Button variant="outline" size="sm" className="w-full justify-start" onClick={() => handleFillMissing(selectedColumns[0]!, 'mode')}>최빈값으로 채우기</Button>
                           <div className="space-y-2">
-                            {colInfo.type === 'number' && (
-                              <>
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  className="w-full justify-start"
-                                  onClick={() => handleFillMissing(selectedColumns[0]!, 'mean')}
-                                >
-                                  평균값으로 채우기
-                                </Button>
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  className="w-full justify-start"
-                                  onClick={() => handleFillMissing(selectedColumns[0]!, 'median')}
-                                >
-                                  중간값으로 채우기
-                                </Button>
-                              </>
-                            )}
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="w-full justify-start"
-                              onClick={() => handleFillMissing(selectedColumns[0]!, 'mode')}
-                            >
-                              최빈값으로 채우기
-                            </Button>
-                            <div className="space-y-2">
-                              <Label className="text-xs">지정값으로 채우기</Label>
-                              <div className="flex gap-2">
-                                <Input
-                                  placeholder="값 입력"
-                                  id="custom-fill"
-                                  className="flex-1"
-                                />
-                                <Button
-                                  size="sm"
-                                  onClick={() => {
-                                    const input = document.getElementById('custom-fill') as HTMLInputElement;
-                                    handleFillMissing(selectedColumns[0]!, 'custom', input.value);
-                                  }}
-                                >
-                                  적용
-                                </Button>
-                              </div>
+                            <Label className="text-xs">지정값으로 채우기</Label>
+                            <div className="flex gap-2">
+                              <Input placeholder="값 입력" id="custom-fill" className="flex-1" />
+                              <Button size="sm" onClick={() => { const input = document.getElementById('custom-fill') as HTMLInputElement; handleFillMissing(selectedColumns[0]!, 'custom', input.value); }}>적용</Button>
                             </div>
                           </div>
                         </div>
-                      ) : null;
-                    })()}
-
-                    {selectedColumns.length === 1 && (() => {
-                      const colInfo = columnInfo.find(c => c.name === selectedColumns[0]);
-                      return colInfo && colInfo.missing > 0 ? <Separator /> : null;
-                    })()}
-
-                    {/* 이상치 제거 */}
-                    {selectedColumns.length === 1 && (() => {
-                      const colInfo = columnInfo.find(c => c.name === selectedColumns[0]);
-                      return colInfo && colInfo.type === 'number' ? (
-                        <div>
-                          <h4 className="text-sm text-gray-900 dark:text-white mb-3">이상치 제거</h4>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="w-full justify-start gap-2"
-                            onClick={() => handleRemoveOutliers(selectedColumns[0]!)}
-                          >
-                            <TrendingUp className="w-4 h-4" />
-                            IQR 방식으로 제거
-                          </Button>
-                          <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
-                            Q1 - 1.5×IQR 미만 또는 Q3 + 1.5×IQR 초과하는 데이터를 제거합니다
-                          </p>
-                        </div>
-                      ) : null;
-                    })()}
-
-                    {selectedColumns.length === 1 && (() => {
-                      const colInfo = columnInfo.find(c => c.name === selectedColumns[0]);
-                      return colInfo && colInfo.type === 'number' ? <Separator /> : null;
-                    })()}
-
-                    {/* 데이터 타입 변경 */}
+                      </div>) : null; })()}
+                    {selectedColumns.length === 1 && (() => { const colInfo = columnInfo.find(c => c.name === selectedColumns[0]); return colInfo && colInfo.missing > 0 ? <Separator /> : null; })()}
+                    {selectedColumns.length === 1 && (() => { const colInfo = columnInfo.find(c => c.name === selectedColumns[0]); return colInfo && colInfo.type === 'number' ? (
+                      <div>
+                        <h4 className="text-sm text-gray-900 dark:text-white mb-3">이상치 제거</h4>
+                        <Button variant="outline" size="sm" className="w-full justify-start gap-2" onClick={() => handleRemoveOutliers(selectedColumns[0]!)}><TrendingUp className="w-4 h-4" />IQR 방식으로 제거</Button>
+                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">Q1 - 1.5×IQR 미만 또는 Q3 + 1.5×IQR 초과하는 데이터를 제거합니다</p>
+                      </div>) : null; })()}
+                    {selectedColumns.length === 1 && (() => { const colInfo = columnInfo.find(c => c.name === selectedColumns[0]); return colInfo && colInfo.type === 'number' ? <Separator /> : null; })()}
                     {selectedColumns.length === 1 && (
                       <div>
                         <h4 className="text-sm text-gray-900 dark:text-white mb-3">데이터 타입 변경</h4>
                         <div className="space-y-2">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="w-full justify-start"
-                            onClick={() => handleChangeType(selectedColumns[0]!, 'number')}
-                          >
-                            숫자형으로 변환
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="w-full justify-start"
-                            onClick={() => handleChangeType(selectedColumns[0]!, 'string')}
-                          >
-                            문자형으로 변환
-                          </Button>
+                          <Button variant="outline" size="sm" className="w-full justify-start" onClick={() => handleChangeType(selectedColumns[0]!, 'number')}>숫자형으로 변환</Button>
+                          <Button variant="outline" size="sm" className="w-full justify-start" onClick={() => handleChangeType(selectedColumns[0]!, 'string')}>문자형으로 변환</Button>
                         </div>
                       </div>
                     )}
+                    <Separator className="my-4" />
+                    <div className="space-y-3">
+                      {opsQueue.length === 0 ? (
+                        <p className="text-xs text-gray-500 dark:text-gray-400">추가된 작업이 없습니다.</p>
+                      ) : (
+                        <div className="space-y-2">
+                          {opsQueue.map((op, idx) => {
+                            const summary = (() => {
+                              if (op.type === 'fill_missing') return `${op.type} ${op.strategy} [${op.target_columns.join(', ')}]`;
+                              if (op.type === 'scale') return `${op.type} ${op.method} [${op.target_columns.join(', ')}]`;
+                              if (op.type === 'drop_columns') return `${op.type} [${op.target_columns.join(', ')}]`;
+                              if (op.type === 'rename_columns') return `${op.type} ${Object.keys(op.mapping).length}개 매핑`;
+                              if (op.type === 'derived_column') return `${op.type} ${op.name}`;
+                              return '';
+                            })();
+                            return (
+                              <div key={idx} className="flex items-center justify-between border rounded-md px-2 py-1.5 gap-2">
+                                <div className="text-xs text-gray-700 dark:text-gray-300"><span className="font-medium mr-2">{idx + 1}.</span><span>{summary}</span></div>
+                                <div className="flex items-center gap-1">
+                                  <Button size="sm" variant="outline" onClick={() => moveUp(idx)}>▲</Button>
+                                  <Button size="sm" variant="outline" onClick={() => moveDown(idx)}>▼</Button>
+                                  <Button size="sm" variant="outline" onClick={() => removeOp(idx)}>삭제</Button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="text-xs text-gray-500 dark:text-gray-400">현재 선택된 데이터셋에서 미리보기/적용이 수행됩니다.</div>
+                      </div>
+                    </div>
                   </div>
-                </ScrollArea>
+                </div>
+              <div className="p-3 border-t border-gray-200 dark:border-white/10 bg-white dark:bg-[#171717] flex items-center justify-end gap-2 shrink-0">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    try {
+                      const applied = applyOpsToSample(data, opsQueue);
+                      const win = window.open('', '_blank');
+                      if (win) {
+                        const styles = `
+                          body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans'; padding: 16px; }
+                          table { border-collapse: collapse; width: 100%; }
+                          th, td { border: 1px solid #e5e7eb; padding: 8px; font-size: 12px; }
+                          th { background: #f9fafb; text-align: left; }
+                          caption { text-align: left; margin-bottom: 8px; color: #6b7280; font-size: 12px; }
+                        `;
+                        const head = `<head><meta charset=\"utf-8\" /><title>전처리 미리보기</title><style>${styles}</style></head>`;
+                        const cols = applied.columns;
+                        const outRows = applied.rows;
+                        const header = `<caption>전처리 미리보기 · 행: ${outRows.length}, 열: ${cols.length}</caption>`;
+                        const thead = `<thead><tr>${cols.map(c=>`<th>${c}</th>`).join('')}</tr></thead>`;
+                        const tbody = `<tbody>${outRows.map(r=>`<tr>${cols.map(c=>`<td>${String(r[c] ?? '')}</td>`).join('')}</tr>`).join('')}</tbody>`;
+                        const html = `<!doctype html>${head}<body><table>${header}${thead}${tbody}</table></body>`;
+                        win.document.open(); win.document.write(html); win.document.close();
+                      }
+                    } catch (e) {
+                      alert('미리보기 생성 실패');
+                    }
+                  }}
+                >
+                  미리보기
+                </Button>
+                <Button
+                  onClick={() => {
+                    try {
+                      const applied = applyOpsToSample(data, opsQueue);
+                      const newCols = applied.columns;
+                      const newRows = applied.rows as any[];
+                      const newInfo = analyzeColumns(newCols, newRows);
+                      updateData(newRows, newCols, newInfo);
+                    } catch (e) {
+                      alert('적용 실패');
+                    }
+                  }}
+                >
+                  적용
+                </Button>
+              </div>
               </Card>
             </div>
           </div>
-        </div>
+        </>
       )}
     </div>
   );
