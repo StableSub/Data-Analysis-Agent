@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Card } from '../ui/card';
 import { Button } from '../ui/button';
 import { Upload as UploadIcon, FileCheck, X, AlertCircle } from 'lucide-react';
@@ -22,6 +23,7 @@ const UPLOAD_VALIDATION_CONFIG = {
 };
 
 export function Upload() {
+  const navigate = useNavigate();
   const [isDragging, setIsDragging] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<any[]>([]);
@@ -31,7 +33,13 @@ export function Upload() {
   const [progress, setProgress] = useState(0);
   const uploadAbortRef = useRef<AbortController | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const { setUploadedFile } = useStore();
+  const {
+    setUploadedFile,
+    activeSessionId,
+    createSession,
+    setActiveSession,
+    addFile,
+  } = useStore();
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
@@ -129,18 +137,38 @@ export function Upload() {
   const handleUpload = () => {
     if (!file || preview.length === 0 || !datasetSourceId) return;
 
+    // 워크벤치에서 사용하는 세션 파일 상태와도 동기화
+    let targetSessionId = activeSessionId;
+    if (!targetSessionId) {
+      targetSessionId = createSession('chat');
+      setActiveSession(targetSessionId);
+    }
+
+    addFile(targetSessionId, {
+      name: file.name,
+      size: file.size,
+      type: 'dataset',
+      sourceId: datasetSourceId,
+      columns,
+      rowCount: preview.length,
+      preview,
+    });
+
+    // 레거시 상태도 유지 (기존 분석 화면 호환)
     setUploadedFile({
       id: datasetSourceId,
       name: file.name,
       size: file.size,
       type: 'dataset',
+      sourceId: datasetSourceId,
       uploadedAt: new Date(),
       columns,
       rowCount: preview.length,
       preview,
     });
 
-    toast.success('데이터가 저장되었습니다. Analysis 탭에서 분석을 시작하세요');
+    toast.success('데이터가 저장되었습니다. 채팅 화면에서 바로 사용할 수 있습니다.');
+    navigate('/chat');
   };
 
   const handleReset = () => {
