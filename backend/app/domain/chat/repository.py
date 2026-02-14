@@ -32,7 +32,7 @@ class ChatRepository:
         return (
             self.db.query(ChatMessage)
             .filter(ChatMessage.session_id == session_id)
-            .order_by(ChatMessage.id.asc())
+            .order_by(ChatMessage.created_at.asc(), ChatMessage.id.asc())
             .all()
         )
 
