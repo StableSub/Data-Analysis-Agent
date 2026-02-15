@@ -8,7 +8,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from ...ai.agents.builder import AgentBuilder
+from ...core.db import SessionLocal
+from .builder import WorkflowBuilder
 
 
 class AgentClient:
@@ -17,7 +18,6 @@ class AgentClient:
         model: str = "gpt-5-nano",
     ) -> None:
         self.default_model = model
-        self.agent = AgentBuilder(model_name=model).build()
 
     def ask(self, session_id: str | None = None,
             question: str | None = None,
@@ -34,20 +34,39 @@ class AgentClient:
         if context:
             merged_context_parts.append(context)
         merged_context = "\n\n".join(merged_context_parts).strip()
+        question_text = (question or "").strip()
+        if not question_text:
+            return "질문을 입력해 주세요."
 
         if merged_context:
-            message = (
-                f"{question} 이것은 사용자의 질문 입니다. "
-                f"{merged_context} 이것은 관련된 context 입니다."
-            )
+            message = f"{question_text}\n\ncontext:\n{merged_context}"
         else:
-            message = f"{question} 이것은 사용자의 질문 입니다."
-            
-        response = self.agent.invoke(
-            {"messages": [{"role": "user", "content": message}]},
-            {"configurable": {"thread_id": session_id, "model_id": model_id}}
-        )
-        return response["messages"][-1].content
+            message = question_text
+
+        state = {
+            "user_input": message,
+            "session_id": str(session_id or ""),
+            "model_id": model_id or self.default_model,
+            "user_context": {"context": merged_context} if merged_context else {},
+            "dataset_id": getattr(dataset, "id", None) if dataset is not None else None,
+            "source_id": getattr(dataset, "source_id", None) if dataset is not None else None,
+        }
+
+        db = SessionLocal()
+        try:
+            workflow = WorkflowBuilder(
+                db=db,
+                model_name=self.default_model,
+            ).build()
+            result_state = workflow.invoke(state)
+        finally:
+            db.close()
+
+        output = result_state.get("output") or {}
+        content = output.get("content")
+        if isinstance(content, str) and content:
+            return content
+        return str(output) if output else "No output"
 
     def _build_dataset_context(self, dataset: Any, max_rows: int = 20) -> str:
         """
