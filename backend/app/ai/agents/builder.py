@@ -79,49 +79,33 @@ def build_main_workflow(
     visualization_graph = build_visualization_workflow(default_model=default_model)
     report_graph = build_report_workflow(default_model=default_model)
 
-    def log_branch(point: str, branch: str, detail: str = "") -> None:
-        """분기 지점과 선택 결과를 콘솔에 출력한다."""
-        suffix = f" | {detail}" if detail else ""
-        print(f"[branch:main] {point} -> {branch}{suffix}")
-
     def route_after_intake(state: MainWorkflowState) -> str:
         """Intake handoff 기준으로 다음 경로를 분기한다."""
         branch = str((state.get("handoff") or {}).get("next_step", "general_question"))
-        log_branch("after_intake", branch)
         return branch
 
     def route_after_preprocess(state: MainWorkflowState) -> str:
         """전처리 이후 요청 플래그 기준으로 RAG/시각화/리포트 분기를 결정한다."""
         handoff = state.get("handoff") or {}
         if bool(handoff.get("ask_report", False)):
-            log_branch("after_preprocess", "report")
             return "report"
         if bool(handoff.get("ask_visualization", False)):
-            log_branch("after_preprocess", "visualization")
             return "visualization"
-        log_branch("after_preprocess", "rag")
         return "rag"
 
     def general_question_terminal(state: MainWorkflowState) -> Dict[str, Any]:
         """데이터셋 미선택 일반 질문 경로를 종료한다."""
         model_name = state.get("model_id") or default_model
-        answer = ""
-        try:
-            llm = init_chat_model(model_name)
-            result = llm.invoke(
-                [
-                    SystemMessage(
-                        content="사용자 질문에 간결하고 정확하게 답하라."
-                    ),
-                    HumanMessage(content=state.get("user_input", "")),
-                ]
-            )
-            if isinstance(result.content, str) and result.content.strip():
-                answer = result.content
-        except Exception:
-            answer = "LLM 설정이 필요합니다. langchain-openai 설치와 OPENAI_API_KEY를 확인해 주세요."
-        if not answer:
-            answer = "답변을 생성하지 못했습니다."
+        llm = init_chat_model(model_name)
+        result = llm.invoke(
+            [
+                SystemMessage(
+                    content="사용자 질문에 간결하고 정확하게 답하라."
+                ),
+                HumanMessage(content=state.get("user_input", "")),
+            ]
+        )
+        answer = result.content if isinstance(result.content, str) else str(result.content)
 
         return {
             "output": {

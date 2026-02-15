@@ -10,10 +10,10 @@ router = APIRouter(prefix="/preprocess", tags=["preprocess"])
 
 @router.post("/apply", response_model=PreprocessApplyResponse)
 def apply(req: PreprocessApplyRequest, db: Session = Depends(get_db)):
-    """전처리 연산을 선택한 데이터셋에 적용한다."""
+    """전처리 연산을 선택한 source_id 데이터셋에 적용한다."""
     try:
         return PreprocessService(db).apply(
-            dataset_id=req.dataset_id,
+            source_id=req.source_id,
             operations=req.operations,
         )
     except FileNotFoundError as e:

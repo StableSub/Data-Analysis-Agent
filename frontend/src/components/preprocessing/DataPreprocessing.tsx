@@ -326,7 +326,7 @@ export function DataPreprocessing({ isDark, selectedSourceId }: DataPreprocessin
     | { type: 'drop_columns'; target_columns: string[] }
     | { type: 'rename_columns'; mapping: Record<string,string> }
     | { type: 'derived_column'; name: string; expression: string };
-  type ApplyResponse = { dataset_id: number; base_version_id?: number | null; new_version_id: number; version_no: number; row_count: number; col_count: number };
+  type ApplyResponse = { source_id: string };
 
   const [opsQueue, setOpsQueue] = useState<QueueOp[]>([]);
   const pushOp = (op: QueueOp) => setOpsQueue(prev => [...prev, op]);
@@ -354,42 +354,27 @@ export function DataPreprocessing({ isDark, selectedSourceId }: DataPreprocessin
 
       return copy;
     });
-  // 현재 선택된 소스(source_id)를 dataset_id로 매핑
-  const [selectedDatasetId, setSelectedDatasetId] = useState<number | null>(null);
-  const [applyBaseVersionId, setApplyBaseVersionId] = useState('');
   const [applyLoading, setApplyLoading] = useState(false);
-
-  useEffect(() => {
-    (async () => {
-      if (!selectedSourceId) {
-        setSelectedDatasetId(null);
-        return;
-      }
-      try {
-        const res = await apiRequest<{ total:number; items: { id:number; filename:string; source_id:string }[] }>(`/datasets?skip=0&limit=1000`);
-        const found = (res.items || []).find(it => it.source_id === selectedSourceId);
-        setSelectedDatasetId(found ? found.id : null);
-      } catch (e) {
-        setSelectedDatasetId(null);
-      }
-    })();
-  }, [selectedSourceId]);
 
   const toBackendOps = (ops: QueueOp[]) => ops.map(op => {
     if (op.type === 'fill_missing') {
-      return { op: 'impute', params: { columns: op.target_columns, method: op.strategy, ...(op.strategy==='value'?{value:op.value}: {}) } };
+      return { op: 'impute', columns: op.target_columns, method: op.strategy, ...(op.strategy==='value'?{value:op.value}: {}) };
     }
     if (op.type === 'scale') {
-      return { op: 'scale', params: { columns: op.target_columns, method: op.method === 'minmax' ? 'normalize' : 'standardize' } };
+      return { op: 'scale', columns: op.target_columns, method: op.method === 'minmax' ? 'normalize' : 'standardize' };
     }
     if (op.type === 'drop_columns') {
-      return { op: 'drop_columns', params: { columns: op.target_columns } };
+      return { op: 'drop_columns', columns: op.target_columns };
     }
     if (op.type === 'rename_columns') {
-      return { op: 'rename_columns', params: { mapping: op.mapping } };
+      return {
+        op: 'rename_columns',
+        rename_from: Object.keys(op.mapping),
+        rename_to: Object.values(op.mapping),
+      };
     }
     if (op.type === 'derived_column') {
-      return { op: 'derived_column', params: { name: op.name, expression: op.expression } };
+      return { op: 'derived_column', name: op.name, expression: op.expression };
     }
     return op as any;
   });
@@ -462,15 +447,14 @@ export function DataPreprocessing({ isDark, selectedSourceId }: DataPreprocessin
 
   // 서버 적용 요청
   const handleApplyToServer = async () => {
-    if (!selectedDatasetId) {
-      alert('dataset_id를 선택하세요');
+    if (!selectedSourceId) {
+      alert('source_id를 선택하세요');
       return;
     }
     try {
       setApplyLoading(true);
       const payload: any = {
-        dataset_id: Number(selectedDatasetId),
-        base_version_id: applyBaseVersionId ? Number(applyBaseVersionId) : null,
+        source_id: selectedSourceId,
         operations: toBackendOps(opsQueue),
       };
       await apiRequest<ApplyResponse>('/preprocess/apply', { method: 'POST', body: JSON.stringify(payload) });
@@ -838,8 +822,10 @@ export function DataPreprocessing({ isDark, selectedSourceId }: DataPreprocessin
                   미리보기
                 </Button>
                 <Button
-                  onClick={() => {
+                  disabled={applyLoading}
+                  onClick={async () => {
                     try {
+                      await handleApplyToServer();
                       const applied = applyOpsToSample(data, opsQueue);
                       const newCols = applied.columns;
                       const newRows = applied.rows as any[];
@@ -850,7 +836,7 @@ export function DataPreprocessing({ isDark, selectedSourceId }: DataPreprocessin
                     }
                   }}
                 >
-                  적용
+                  {applyLoading ? '적용 중...' : '적용'}
                 </Button>
               </div>
               </Card>

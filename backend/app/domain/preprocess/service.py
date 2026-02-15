@@ -1,6 +1,5 @@
 import os
 import re
-from typing import Any, Dict, List
 
 import pandas as pd
 from sqlalchemy.orm import Session
@@ -19,56 +18,68 @@ class PreprocessService:
 
     def apply(
         self,
-        dataset_id: int,
-        operations: List[PreprocessOperation],
+        source_id: str,
+        operations: list[PreprocessOperation],
     ) -> PreprocessApplyResponse:
-        """선택한 데이터셋 CSV 파일에 전처리를 적용하고 같은 파일에 덮어쓴다."""
-        file_path = self._resolve_dataset_file(dataset_id)
+        """선택한 source_id 데이터셋 CSV 파일에 전처리를 적용하고 같은 파일에 덮어쓴다."""
+        file_path = self._resolve_dataset_file(source_id)
         df = pd.read_csv(file_path)
         processed = self._apply_operations(df, operations)
         processed.to_csv(file_path, index=False)
-        return PreprocessApplyResponse(dataset_id=dataset_id)
+        return PreprocessApplyResponse(source_id=source_id)
 
-    def _resolve_dataset_file(self, dataset_id: int) -> str:
-        """dataset_id로 파일 경로를 조회하고 존재 여부를 검증한다."""
-        dataset = self.repository.get_by_id(dataset_id)
+    def _resolve_dataset_file(self, source_id: str) -> str:
+        """source_id로 파일 경로를 조회하고 존재 여부를 검증한다."""
+        dataset = self.repository.get_by_source_id(source_id)
         if not dataset:
-            raise FileNotFoundError(f"Dataset not found: {dataset_id}")
+            raise FileNotFoundError(f"Dataset not found: {source_id}")
         if not dataset.storage_path:
             raise FileNotFoundError("Dataset file path not found")
         if not os.path.exists(dataset.storage_path):
             raise FileNotFoundError(f"Dataset file missing: {dataset.storage_path}")
         return dataset.storage_path
 
-    def _apply_operations(self, df: pd.DataFrame, operations: List[PreprocessOperation]) -> pd.DataFrame:
+    def _apply_operations(self, df: pd.DataFrame, operations: list[PreprocessOperation]) -> pd.DataFrame:
         """지원하는 최소 연산만 순서대로 적용한다."""
         out = df.copy()
         for operation in operations:
-            params: Dict[str, Any] = operation.params or {}
-
             if operation.op == "drop_missing":
-                columns = params.get("columns") or []
-                how = params.get("how", "any")
+                columns = operation.columns
+                how = operation.how
+                if how not in {"any", "all"}:
+                    raise ValueError("drop_missing.how must be any or all")
                 out = out.dropna(subset=columns, how=how) if columns else out.dropna(how=how)
                 continue
 
             if operation.op == "drop_columns":
-                out = out.drop(columns=params.get("columns") or [], errors="ignore")
+                if not operation.columns:
+                    raise ValueError("drop_columns requires columns")
+                out = out.drop(columns=operation.columns, errors="ignore")
                 continue
 
             if operation.op == "rename_columns":
-                mapping = params.get("mapping") or {}
-                if not isinstance(mapping, dict):
-                    raise ValueError("rename_columns.mapping must be a dict")
+                rename_from = operation.rename_from
+                rename_to = operation.rename_to
+                if len(rename_from) != len(rename_to):
+                    raise ValueError("rename_columns requires same length for rename_from and rename_to")
+                if not rename_from and not rename_to:
+                    raise ValueError("rename_columns requires rename_from and rename_to")
+                mapping = {
+                    old_name: new_name
+                    for old_name, new_name in zip(rename_from, rename_to)
+                    if old_name and new_name
+                }
                 out = out.rename(columns=mapping)
                 continue
 
             if operation.op == "impute":
-                method = params.get("method")
-                columns = params.get("columns") or []
-                value = params.get("value", None)
+                method = operation.method
+                columns = operation.columns
+                value = operation.value
                 if not columns:
                     raise ValueError("impute requires 'columns'")
+                if method not in {"mean", "median", "mode", "value"}:
+                    raise ValueError("impute.method must be mean, median, mode, or value")
 
                 for col in columns:
                     if col not in out.columns:
@@ -87,10 +98,12 @@ class PreprocessService:
                 continue
 
             if operation.op == "scale":
-                method = params.get("method")
-                columns = params.get("columns") or []
+                method = operation.method
+                columns = operation.columns
                 if not columns:
                     raise ValueError("scale requires 'columns'")
+                if method not in {"standardize", "normalize"}:
+                    raise ValueError("scale.method must be standardize or normalize")
 
                 for col in columns:
                     if col not in out.columns:
@@ -110,17 +123,12 @@ class PreprocessService:
                 continue
 
             if operation.op == "derived_column":
-                new_col = params.get("name")
-                expr = params.get("expression")
+                new_col = operation.name
+                expr = operation.expression
                 if not new_col or not expr:
                     raise ValueError("derived_column requires 'name' and 'expression'")
                 if not _SAFE_EXPR_RE.match(expr):
                     raise ValueError("derived_column.expression contains unsupported characters")
-
-                tokens = set(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", expr))
-                unknown = [token for token in tokens if token not in out.columns and token not in {"and", "or"}]
-                if unknown:
-                    raise ValueError(f"derived_column.expression references unknown columns: {unknown}")
                 out[new_col] = out.eval(expr, engine="python")
                 continue
 

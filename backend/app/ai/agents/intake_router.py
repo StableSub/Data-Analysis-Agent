@@ -27,11 +27,6 @@ class IntentDecision(BaseModel):
 def build_intake_router_workflow(default_model: str = "gpt-5-nano"):
     """의도 분기 전용 라우터 그래프를 생성한다."""
 
-    def log_branch(point: str, branch: str, detail: str = "") -> None:
-        """분기 지점과 선택 결과를 콘솔에 출력한다."""
-        suffix = f" | {detail}" if detail else ""
-        print(f"[branch:intake] {point} -> {branch}{suffix}")
-
     def call_structured(
         schema: type[BaseModel],
         system_prompt: str,
@@ -49,14 +44,12 @@ def build_intake_router_workflow(default_model: str = "gpt-5-nano"):
         )
 
     def route_dataset_selected(state: IntakeRouterState) -> str:
-        """dataset_id 존재 여부로 첫 분기를 수행한다."""
-        branch = "data_selected" if state.get("dataset_id") else "no_dataset"
-        log_branch("dataset_selected", branch, f"dataset_id={state.get('dataset_id')}")
-        return branch
+        """source_id 존재 여부로 첫 분기를 수행한다."""
+        source_id = state.get("source_id")
+        return "data_selected" if source_id else "no_dataset"
 
     def general_question_node(_: IntakeRouterState) -> Dict[str, Any]:
         """데이터셋이 없으면 일반 질문 경로로 handoff를 생성한다."""
-        log_branch("handoff", "general_question")
         return {"handoff": {"next_step": "general_question"}}
 
     def analyze_intent_node(state: IntakeRouterState) -> Dict[str, Any]:
@@ -71,30 +64,15 @@ def build_intake_router_workflow(default_model: str = "gpt-5-nano"):
             state.get("user_input", ""),
             state.get("model_id"),
         )
-        log_branch(
-            "intent_analysis",
-            decision.step,
-            f"ask_visualization={decision.ask_visualization}, ask_report={decision.ask_report}",
-        )
         return {"intent": decision.model_dump()}
 
     def route_after_intent(state: IntakeRouterState) -> str:
         """의도 분석 결과에 따라 일반 질문/데이터 파이프라인 경로를 결정한다."""
-        branch = str((state.get("intent") or {}).get("step", "general_question"))
-        log_branch("after_intent", branch)
-        return branch
+        return str((state.get("intent") or {}).get("step", "general_question"))
 
     def data_pipeline_node(state: IntakeRouterState) -> Dict[str, Any]:
         """최종 빌더 그래프의 데이터 파이프라인 시작 신호를 전달한다."""
         intent = state.get("intent") or {}
-        log_branch(
-            "handoff",
-            "data_pipeline",
-            (
-                f"ask_visualization={bool(intent.get('ask_visualization', False))}, "
-                f"ask_report={bool(intent.get('ask_report', False))}"
-            ),
-        )
         return {
             "handoff": {
                 "next_step": "data_pipeline",
