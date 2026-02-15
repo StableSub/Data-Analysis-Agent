@@ -1,32 +1,25 @@
 import { ReactNode } from 'react';
-import { ThemeToggleButton } from '../layout/ThemeToggleButton';
 
 interface AppHeaderProps {
   title: string;
   subtitle: string;
-  isDark: boolean;
-  onToggleTheme: () => void;
   center?: ReactNode;
+  rightSlot?: ReactNode;
 }
 
-export function AppHeader({ title, subtitle, isDark, onToggleTheme, center }: AppHeaderProps) {
+export function AppHeader({ title, subtitle, center, rightSlot }: AppHeaderProps) {
   return (
-    <div className="bg-white dark:bg-[#171717] border-b border-gray-200 dark:border-white/10 px-6 py-4">
+    <div className="border-b border-zinc-200 bg-white px-6 py-4">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl text-gray-900 dark:text-white">{title}</h1>
-          <p className="text-sm text-gray-500 dark:text-[#98989d]">{subtitle}</p>
+          <h1 className="text-xl text-zinc-900">{title}</h1>
+          <p className="text-sm text-zinc-500">{subtitle}</p>
         </div>
 
         {/* Center content (e.g., FeatureToggle) */}
         {center}
 
-        <div className="flex items-center gap-3">
-          <ThemeToggleButton isDark={isDark} onToggle={onToggleTheme} />
-          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white text-sm">
-            U
-          </div>
-        </div>
+        <div className="flex min-w-[48px] items-center justify-end gap-3">{rightSlot}</div>
       </div>
     </div>
   );

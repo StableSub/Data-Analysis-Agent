@@ -14,7 +14,7 @@ interface ChatInputBarProps {
   onOpenUpload: () => void;
   selectedModelId: string;
   setSelectedModelId: (id: string) => void;
-  textareaRef: RefObject<HTMLTextAreaElement>;
+  textareaRef: RefObject<HTMLTextAreaElement | null>;
 }
 
 export function ChatInputBar({
@@ -122,4 +122,3 @@ export function ChatInputBar({
     </div>
   );
 }
-
