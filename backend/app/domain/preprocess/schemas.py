@@ -67,7 +67,7 @@ class PreprocessApplyRequest(StrictModel):
     """전처리 적용 요청."""
 
     source_id: str
-    operations: list[PreprocessOperation] = Field(min_length=1)
+    operations: list[PreprocessOperation] = Field(default_factory=list)
 
 class PreprocessApplyResponse(StrictModel):
     """전처리 적용 결과."""

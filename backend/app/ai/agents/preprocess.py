@@ -19,7 +19,7 @@ from backend.app.domain.preprocess.schemas import PreprocessOperation
 from backend.app.domain.preprocess.service import PreprocessService
 
 class PreprocessPlan(BaseModel):
-    operations: list[PreprocessOperation] = Field(default_factory=list, min_length=1)
+    operations: list[PreprocessOperation] = Field(default_factory=list)
     planner_comment: str = ""
 
 class PreprocessDecision(BaseModel):
@@ -60,7 +60,7 @@ def build_preprocess_plan(
             "너는 전처리 플래너다. "
             "PreprocessPlan 스키마 형식으로만 반환하고 "
             "지원 연산은 drop_missing, impute, drop_columns, rename_columns, scale, derived_column다. "
-            "run_preprocess 분기에서는 operations를 1개 이상 채워야 한다. "
+            "전처리가 불필요하면 operations는 빈 배열로 반환하라. "
             "operations는 op+파라미터로 구성하며 "
             "planner_comment에는 판단 근거를 1~2문장으로 남겨라."
         ),
@@ -105,9 +105,8 @@ def run_preprocess_executor(
     if not operations:
         return {
             "preprocess_result": {
-                "status": "failed",
+                "status": "skipped",
                 "applied_ops_count": 0,
-                "error": "planner returned empty operations",
             }
         }
 
