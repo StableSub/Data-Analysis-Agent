@@ -55,5 +55,6 @@ pnpm-debug.log*
 # IDE / Editor
 .vscode/
 .idea/
+.claude/
 *.sh
 dev.sh
