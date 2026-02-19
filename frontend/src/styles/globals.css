@@ -39,6 +39,38 @@
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
+
+  /* Gen-UI Status — fg / bg */
+  --genui-success: #059669;
+  --genui-success-bg: #ecfdf5;
+  --genui-error: #e11d48;
+  --genui-error-bg: #fff1f2;
+  --genui-error-muted: #ffe4e6;
+  --genui-warning: #d97706;
+  --genui-warning-bg: #fffbeb;
+  --genui-running: #2563eb;
+  --genui-running-bg: #eff6ff;
+  --genui-running-muted: #dbeafe;
+  --genui-needs-user: #7c3aed;
+  --genui-needs-user-bg: #f5f3ff;
+  --genui-idle: #64748b;
+  --genui-idle-bg: #f8fafc;
+
+  /* Card Shell */
+  --genui-card-radius: 0.75rem;
+  --genui-card-border: rgba(0, 0, 0, 0.08);
+  --genui-card-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.06);
+  --genui-card-shadow-hover: 0 4px 12px rgba(0, 0, 0, 0.06), 0 2px 4px rgba(0, 0, 0, 0.08);
+  --genui-card-inner-bg: #ffffff;
+
+  /* Spacing */
+  --genui-timeline-gap: 1rem;
+  --genui-card-padding: 1rem;
+  --genui-card-gap: 0.75rem;
+
+  /* Misc */
+  --genui-avatar-size: 1.75rem;
+
 }
 
 .dark {
@@ -77,6 +109,26 @@
   --sidebar-accent-foreground: #ffffff;
   --sidebar-border: rgba(255, 255, 255, 0.1);
   --sidebar-ring: rgba(10, 132, 255, 0.5);
+
+  --genui-success: #34d399;
+  --genui-success-bg: rgba(16, 185, 129, 0.12);
+  --genui-error: #fb7185;
+  --genui-error-bg: rgba(244, 63, 94, 0.12);
+  --genui-error-muted: rgba(244, 63, 94, 0.22);
+  --genui-warning: #fbbf24;
+  --genui-warning-bg: rgba(245, 158, 11, 0.12);
+  --genui-running: #60a5fa;
+  --genui-running-bg: rgba(37, 99, 235, 0.12);
+  --genui-running-muted: rgba(37, 99, 235, 0.22);
+  --genui-needs-user: #a78bfa;
+  --genui-needs-user-bg: rgba(124, 58, 237, 0.12);
+  --genui-idle: #94a3b8;
+  --genui-idle-bg: #2c2c2e;
+  --genui-card-border: rgba(255, 255, 255, 0.08);
+  --genui-card-shadow: 0 1px 3px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2);
+  --genui-card-shadow-hover: 0 4px 12px rgba(0, 0, 0, 0.4), 0 2px 4px rgba(0, 0, 0, 0.3);
+  --genui-card-inner-bg: #232326;
+
 }
 
 @theme inline {
@@ -118,6 +170,23 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
+
+  --color-genui-success: var(--genui-success);
+  --color-genui-success-bg: var(--genui-success-bg);
+  --color-genui-error: var(--genui-error);
+  --color-genui-error-bg: var(--genui-error-bg);
+  --color-genui-error-muted: var(--genui-error-muted);
+  --color-genui-warning: var(--genui-warning);
+  --color-genui-warning-bg: var(--genui-warning-bg);
+  --color-genui-running: var(--genui-running);
+  --color-genui-running-bg: var(--genui-running-bg);
+  --color-genui-running-muted: var(--genui-running-muted);
+  --color-genui-needs-user: var(--genui-needs-user);
+  --color-genui-needs-user-bg: var(--genui-needs-user-bg);
+  --color-genui-idle: var(--genui-idle);
+  --color-genui-idle-bg: var(--genui-idle-bg);
+  --color-genui-border: var(--genui-card-border);
+  --color-genui-card: var(--genui-card-inner-bg);
 }
 
 @layer base {
@@ -127,6 +196,16 @@
 
   body {
     @apply bg-background text-foreground;
+  }
+}
+
+@keyframes cursor-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
   }
 }
 

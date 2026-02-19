@@ -78,7 +78,7 @@ export function ChatMessages({
                   <div className="px-4 py-3 rounded-2xl bg-gray-100 dark:bg-[#2f2f2f] text-gray-900 dark:text-white">
                     <p className="text-sm whitespace-pre-wrap">
                       {streamingContent}
-                      <span className="inline-block w-2 h-4 ml-0.5 bg-blue-500 dark:bg-blue-400 animate-pulse" />
+                      <span className="ml-0.5 inline-block h-[1.1em] w-[3px] animate-[cursor-blink_0.8s_ease_infinite] bg-genui-running align-[-0.12em]" />
                     </p>
                   </div>
                 </div>
@@ -92,4 +92,3 @@ export function ChatMessages({
     </div>
   );
 }
-

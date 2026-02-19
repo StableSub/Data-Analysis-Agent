@@ -1,5 +1,6 @@
 import {
   CardAction,
+  ErrorCardProps,
   DatasetSummaryCardProps,
   PreprocessPlanCardProps,
   PipelineRunCardProps,
@@ -18,6 +19,8 @@ import { RAGIngestCard } from './RAGIngestCard';
 import { DocumentIndexCard } from './DocumentIndexCard';
 import { RetrievalEvidenceCard } from './RetrievalEvidenceCard';
 import { ReportBuilderCard } from './ReportBuilderCard';
+import { ErrorCard } from './ErrorCard';
+import { Card, CardContent } from '../ui/card';
 
 interface CanvasCardRendererProps {
   card: WorkbenchCardProps;
@@ -49,5 +52,14 @@ export function CanvasCardRenderer({ card, onAction }: CanvasCardRendererProps) 
   if (card.cardType === 'report_builder') {
     return <ReportBuilderCard card={card as ReportBuilderCardProps} onAction={onAction as any} />;
   }
-  return null;
+  if (card.cardType === 'error_card') {
+    return <ErrorCard card={card as ErrorCardProps} onAction={onAction as any} />;
+  }
+  return (
+    <Card className="rounded-[var(--genui-card-radius)] border-genui-border">
+      <CardContent className="p-4">
+        <p className="text-xs text-muted-foreground">지원되지 않는 카드: {(card as WorkbenchCardProps).cardType}</p>
+      </CardContent>
+    </Card>
+  );
 }

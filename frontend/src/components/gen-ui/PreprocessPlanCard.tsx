@@ -12,7 +12,7 @@ interface PreprocessPlanCardViewProps {
 export function PreprocessPlanCard({ card, onAction }: PreprocessPlanCardViewProps) {
   return (
     <CardFrame card={card} onAction={(base, action) => onAction?.(base as PreprocessPlanCardProps, action)}>
-      <div className="rounded-lg border border-slate-200/80 p-3 dark:border-white/10">
+      <div className="rounded-lg border border-genui-border bg-genui-card p-3">
         <p className="inline-flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
           <Wand2 className="h-3.5 w-3.5" />
           plan: {card.plan.planId}
@@ -24,7 +24,7 @@ export function PreprocessPlanCard({ card, onAction }: PreprocessPlanCardViewPro
 
       <div className="space-y-2">
         {card.plan.steps.map((step, index) => (
-          <div key={step.stepId} className="rounded-lg border border-slate-200/80 p-3 text-sm dark:border-white/10">
+          <div key={step.stepId} className="rounded-lg border border-genui-border bg-genui-card p-3 text-sm">
             <div className="flex items-start justify-between gap-2">
               <div>
                 <p className="text-slate-900 dark:text-white">{index + 1}. {step.title}</p>

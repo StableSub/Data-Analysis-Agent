@@ -6,6 +6,7 @@ export { RAGIngestCard } from './RAGIngestCard';
 export { DocumentIndexCard } from './DocumentIndexCard';
 export { RetrievalEvidenceCard } from './RetrievalEvidenceCard';
 export { ReportBuilderCard } from './ReportBuilderCard';
+export { ErrorCard } from './ErrorCard';
 export { CanvasCardRenderer } from './CanvasCardRenderer';
 export { CardFrame } from './CardFrame';
 
@@ -22,6 +23,7 @@ export type {
   DocumentIndexCardProps,
   RetrievalEvidenceCardProps,
   ReportBuilderCardProps,
+  ErrorCardProps,
   WorkbenchCardProps,
 } from './types';
 

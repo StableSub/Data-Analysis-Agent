@@ -36,19 +36,19 @@ export function DatasetSummaryCard({ card, onAction }: DatasetSummaryCardViewPro
   return (
     <CardFrame card={card} onAction={(base, action) => onAction?.(base as DatasetSummaryCardProps, action)}>
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-        <div className="rounded-lg border border-slate-200/80 bg-white px-3 py-2 dark:border-white/10 dark:bg-[#202024]">
+        <div className="rounded-lg border border-genui-border bg-genui-card px-3 py-2">
           <div className="mb-1 flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
             <Rows3 className="h-3.5 w-3.5" /> Rows
           </div>
           <p className="text-sm font-medium text-slate-900 dark:text-white">{formatNumber(card.dataset.rows)}</p>
         </div>
-        <div className="rounded-lg border border-slate-200/80 bg-white px-3 py-2 dark:border-white/10 dark:bg-[#202024]">
+        <div className="rounded-lg border border-genui-border bg-genui-card px-3 py-2">
           <div className="mb-1 flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
             <Database className="h-3.5 w-3.5" /> Cols
           </div>
           <p className="text-sm font-medium text-slate-900 dark:text-white">{formatNumber(card.dataset.cols)}</p>
         </div>
-        <div className="rounded-lg border border-slate-200/80 bg-white px-3 py-2 dark:border-white/10 dark:bg-[#202024]">
+        <div className="rounded-lg border border-genui-border bg-genui-card px-3 py-2">
           <div className="mb-1 flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
             <AlertTriangle className="h-3.5 w-3.5" /> Missing
           </div>
@@ -56,7 +56,7 @@ export function DatasetSummaryCard({ card, onAction }: DatasetSummaryCardViewPro
         </div>
       </div>
 
-      <div className="rounded-lg border border-slate-200/80 p-3 dark:border-white/10">
+      <div className="rounded-lg border border-genui-border bg-genui-card p-3">
         <div className="mb-2 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
           <span>Completeness</span>
           <span className="font-medium text-slate-700 dark:text-slate-200">{completeness.toFixed(1)}%</span>
@@ -65,8 +65,8 @@ export function DatasetSummaryCard({ card, onAction }: DatasetSummaryCardViewPro
       </div>
 
       {card.schema?.columns?.length ? (
-        <div className="rounded-lg border border-slate-200/80 dark:border-white/10">
-          <div className="border-b border-slate-200/80 px-3 py-2 text-xs font-medium text-slate-600 dark:border-white/10 dark:text-slate-300">
+        <div className="rounded-lg border border-genui-border bg-genui-card">
+          <div className="border-b border-genui-border px-3 py-2 text-xs font-medium text-slate-600 dark:text-slate-300">
             Schema Snapshot
           </div>
           <div className="max-h-56 overflow-auto">
@@ -103,8 +103,8 @@ export function DatasetSummaryCard({ card, onAction }: DatasetSummaryCardViewPro
       ) : null}
 
       {card.preview?.rows?.length ? (
-        <div className="rounded-lg border border-slate-200/80 dark:border-white/10">
-          <div className="border-b border-slate-200/80 px-3 py-2 text-xs font-medium text-slate-600 dark:border-white/10 dark:text-slate-300">
+        <div className="rounded-lg border border-genui-border bg-genui-card">
+          <div className="border-b border-genui-border px-3 py-2 text-xs font-medium text-slate-600 dark:text-slate-300">
             Preview {card.preview.truncated ? '(truncated)' : ''}
           </div>
           <div className="max-h-56 overflow-auto px-3 py-2 text-xs text-slate-700 dark:text-slate-300">

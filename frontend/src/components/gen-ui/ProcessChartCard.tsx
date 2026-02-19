@@ -67,8 +67,8 @@ export function ProcessChartCard({
   metrics,
 }: ProcessChartCardProps) {
   return (
-    <Card className="border-slate-200/80 shadow-sm dark:border-white/10 dark:bg-[#1c1c1e]">
-      <CardHeader className="space-y-3 border-b border-slate-200/80 pb-4 dark:border-white/10">
+    <Card className="rounded-[var(--genui-card-radius)] border-genui-border bg-genui-card shadow-[var(--genui-card-shadow)] transition-shadow duration-150 ease-out hover:shadow-[var(--genui-card-shadow-hover)]">
+      <CardHeader className="space-y-3 border-b border-genui-border pb-4">
         <div className="flex items-start justify-between gap-3">
           <div>
             <CardTitle className="text-base text-slate-900 dark:text-white">{title}</CardTitle>
@@ -81,7 +81,7 @@ export function ProcessChartCard({
 
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
           {metrics.map((metric) => (
-            <div key={metric.label} className="rounded-lg border border-slate-200/80 bg-white px-3 py-2 dark:border-white/10 dark:bg-[#202024]">
+            <div key={metric.label} className="rounded-lg border border-genui-border bg-genui-card px-3 py-2">
               <p className="text-xs text-slate-500 dark:text-slate-400">{metric.label}</p>
               <p className="mt-1 text-sm font-medium text-slate-900 dark:text-white">{metric.value}</p>
               <p className={`mt-1 text-xs ${trendClass(metric.trend)}`}>
@@ -93,7 +93,7 @@ export function ProcessChartCard({
       </CardHeader>
 
       <CardContent className="pt-4">
-        <div className="rounded-lg border border-slate-200/80 p-3 dark:border-white/10">
+        <div className="rounded-lg border border-genui-border bg-genui-card p-3">
           <div className="mb-3 flex items-center justify-between">
             <p className="inline-flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
               <Activity className="h-3.5 w-3.5" />

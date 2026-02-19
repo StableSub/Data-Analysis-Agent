@@ -11,12 +11,12 @@ interface DocumentIndexCardViewProps {
 export function DocumentIndexCard({ card, onAction }: DocumentIndexCardViewProps) {
   return (
     <CardFrame card={card} onAction={(base, action) => onAction?.(base as DocumentIndexCardProps, action)}>
-      <div className="rounded-lg border border-slate-200/80 p-3 text-sm dark:border-white/10">
+      <div className="rounded-lg border border-genui-border bg-genui-card p-3 text-sm">
         <p className="text-xs text-slate-500 dark:text-slate-400">Index</p>
         <p className="text-slate-900 dark:text-white">{card.index.name} ({card.index.indexId})</p>
       </div>
 
-      <div className="rounded-lg border border-slate-200/80 p-3 dark:border-white/10">
+      <div className="rounded-lg border border-genui-border bg-genui-card p-3">
         <p className="mb-2 inline-flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
           <BookOpenText className="h-3.5 w-3.5" />
           Files ({card.corpus.totalFiles})

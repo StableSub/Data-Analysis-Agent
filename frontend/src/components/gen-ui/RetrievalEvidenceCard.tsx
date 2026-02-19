@@ -12,14 +12,14 @@ interface RetrievalEvidenceCardViewProps {
 export function RetrievalEvidenceCard({ card, onAction }: RetrievalEvidenceCardViewProps) {
   return (
     <CardFrame card={card} onAction={(base, action) => onAction?.(base as RetrievalEvidenceCardProps, action)}>
-      <div className="rounded-lg border border-slate-200/80 p-3 text-sm dark:border-white/10">
+      <div className="rounded-lg border border-genui-border bg-genui-card p-3 text-sm">
         <p className="text-xs text-slate-500 dark:text-slate-400">Query</p>
         <p className="text-slate-900 dark:text-white">{card.retrieval.query}</p>
       </div>
 
       <div className="space-y-2">
         {card.chunks.map((chunk) => (
-          <div key={chunk.chunkId} className="rounded-lg border border-slate-200/80 p-3 dark:border-white/10">
+          <div key={chunk.chunkId} className="rounded-lg border border-genui-border bg-genui-card p-3">
             <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
               <p className="inline-flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
                 <Quote className="h-3.5 w-3.5" />

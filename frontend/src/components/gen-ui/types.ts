@@ -308,6 +308,16 @@ export interface ReportBuilderCardProps extends BaseCardProps {
   exportAction: CardAction;
 }
 
+export interface ErrorCardProps extends BaseCardProps {
+  cardType: 'error_card';
+  error: {
+    failedStep: string;
+    reason: string;
+    originalCardType?: CardType;
+    retryAction?: CardAction;
+  };
+}
+
 export const CARD_TYPES = [
   'dataset_summary',
   'preprocess_plan',
@@ -317,6 +327,7 @@ export const CARD_TYPES = [
   'doc_index',
   'retrieval_evidence',
   'report_builder',
+  'error_card',
 ] as const;
 
 export type CardType = (typeof CARD_TYPES)[number];
@@ -329,4 +340,5 @@ export type WorkbenchCardProps =
   | RAGIngestCardProps
   | DocumentIndexCardProps
   | RetrievalEvidenceCardProps
-  | ReportBuilderCardProps;
+  | ReportBuilderCardProps
+  | ErrorCardProps;

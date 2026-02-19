@@ -26,11 +26,11 @@ export function ChartCard({ card, onAction }: ChartCardViewProps) {
       </div>
 
       {isHtml ? (
-        <div className="overflow-hidden rounded-lg border border-slate-200/80 dark:border-white/10">
+        <div className="overflow-hidden rounded-lg border border-genui-border bg-genui-card">
           <iframe title={card.chart.title || card.title} src={card.artifact.uri} className="h-[360px] w-full bg-white" />
         </div>
       ) : (
-        <div className="overflow-hidden rounded-lg border border-slate-200/80 dark:border-white/10">
+        <div className="overflow-hidden rounded-lg border border-genui-border bg-genui-card">
           <img
             src={card.artifact.uri}
             alt={card.chart.title || card.title}

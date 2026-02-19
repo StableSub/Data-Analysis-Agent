@@ -21,7 +21,7 @@ export function PipelineRunCard({ card, onAction }: PipelineRunCardViewProps) {
 
   return (
     <CardFrame card={card} onAction={(base, action) => onAction?.(base as PipelineRunCardProps, action)}>
-      <div className="rounded-lg border border-slate-200/80 p-3 dark:border-white/10">
+      <div className="rounded-lg border border-genui-border bg-genui-card p-3">
         <p className="inline-flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
           <GaugeCircle className="h-3.5 w-3.5" />
           run: {card.run.runId}
@@ -34,18 +34,18 @@ export function PipelineRunCard({ card, onAction }: PipelineRunCardViewProps) {
       </div>
 
       <div className="grid grid-cols-2 gap-2 text-sm">
-        <div className="rounded-lg border border-slate-200/80 p-3 dark:border-white/10">
+        <div className="rounded-lg border border-genui-border bg-genui-card p-3">
           <p className="text-xs text-slate-500 dark:text-slate-400">Rows</p>
           <p className="text-slate-900 dark:text-white">{formatNumber(card.result?.rowCountBefore)} → {formatNumber(card.result?.rowCountAfter)}</p>
         </div>
-        <div className="rounded-lg border border-slate-200/80 p-3 dark:border-white/10">
+        <div className="rounded-lg border border-genui-border bg-genui-card p-3">
           <p className="text-xs text-slate-500 dark:text-slate-400">Columns</p>
           <p className="text-slate-900 dark:text-white">{formatNumber(card.result?.colCountBefore)} → {formatNumber(card.result?.colCountAfter)}</p>
         </div>
       </div>
 
       {card.artifacts?.length ? (
-        <div className="rounded-lg border border-slate-200/80 p-3 text-xs dark:border-white/10">
+        <div className="rounded-lg border border-genui-border bg-genui-card p-3 text-xs">
           <p className="mb-2 inline-flex items-center gap-1.5 text-slate-500 dark:text-slate-400">
             <Table2 className="h-3.5 w-3.5" />
             Artifacts
