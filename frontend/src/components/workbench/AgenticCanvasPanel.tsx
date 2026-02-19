@@ -1,4 +1,5 @@
 import { type ComponentType, useEffect, useMemo, useRef, useState } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import {
   BarChart3,
   Bot,
@@ -7,6 +8,8 @@ import {
   FileText,
   FolderUp,
   Loader2,
+  PanelLeftClose,
+  PanelLeftOpen,
   Pencil,
   Plus,
   Search,
@@ -20,6 +23,16 @@ import { toast } from 'sonner';
 
 import { CanvasCardRenderer } from '../gen-ui';
 import type { CardAction, WorkbenchCardProps } from '../gen-ui';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '../ui/alert-dialog';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/card';
@@ -94,17 +107,17 @@ type SessionArtifactItem = SessionCardItem | SessionRecommendationItem;
 
 type RenderableTimelineItem =
   | {
-      key: string;
-      createdAt: string;
-      type: 'message';
-      message: SessionMessage;
-    }
+    key: string;
+    createdAt: string;
+    type: 'message';
+    message: SessionMessage;
+  }
   | {
-      key: string;
-      createdAt: string;
-      type: 'artifact';
-      artifact: SessionArtifactItem;
-    };
+    key: string;
+    createdAt: string;
+    type: 'artifact';
+    artifact: SessionArtifactItem;
+  };
 
 const WORKFLOWS: Record<CanvasWorkflow, WorkflowMeta> = {
   preprocess: {
@@ -392,8 +405,10 @@ export function AgenticCanvasPanel({
   const [isResponding, setIsResponding] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [isDropUploading, setIsDropUploading] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
+  const [sessionToDelete, setSessionToDelete] = useState<string | null>(null);
   const [sessionArtifacts, setSessionArtifacts] = useState<Record<string, SessionArtifactItem[]>>({});
 
   const processedDatasetIdsRef = useRef<Record<string, Set<string>>>({});
@@ -651,11 +666,17 @@ export function AgenticCanvasPanel({
   }, [activeSessionId, files, onAddMessage]);
 
   return (
-    <div className="h-full w-full overflow-hidden bg-white">
+    <div className="h-full w-full overflow-hidden bg-[#0a0a0b]">
       <div className="flex h-full w-full overflow-hidden">
-        <aside className="flex h-full w-72 flex-col border-r border-zinc-200 bg-white">
-          <div className="border-b border-zinc-200 px-4 py-4">
-            <Button className="h-10 w-full justify-start gap-2" onClick={onNewSession}>
+        <motion.aside
+          initial={false}
+          animate={{ width: sidebarOpen ? 288 : 0 }}
+          transition={{ duration: 0.3, ease: [0.4, 0, 0.2, 1] }}
+          className="glass-panel flex h-full flex-col overflow-hidden border-r border-white/10"
+          style={{ minWidth: 0 }}
+        >
+          <div className="border-b border-white/10 px-4 py-3">
+            <Button className="h-9 w-full justify-start gap-2 border-white/[0.2] bg-black/60 text-white transition-all hover:bg-black/80 hover:text-white" variant="outline" onClick={onNewSession}>
               <Plus className="h-4 w-4" />
               New Session
             </Button>
@@ -663,8 +684,8 @@ export function AgenticCanvasPanel({
 
           <div className="flex min-h-0 flex-1 flex-col">
             <div className="flex items-center justify-between px-4 pb-2 pt-3">
-              <p className="text-xs font-medium tracking-wide text-zinc-500">대화 기록</p>
-              <Badge variant="secondary" className="bg-zinc-100 text-zinc-700">
+              <p className="text-xs font-semibold tracking-wide text-white/85 uppercase">대화 기록</p>
+              <Badge variant="secondary" className="border-white/20 bg-black/60 text-white">
                 {sessions.length}
               </Badge>
             </div>
@@ -672,7 +693,7 @@ export function AgenticCanvasPanel({
             <ScrollArea className="min-h-0 flex-1 px-2">
               <div className="space-y-1 pb-3">
                 {sessions.length === 0 ? (
-                  <p className="px-3 py-4 text-sm text-zinc-500">세션이 없습니다.</p>
+                  <p className="px-3 py-4 text-sm text-white/85">세션이 없습니다.</p>
                 ) : (
                   sessions.map((session) => {
                     const isActive = session.id === activeSessionId;
@@ -681,9 +702,8 @@ export function AgenticCanvasPanel({
                     return (
                       <div
                         key={session.id}
-                        className={`group rounded-lg border px-2 py-2 ${
-                          isActive ? 'border-zinc-900 bg-zinc-100' : 'border-transparent hover:border-zinc-200 hover:bg-zinc-50'
-                        }`}
+                        className={`group rounded-lg border px-2 py-2 transition-all duration-200 ${isActive ? 'border-[#5a7d9a]/40 bg-[#5a7d9a]/12' : 'border-transparent hover:border-white/10 hover:bg-black/50'
+                          }`}
                       >
                         {isEditing ? (
                           <div className="flex items-center gap-1">
@@ -725,19 +745,19 @@ export function AgenticCanvasPanel({
                               onClick={() => onSelectSession(session.id)}
                               className="min-w-0 flex-1 text-left"
                             >
-                              <p className={`truncate text-sm ${isActive ? 'font-medium text-zinc-900' : 'text-zinc-700'}`}>
+                              <p className={`truncate text-sm ${isActive ? 'font-semibold text-white' : 'text-white/90'}`}>
                                 {session.title}
                               </p>
-                              <p className="mt-0.5 text-xs text-zinc-500">
+                              <p className="mt-0.5 text-xs text-white/85">
                                 {session.messageCount}개 메시지 · {formatRelative(session.updatedAt)}
                               </p>
                             </button>
 
-                            <div className="flex items-center gap-0.5 opacity-100 md:opacity-0 md:group-hover:opacity-100">
+                            <div className="flex shrink-0 items-center gap-0.5 opacity-100">
                               <Button
                                 size="icon"
                                 variant="ghost"
-                                className="h-8 w-8 text-zinc-500"
+                                className="h-8 w-8 text-white/80 hover:text-white"
                                 onClick={() => {
                                   setEditingSessionId(session.id);
                                   setEditingTitle(session.title);
@@ -748,11 +768,10 @@ export function AgenticCanvasPanel({
                               <Button
                                 size="icon"
                                 variant="ghost"
-                                className="h-8 w-8 text-zinc-500 hover:text-rose-600"
-                                onClick={() => {
-                                  if (window.confirm('이 세션을 삭제하시겠습니까?')) {
-                                    onDeleteSession(session.id);
-                                  }
+                                className="h-8 w-8 text-white/80 hover:text-rose-400"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSessionToDelete(session.id);
                                 }}
                               >
                                 <Trash2 className="h-3.5 w-3.5" />
@@ -768,34 +787,11 @@ export function AgenticCanvasPanel({
             </ScrollArea>
           </div>
 
-          <div className="border-t border-zinc-200 px-4 py-3">
-            <p className="mb-2 text-xs font-medium tracking-wide text-zinc-500">Workflow 바로가기</p>
-            <div className="grid grid-cols-2 gap-2">
-              {WORKFLOW_ORDER.map((workflow) => {
-                const meta = WORKFLOWS[workflow];
-                const Icon = meta.icon;
-                return (
-                  <button
-                    key={workflow}
-                    type="button"
-                    onClick={() => handleWorkflowShortcut(workflow)}
-                    className="rounded-lg border border-zinc-200 bg-white p-2 text-left transition-colors hover:bg-zinc-50"
-                  >
-                    <div className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-zinc-200 bg-zinc-50 text-zinc-700">
-                      <Icon className="h-4 w-4" />
-                    </div>
-                    <p className="mt-2 text-xs font-medium text-zinc-900">{meta.label}</p>
-                    <p className="mt-0.5 text-[11px] text-zinc-500">{meta.description}</p>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
 
-          <div className="flex min-h-0 flex-col border-t border-zinc-200">
+          <div className="flex min-h-0 flex-col border-t border-white/10">
             <div className="flex items-center justify-between px-4 py-3">
-              <p className="text-xs font-medium tracking-wide text-zinc-500">소스 파일</p>
-              <Badge variant="secondary" className="bg-zinc-100 text-zinc-700">
+              <p className="text-xs font-semibold tracking-wide text-white/85 uppercase">소스 파일</p>
+              <Badge variant="secondary" className="border-white/20 bg-black/60 text-white">
                 {files.length}
               </Badge>
             </div>
@@ -803,36 +799,36 @@ export function AgenticCanvasPanel({
             <ScrollArea className="max-h-56 px-2 pb-3">
               <div className="space-y-1">
                 {files.length === 0 ? (
-                  <p className="px-3 py-4 text-sm text-zinc-500">업로드된 파일이 없습니다.</p>
+                  <p className="px-3 py-4 text-sm text-white/85">업로드된 파일이 없습니다.</p>
                 ) : (
                   files.map((file) => (
-                    <div key={file.id} className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-white px-2 py-2">
+                    <div key={file.id} className="flex items-center gap-2 rounded-lg border border-white/10 bg-black/50 px-2 py-2 transition-colors hover:bg-black/70">
                       <button
                         type="button"
                         onClick={() => onToggleFile(file.id)}
-                        className={`h-4 w-4 rounded border ${file.selected ? 'border-emerald-500 bg-emerald-500' : 'border-zinc-300 bg-white'}`}
+                        className={`h-4 w-4 rounded border transition-colors ${file.selected ? 'border-[#8fbc8f] bg-[#8fbc8f]' : 'border-white/20 bg-black/60'}`}
                         aria-label={file.selected ? 'selected file' : 'unselected file'}
                       >
                         {file.selected ? <Check className="h-3 w-3 text-white" /> : null}
                       </button>
 
-                      <div className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-zinc-200 bg-zinc-50">
+                      <div className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 bg-black/60">
                         {file.type === 'dataset' ? (
-                          <Database className="h-4 w-4 text-emerald-600" />
+                          <Database className="h-4 w-4 text-[#8fbc8f]" />
                         ) : (
-                          <FileText className="h-4 w-4 text-zinc-600" />
+                          <FileText className="h-4 w-4 text-white/85" />
                         )}
                       </div>
 
                       <div className="min-w-0 flex-1">
-                        <p className="truncate text-xs font-medium text-zinc-900">{file.name}</p>
-                        <p className="text-[11px] text-zinc-500">{formatFileSize(file.size)}</p>
+                        <p className="truncate text-xs font-medium text-white">{file.name}</p>
+                        <p className="text-[11px] text-white/85">{formatFileSize(file.size)}</p>
                       </div>
 
                       <Button
                         size="icon"
                         variant="ghost"
-                        className="h-8 w-8 text-zinc-500 hover:text-rose-600"
+                        className="h-8 w-8 text-white/80 hover:text-rose-400"
                         onClick={() => onRemoveFile(file.id)}
                       >
                         <X className="h-3.5 w-3.5" />
@@ -843,29 +839,24 @@ export function AgenticCanvasPanel({
               </div>
             </ScrollArea>
           </div>
-        </aside>
+        </motion.aside>
 
-        <main className="flex min-w-0 flex-1 flex-col overflow-hidden bg-white">
-          <div className="border-b border-zinc-200 px-6 py-4">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <p className="text-xs tracking-wide text-zinc-500">AGENTIC WORKBENCH</p>
-                <h2 className="mt-1 text-lg text-zinc-900">대화형 데이터 분석</h2>
-                <p className="text-sm text-zinc-600">데이터셋 업로드 후 자동 분석을 시작하고 다음 작업을 추천합니다.</p>
-              </div>
-              <div className="flex items-center gap-2">
-                <Button variant="outline" onClick={onOpenUpload} className="h-9">
-                  <Plus className="mr-1.5 h-4 w-4" />
-                  Upload
-                </Button>
-              </div>
-            </div>
-
-            <div className="mt-3 flex flex-wrap gap-2">
-              <Badge variant="outline">Sessions: {sessions.length}</Badge>
-              <Badge variant="outline">Messages: {messages.length}</Badge>
-              <Badge variant="outline">Selected files: {selectedFiles.length}</Badge>
-            </div>
+        <main className="flex min-w-0 flex-1 flex-col overflow-hidden bg-[#0a0a0b]">
+          <div className="glass-panel flex items-center gap-2 border-b border-white/10 px-4 py-2">
+            <Button
+              size="icon"
+              variant="ghost"
+              onClick={() => setSidebarOpen((prev: boolean) => !prev)}
+              className="h-8 w-8 rounded-lg text-white/80 transition-all hover:bg-black/70 hover:text-white"
+              aria-label={sidebarOpen ? 'Close sidebar' : 'Open sidebar'}
+            >
+              {sidebarOpen ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeftOpen className="h-4 w-4" />}
+            </Button>
+            <div className="flex-1" />
+            <Button variant="outline" onClick={onOpenUpload} className="h-8 border-white/[0.22] bg-black/60 text-white transition-all hover:bg-black/80 hover:text-white text-sm">
+              <Plus className="mr-1.5 h-3.5 w-3.5" />
+              Upload
+            </Button>
           </div>
 
           <div
@@ -882,151 +873,224 @@ export function AgenticCanvasPanel({
             }}
           >
             {isDragging ? (
-              <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-white/90">
-                <div className="rounded-xl border border-dashed border-zinc-400 bg-white px-6 py-5 text-center shadow-sm">
-                  <FolderUp className="mx-auto h-6 w-6 text-zinc-600" />
-                  <p className="mt-2 text-sm text-zinc-700">파일을 놓으면 자동 업로드합니다</p>
+              <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-[#0a0a0b]/90 backdrop-blur-sm">
+                <div className="rounded-2xl border border-[#5a7d9a]/40 bg-[#5a7d9a]/12 px-8 py-6 text-center shadow-[0_0_30px_rgba(90,125,154,0.18)]">
+                  <FolderUp className="mx-auto h-7 w-7 text-[#7b9eb8]" />
+                  <p className="mt-3 text-sm text-white">파일을 놓으면 자동 업로드합니다</p>
                 </div>
               </div>
             ) : null}
 
-            <ScrollArea className="h-full bg-zinc-50/30">
+            <ScrollArea className="h-full">
               {isInitialState ? (
-                <div className="mx-auto flex min-h-full w-full max-w-4xl flex-col items-center justify-center px-6 py-8">
-                  <Card className="w-full max-w-2xl border-zinc-200 bg-white shadow-sm">
-                    <CardHeader className="pb-3 text-center">
-                      <div className="mx-auto inline-flex h-11 w-11 items-center justify-center rounded-xl border border-zinc-200 bg-zinc-50 text-zinc-700">
-                        <Sparkles className="h-5 w-5" />
+                <div className="mx-auto flex min-h-full w-full max-w-4xl flex-col items-center justify-center px-6 py-16">
+                  <motion.div
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.6, ease: [0.4, 0, 0.2, 1] }}
+                    className="flex flex-col items-center text-center"
+                  >
+                    <div className="particle-field">
+                      <div className="particle-dot-1" />
+                      <div className="particle-dot-2" />
+                      <div className="particle-dot-3" />
+                      <div className="particle-dot-4" />
+                      <div className="particle-dot-5" />
+                      <div className="hero-sparkle">
+                        <Sparkles className="h-7 w-7 text-[#7b9eb8]" />
                       </div>
-                      <CardTitle className="mt-2 text-zinc-900">데이터셋을 드랍하거나 업로드하세요</CardTitle>
-                      <CardDescription>
-                        업로드 후 AI가 자동으로 요약하고 다음 단계(Preprocess/Visualization/RAG/Report)를 추천합니다.
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent className="space-y-4">
-                      <div
-                        className="rounded-xl border border-dashed border-zinc-300 bg-white px-4 py-6 text-center"
-                        onDragOver={(event) => event.preventDefault()}
-                        onDrop={async (event) => {
-                          event.preventDefault();
-                          await handleDropUpload(event.dataTransfer.files);
-                        }}
-                      >
-                        <FolderUp className="mx-auto h-5 w-5 text-zinc-500" />
-                        <p className="mt-2 text-sm text-zinc-700">여기에 파일을 드랍하면 자동 분류 업로드됩니다</p>
-                        <p className="mt-1 text-xs text-zinc-500">
-                          dataset: csv/xlsx/xls/parquet/json, document: pdf/doc/docx/txt/md
-                        </p>
-                        {isDropUploading ? (
-                          <p className="mt-2 inline-flex items-center gap-1 text-xs text-zinc-600">
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" /> 업로드 중...
-                          </p>
-                        ) : null}
-                      </div>
+                    </div>
+                    <h2 className="mt-6 text-3xl typo-display text-white font-bold">제조 데이터를 분석할 준비가 되었습니다</h2>
+                    <p className="mt-3 max-w-md text-base typo-body leading-relaxed text-white/90">
+                      파일을 드래그하거나 아래 입력창에 명령을 입력하세요.
+                      AI가 자동으로 요약하고 다음 단계를 추천합니다.
+                    </p>
+                    <div className="mt-3 flex items-center gap-2">
+                      <div className="agent-status-dot" />
+                      <span className="text-xs typo-body text-white/85">에이전트 대기 중</span>
+                    </div>
 
-                      <div className="flex justify-center">
-                        <Button onClick={onOpenUpload}>
-                          <Plus className="mr-1.5 h-4 w-4" />
-                          파일 선택
-                        </Button>
+                    <div
+                      className="mt-8 w-full max-w-sm rounded-xl border border-dashed border-white/20 bg-black/45 px-6 py-8 text-center transition-all duration-300 hover:border-[#7b9eb8]/45 hover:bg-black/60"
+                      onDragOver={(event) => event.preventDefault()}
+                      onDrop={async (event) => {
+                        event.preventDefault();
+                        await handleDropUpload(event.dataTransfer.files);
+                      }}
+                    >
+                      <FolderUp className="mx-auto h-5 w-5 text-white/80" />
+                      <p className="mt-3 text-sm typo-body text-white">여기에 파일을 드롭하세요</p>
+                      <p className="mt-1 text-xs text-white/80">
+                        csv · xlsx · parquet · json · pdf · doc · txt
+                      </p>
+                      {isDropUploading ? (
+                        <p className="mt-3 inline-flex items-center gap-1.5 text-xs text-[#7b9eb8]">
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" /> 업로드 중...
+                        </p>
+                      ) : null}
+                    </div>
+
+                    <Button
+                      onClick={onOpenUpload}
+                      className="mt-5 bg-[#5a7d9a] px-6 font-medium text-white transition-all hover:bg-[#4f6f8a] shadow-[0_2px_12px_rgba(90,125,154,0.25)]"
+                    >
+                      <Plus className="mr-1.5 h-4 w-4" />
+                      파일 선택
+                    </Button>
+
+                    {/* Workflow shortcuts — moved from sidebar */}
+                    <div className="mt-8 w-full max-w-lg">
+                      <p className="mb-3 text-xs font-semibold tracking-wide text-white/85 uppercase">빠른 시작</p>
+                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                        {WORKFLOW_ORDER.map((workflow) => {
+                          const meta = WORKFLOWS[workflow];
+                          const Icon = meta.icon;
+                          return (
+                            <button
+                              key={workflow}
+                              type="button"
+                              onClick={() => handleWorkflowShortcut(workflow)}
+                              className="bento-card sage-glow-hover p-3 text-left"
+                            >
+                              <div className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 bg-black/60">
+                                <Icon className="h-4 w-4 text-[#7b9eb8]" />
+                              </div>
+                              <p className="mt-2 text-xs font-semibold text-white">{meta.label}</p>
+                              <p className="mt-0.5 text-[11px] text-white/85">{meta.description}</p>
+                            </button>
+                          );
+                        })}
                       </div>
-                    </CardContent>
-                  </Card>
+                    </div>
+                  </motion.div>
                 </div>
               ) : (
                 <div className="mx-auto w-full max-w-4xl space-y-4 px-6 py-6">
-                  {renderableTimeline.map((item) => {
-                    if (item.type === 'artifact') {
-                      if (item.artifact.type === 'card') {
+                  <AnimatePresence mode="popLayout">
+                    {renderableTimeline.map((item, index) => {
+                      if (item.type === 'artifact') {
+                        if (item.artifact.type === 'card') {
+                          return (
+                            <motion.div
+                              key={item.key}
+                              initial={{ opacity: 0, y: 12, scale: 0.97 }}
+                              animate={{ opacity: 1, y: 0, scale: 1 }}
+                              transition={{ duration: 0.35, ease: [0.4, 0, 0.2, 1] }}
+                            >
+                              <CanvasCardRenderer
+                                card={item.artifact.card}
+                                onAction={(card, action) => handleCardAction(card, action)}
+                              />
+                            </motion.div>
+                          );
+                        }
+
                         return (
-                          <CanvasCardRenderer
+                          <motion.div
                             key={item.key}
-                            card={item.artifact.card}
-                            onAction={(card, action) => handleCardAction(card, action)}
-                          />
+                            initial={{ opacity: 0, y: 16 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ duration: 0.35, delay: index * 0.06 }}
+                          >
+                            <Card className="glass-panel-medium rounded-2xl">
+                              <CardHeader className="pb-2">
+                                <CardTitle className="text-base typo-title text-white font-bold">다음 단계 추천</CardTitle>
+                                <CardDescription className="typo-body text-white/90">
+                                  {item.artifact.fileName} 분석을 기준으로 아래 작업 중 하나를 선택하세요.
+                                </CardDescription>
+                              </CardHeader>
+                              <CardContent>
+                                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                                  {WORKFLOW_ORDER.map((workflow) => {
+                                    const meta = WORKFLOWS[workflow];
+                                    const Icon = meta.icon;
+                                    return (
+                                      <button
+                                        key={`${item.artifact.id}-${workflow}`}
+                                        type="button"
+                                        onClick={() => {
+                                          if (!activeSessionId) return;
+                                          pushMockConversation(activeSessionId, meta.prompt, workflow);
+                                        }}
+                                        className="bento-card px-3 py-3 text-left"
+                                      >
+                                        <div className="workflow-icon">
+                                          <Icon className="h-4 w-4 text-white/80" />
+                                        </div>
+                                        <p className="mt-2 text-sm font-semibold text-white">{meta.label}</p>
+                                        <p className="mt-0.5 text-xs text-white/85">{meta.description}</p>
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </CardContent>
+                            </Card>
+                          </motion.div>
+                        );
+                      }
+
+                      const message = item.message;
+                      if (message.role === 'user') {
+                        return (
+                          <motion.div
+                            key={item.key}
+                            initial={{ opacity: 0, x: 12 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            transition={{ duration: 0.25 }}
+                            className="flex justify-end"
+                          >
+                            <div className="chat-bubble-user max-w-[75%] px-4 py-3 text-sm shadow-sm">
+                              <p className="whitespace-pre-wrap">{message.content}</p>
+                              <p className="mt-1 text-right text-[11px] text-white/80">{formatClock(message.timestamp)}</p>
+                            </div>
+                          </motion.div>
                         );
                       }
 
                       return (
-                        <Card key={item.key} className="border-zinc-200 bg-white shadow-sm">
-                          <CardHeader className="pb-2">
-                            <CardTitle className="text-base text-zinc-900">다음 단계 추천</CardTitle>
-                            <CardDescription>
-                              {item.artifact.fileName} 분석을 기준으로 아래 작업 중 하나를 선택하세요.
-                            </CardDescription>
-                          </CardHeader>
-                          <CardContent>
-                            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                              {WORKFLOW_ORDER.map((workflow) => {
-                                const meta = WORKFLOWS[workflow];
-                                const Icon = meta.icon;
-                                return (
-                                  <button
-                                    key={`${item.artifact.id}-${workflow}`}
-                                    type="button"
-                                    onClick={() => {
-                                      if (!activeSessionId) return;
-                                      pushMockConversation(activeSessionId, meta.prompt, workflow);
-                                    }}
-                                    className="rounded-lg border border-zinc-200 bg-white px-3 py-3 text-left transition-colors hover:bg-zinc-50"
-                                  >
-                                    <div className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-zinc-200 bg-zinc-50 text-zinc-700">
-                                      <Icon className="h-4 w-4" />
-                                    </div>
-                                    <p className="mt-2 text-sm font-medium text-zinc-900">{meta.label}</p>
-                                    <p className="mt-0.5 text-xs text-zinc-500">{meta.description}</p>
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          </CardContent>
-                        </Card>
-                      );
-                    }
-
-                    const message = item.message;
-                    if (message.role === 'user') {
-                      return (
-                        <div key={item.key} className="flex justify-end">
-                          <div className="max-w-[75%] rounded-2xl bg-zinc-900 px-4 py-3 text-sm text-white shadow-sm">
-                            <p className="whitespace-pre-wrap">{message.content}</p>
-                            <p className="mt-1 text-right text-[11px] text-zinc-300">{formatClock(message.timestamp)}</p>
+                        <motion.div
+                          key={item.key}
+                          initial={{ opacity: 0, x: -12 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          transition={{ duration: 0.25 }}
+                          className="flex justify-start gap-2"
+                        >
+                          <div className="mt-1 inline-flex h-7 w-7 items-center justify-center rounded-full border border-white/10 bg-black/60 text-white/80">
+                            <Bot className="h-3.5 w-3.5" />
                           </div>
-                        </div>
+                          <div className="chat-bubble-assistant max-w-[75%] px-4 py-3 text-sm shadow-sm">
+                            <p className="whitespace-pre-wrap">{message.content}</p>
+                            <p className="mt-1 text-[11px] text-white/85">{formatClock(message.timestamp)}</p>
+                          </div>
+                        </motion.div>
                       );
-                    }
-
-                    return (
-                      <div key={item.key} className="flex justify-start gap-2">
-                        <div className="mt-1 inline-flex h-7 w-7 items-center justify-center rounded-full border border-zinc-200 bg-white text-zinc-700">
-                          <Bot className="h-3.5 w-3.5" />
-                        </div>
-                        <div className="max-w-[75%] rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-sm text-zinc-800 shadow-sm">
-                          <p className="whitespace-pre-wrap">{message.content}</p>
-                          <p className="mt-1 text-[11px] text-zinc-500">{formatClock(message.timestamp)}</p>
-                        </div>
-                      </div>
-                    );
-                  })}
+                    })}
+                  </AnimatePresence>
                 </div>
               )}
             </ScrollArea>
           </div>
 
-          <div className="border-t border-zinc-200 bg-white px-6 py-4">
+          <div className="border-t border-white/10 bg-[#0a0a0b] px-6 py-4">
             {selectedFiles.length > 0 ? (
               <div className="mb-2 flex flex-wrap gap-1.5">
                 {selectedFiles.map((file) => (
-                  <Badge key={file.id} variant="outline" className="border-zinc-200 text-zinc-600">
+                  <span key={file.id} className="badge-neon-green inline-flex items-center">
                     {file.type === 'dataset' ? <Database className="mr-1 h-3 w-3" /> : <FileText className="mr-1 h-3 w-3" />}
                     {file.name}
-                  </Badge>
+                  </span>
                 ))}
               </div>
             ) : null}
 
-            <div className="mx-auto flex w-full max-w-4xl items-end gap-2">
-              <Button size="icon" variant="outline" onClick={onOpenUpload} disabled={isResponding || isDropUploading}>
+            <div className="floating-input glow-ring mx-auto flex w-full max-w-4xl items-center gap-2 px-4 py-3">
+              <Button
+                size="icon"
+                variant="ghost"
+                onClick={onOpenUpload}
+                disabled={isResponding || isDropUploading}
+                className="h-9 w-9 text-white/80 hover:text-white hover:bg-black/70"
+              >
                 <Plus className="h-4 w-4" />
               </Button>
 
@@ -1039,19 +1103,49 @@ export function AgenticCanvasPanel({
                     handleSend();
                   }
                 }}
-                placeholder="데이터셋을 업로드하면 자동 분석을 시작합니다. 필요하면 직접 질문도 입력할 수 있습니다."
-                className="min-h-[52px] max-h-28 border-zinc-200 bg-white"
+                placeholder="메시지를 입력하세요... 파일을 업로드하면 자동 분석을 시작합니다."
+                className="min-h-[52px] max-h-28 resize-none border-0 bg-transparent text-base text-white placeholder:text-white/80 focus-visible:ring-0"
                 rows={1}
                 disabled={!activeSessionId || isDropUploading}
               />
 
-              <Button size="icon" onClick={handleSend} disabled={isResponding || isDropUploading || !draft.trim() || !activeSessionId}>
+              <Button
+                size="icon"
+                onClick={handleSend}
+                disabled={isResponding || isDropUploading || !draft.trim() || !activeSessionId}
+                className="h-9 w-9 rounded-xl bg-[#5a7d9a] text-white transition-all hover:bg-[#4f6f8a] disabled:opacity-30"
+              >
                 {isResponding ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
               </Button>
             </div>
           </div>
         </main>
       </div>
+
+      <AlertDialog open={!!sessionToDelete} onOpenChange={(open) => !open && setSessionToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>세션 삭제</AlertDialogTitle>
+            <AlertDialogDescription>
+              정말 이 세션을 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>취소</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-red-600 hover:bg-red-700 text-white dark:bg-red-600 dark:text-white"
+              onClick={() => {
+                if (sessionToDelete) {
+                  onDeleteSession(sessionToDelete);
+                  setSessionToDelete(null);
+                }
+              }}
+            >
+              삭제
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

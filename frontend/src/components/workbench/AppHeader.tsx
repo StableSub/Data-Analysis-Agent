@@ -9,14 +9,13 @@ interface AppHeaderProps {
 
 export function AppHeader({ title, subtitle, center, rightSlot }: AppHeaderProps) {
   return (
-    <div className="border-b border-zinc-200 bg-white px-6 py-4">
+    <div className="border-b border-white/20 bg-black/90 px-5 py-2.5 backdrop-blur-xl">
       <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl text-zinc-900">{title}</h1>
-          <p className="text-sm text-zinc-500">{subtitle}</p>
+        <div className="min-w-[220px]">
+          <h1 className="text-base font-semibold tracking-tight text-white">{title}</h1>
+          <p className="mt-0.5 text-xs text-white/80">{subtitle}</p>
         </div>
 
-        {/* Center content (e.g., FeatureToggle) */}
         {center}
 
         <div className="flex min-w-[48px] items-center justify-end gap-3">{rightSlot}</div>

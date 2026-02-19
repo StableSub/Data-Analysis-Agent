@@ -134,8 +134,8 @@ export function WorkbenchApp({ initialFeature = 'analysis' }: WorkbenchAppProps)
   };
 
   return (
-    <div>
-      <div className="flex h-screen bg-white">
+    <div className="agentic-theme">
+      <div className="flex h-screen bg-[#0a0a0b]">
         <div className="flex min-w-0 flex-1 flex-col">
           <AppHeader
             title={activeFeature === 'analysis' ? 'Agentic Workbench' : 'Preprocessing Workbench'}

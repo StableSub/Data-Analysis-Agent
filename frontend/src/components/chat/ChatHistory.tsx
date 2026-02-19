@@ -16,6 +16,16 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from '../ui/context-menu';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '../ui/alert-dialog';
 
 interface ChatSession {
   id: string;
@@ -46,6 +56,7 @@ export function ChatHistory({
   const [editTitle, setEditTitle] = useState('');
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [deleteConfirmation, setDeleteConfirmation] = useState<{ ids: string[] } | null>(null);
 
   const formatDate = (date: Date | string) => {
     const now = new Date();
@@ -90,11 +101,7 @@ export function ChatHistory({
 
   const handleDeleteSelected = () => {
     if (selectedIds.size === 0) return;
-
-    if (confirm(`선택한 ${selectedIds.size}개의 대화를 삭제하시겠습니까?`)) {
-      selectedIds.forEach(id => onDelete(id));
-      handleExitSelectionMode();
-    }
+    setDeleteConfirmation({ ids: Array.from(selectedIds) });
   };
 
   // Group by date
@@ -287,7 +294,7 @@ export function ChatHistory({
                                   <Button
                                     size="icon"
                                     variant="ghost"
-                                    className="opacity-0 group-hover:opacity-100 transition-opacity h-6 w-6"
+                                    className="h-6 w-6 opacity-100 transition-opacity"
                                     onClick={(e: React.MouseEvent) => e.stopPropagation()}
                                   >
                                     <MoreVertical className="w-3 h-3" />
@@ -307,9 +314,7 @@ export function ChatHistory({
                                   <DropdownMenuItem
                                     onClick={(e: React.MouseEvent) => {
                                       e.stopPropagation();
-                                      if (confirm('이 대화를 삭제하시겠습니까?')) {
-                                        onDelete(session.id);
-                                      }
+                                      setDeleteConfirmation({ ids: [session.id] });
                                     }}
                                     className="text-red-600 dark:text-red-400"
                                   >
@@ -338,6 +343,37 @@ export function ChatHistory({
           </ContextMenuContent>
         </ContextMenu>
       </ScrollArea>
+      <AlertDialog open={!!deleteConfirmation} onOpenChange={(open) => !open && setDeleteConfirmation(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {deleteConfirmation?.ids.length === 1 ? '세션 삭제' : '대화 일괄 삭제'}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleteConfirmation?.ids.length === 1
+                ? '정말 이 대화를 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.'
+                : `선택한 ${deleteConfirmation?.ids.length}개의 대화를 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>취소</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-red-600 hover:bg-red-700 text-white dark:bg-red-600 dark:text-white"
+              onClick={() => {
+                if (deleteConfirmation) {
+                  deleteConfirmation.ids.forEach(id => onDelete(id));
+                  setDeleteConfirmation(null);
+                  if (isSelectionMode) {
+                    handleExitSelectionMode();
+                  }
+                }
+              }}
+            >
+              삭제
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

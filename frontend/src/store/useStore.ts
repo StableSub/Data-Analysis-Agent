@@ -99,19 +99,23 @@ export const useStore = create<AppState>()(
 
       deleteSession: async (sessionId) => {
         const session = get().sessions.find((s) => s.id === sessionId);
+        const { backendSessionId } = session || {};
 
-        if (session?.backendSessionId) {
-          try {
-            await apiRequest(`/chats/${session.backendSessionId}`, { method: 'DELETE' });
-          } catch (error) {
-            console.error('Failed to delete session from server:', error);
-          }
-        }
-
+        // Optimistic update: remove session from UI immediately
         set((state) => ({
           sessions: state.sessions.filter((s) => s.id !== sessionId),
           activeSessionId: state.activeSessionId === sessionId ? null : state.activeSessionId,
         }));
+
+        if (backendSessionId) {
+          try {
+            await apiRequest(`/chats/${backendSessionId}`, { method: 'DELETE' });
+          } catch (error) {
+            console.error('Failed to delete session from server:', error);
+            // Optionally, we could revert the state here if we wanted to be strict,
+            // but for deletion it's often better to just let it go or show a toast.
+          }
+        }
       },
 
       setActiveSession: (sessionId) => {
@@ -170,14 +174,14 @@ export const useStore = create<AppState>()(
           sessions: state.sessions.map((session) =>
             session.id === sessionId
               ? {
-                  ...session,
-                  messages: [...session.messages, fullMessage],
-                  updatedAt: new Date(),
-                  title:
-                    session.messages.length === 0 && message.role === 'user'
-                      ? `${message.content.slice(0, 30)}${message.content.length > 30 ? '...' : ''}`
-                      : session.title,
-                }
+                ...session,
+                messages: [...session.messages, fullMessage],
+                updatedAt: new Date(),
+                title:
+                  session.messages.length === 0 && message.role === 'user'
+                    ? `${message.content.slice(0, 30)}${message.content.length > 30 ? '...' : ''}`
+                    : session.title,
+              }
               : session,
           ),
         }));
@@ -204,10 +208,10 @@ export const useStore = create<AppState>()(
           sessions: state.sessions.map((session) =>
             session.id === sessionId
               ? {
-                  ...session,
-                  files: [...session.files, fullFile],
-                  updatedAt: new Date(),
-                }
+                ...session,
+                files: [...session.files, fullFile],
+                updatedAt: new Date(),
+              }
               : session,
           ),
         }));
@@ -220,10 +224,10 @@ export const useStore = create<AppState>()(
           sessions: state.sessions.map((session) =>
             session.id === sessionId
               ? {
-                  ...session,
-                  files: session.files.filter((f) => f.id !== fileId),
-                  updatedAt: new Date(),
-                }
+                ...session,
+                files: session.files.filter((f) => f.id !== fileId),
+                updatedAt: new Date(),
+              }
               : session,
           ),
         }));
@@ -234,12 +238,12 @@ export const useStore = create<AppState>()(
           sessions: state.sessions.map((session) =>
             session.id === sessionId
               ? {
-                  ...session,
-                  files: session.files.map((file) =>
-                    file.id === fileId ? { ...file, selected: !file.selected } : file,
-                  ),
-                  updatedAt: new Date(),
-                }
+                ...session,
+                files: session.files.map((file) =>
+                  file.id === fileId ? { ...file, selected: !file.selected } : file,
+                ),
+                updatedAt: new Date(),
+              }
               : session,
           ),
         }));

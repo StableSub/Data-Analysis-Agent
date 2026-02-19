@@ -14,7 +14,7 @@ interface FeatureToggleProps {
 
 export function FeatureToggle({ items, activeId, onChange }: FeatureToggleProps) {
   return (
-    <div className="absolute left-1/2 -translate-x-1/2 flex items-center gap-2">
+    <div className="absolute left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-xl border border-white/20 bg-black/60 p-1 backdrop-blur-lg">
       {items.map(({ id, icon: Icon, label }) => {
         const isActive = activeId === id;
         return (
@@ -22,10 +22,10 @@ export function FeatureToggle({ items, activeId, onChange }: FeatureToggleProps)
             key={id}
             onClick={() => onChange(id)}
             className={
-              `flex items-center gap-2 px-4 py-2 rounded-lg text-sm transition-all ` +
+              `flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-medium transition-all duration-200 ` +
               (isActive
-                ? 'bg-blue-600 dark:bg-[#0084ff] text-white shadow-sm'
-                : 'bg-gray-100 dark:bg-white/5 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-white/10')
+                ? 'bg-[#5a7d9a] text-white shadow-[0_2px_10px_rgba(90,125,154,0.28)]'
+                : 'text-white/90 hover:text-white hover:bg-black/80')
             }
           >
             <Icon className="w-4 h-4" />
@@ -36,4 +36,3 @@ export function FeatureToggle({ items, activeId, onChange }: FeatureToggleProps)
     </div>
   );
 }
-

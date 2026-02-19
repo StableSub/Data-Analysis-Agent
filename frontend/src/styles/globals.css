@@ -74,60 +74,60 @@
 }
 
 .dark {
-  /* macOS inspired dark mode - sophisticated and premium */
-  --background: #1c1c1e;
-  --foreground: #ffffff;
-  --card: #2c2c2e;
-  --card-foreground: #ffffff;
-  --popover: #2c2c2e;
-  --popover-foreground: #ffffff;
-  --primary: #0a84ff;
+  /* Agentic muted dark theme */
+  --background: #0a0a0b;
+  --foreground: #f5f7fa;
+  --card: rgba(255, 255, 255, 0.06);
+  --card-foreground: #f5f7fa;
+  --popover: #111216;
+  --popover-foreground: #f5f7fa;
+  --primary: #5a7d9a;
   --primary-foreground: #ffffff;
-  --secondary: #3a3a3c;
-  --secondary-foreground: #ffffff;
-  --muted: #3a3a3c;
-  --muted-foreground: #98989d;
-  --accent: #3a3a3c;
-  --accent-foreground: #ffffff;
+  --secondary: rgba(255, 255, 255, 0.08);
+  --secondary-foreground: #d7dbe0;
+  --muted: rgba(255, 255, 255, 0.08);
+  --muted-foreground: #9aa2ad;
+  --accent: rgba(255, 255, 255, 0.1);
+  --accent-foreground: #f5f7fa;
   --destructive: #ff453a;
   --destructive-foreground: #ffffff;
   --border: rgba(255, 255, 255, 0.1);
-  --input: rgba(255, 255, 255, 0.08);
-  --ring: rgba(10, 132, 255, 0.5);
+  --input: rgba(255, 255, 255, 0.06);
+  --ring: rgba(90, 125, 154, 0.45);
   --font-weight-medium: 500;
   --font-weight-normal: 400;
-  --chart-1: #0a84ff;
-  --chart-2: #30d158;
+  --chart-1: #7b9eb8;
+  --chart-2: #8fbc8f;
   --chart-3: #ffd60a;
   --chart-4: #bf5af2;
   --chart-5: #ff453a;
-  --sidebar: #1c1c1e;
-  --sidebar-foreground: #ffffff;
-  --sidebar-primary: #0a84ff;
+  --sidebar: #0a0a0b;
+  --sidebar-foreground: #d7dbe0;
+  --sidebar-primary: #5a7d9a;
   --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #2c2c2e;
-  --sidebar-accent-foreground: #ffffff;
+  --sidebar-accent: rgba(255, 255, 255, 0.08);
+  --sidebar-accent-foreground: #d7dbe0;
   --sidebar-border: rgba(255, 255, 255, 0.1);
-  --sidebar-ring: rgba(10, 132, 255, 0.5);
+  --sidebar-ring: rgba(90, 125, 154, 0.45);
 
   --genui-success: #34d399;
-  --genui-success-bg: rgba(16, 185, 129, 0.12);
+  --genui-success-bg: rgba(16, 185, 129, 0.15);
   --genui-error: #fb7185;
-  --genui-error-bg: rgba(244, 63, 94, 0.12);
+  --genui-error-bg: rgba(244, 63, 94, 0.15);
   --genui-error-muted: rgba(244, 63, 94, 0.22);
   --genui-warning: #fbbf24;
-  --genui-warning-bg: rgba(245, 158, 11, 0.12);
+  --genui-warning-bg: rgba(245, 158, 11, 0.15);
   --genui-running: #60a5fa;
-  --genui-running-bg: rgba(37, 99, 235, 0.12);
+  --genui-running-bg: rgba(37, 99, 235, 0.15);
   --genui-running-muted: rgba(37, 99, 235, 0.22);
   --genui-needs-user: #a78bfa;
-  --genui-needs-user-bg: rgba(124, 58, 237, 0.12);
+  --genui-needs-user-bg: rgba(124, 58, 237, 0.15);
   --genui-idle: #94a3b8;
-  --genui-idle-bg: #2c2c2e;
-  --genui-card-border: rgba(255, 255, 255, 0.08);
-  --genui-card-shadow: 0 1px 3px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2);
-  --genui-card-shadow-hover: 0 4px 12px rgba(0, 0, 0, 0.4), 0 2px 4px rgba(0, 0, 0, 0.3);
-  --genui-card-inner-bg: #232326;
+  --genui-idle-bg: rgba(255, 255, 255, 0.06);
+  --genui-card-border: rgba(255, 255, 255, 0.1);
+  --genui-card-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
+  --genui-card-shadow-hover: 0 4px 16px rgba(0, 0, 0, 0.7);
+  --genui-card-inner-bg: rgba(255, 255, 255, 0.06);
 
 }
 
@@ -200,10 +200,12 @@
 }
 
 @keyframes cursor-blink {
+
   0%,
   100% {
     opacity: 1;
   }
+
   50% {
     opacity: 0;
   }

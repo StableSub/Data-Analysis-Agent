@@ -1,0 +1,445 @@
+/* Agentic dark theme: muted Sage + Steel */
+:root {
+    --obsidian: #0a0a0b;
+    --obsidian-soft: #111216;
+    --surface-glass: rgba(255, 255, 255, 0.05);
+    --surface-glass-strong: rgba(255, 255, 255, 0.08);
+    --surface-hover: rgba(255, 255, 255, 0.1);
+    --glass-border: rgba(255, 255, 255, 0.1);
+    --glass-border-soft: rgba(255, 255, 255, 0.08);
+
+    --sage-green: #8fbc8f;
+    --sage-green-soft: rgba(143, 188, 143, 0.12);
+    --sage-green-glow: rgba(143, 188, 143, 0.2);
+    --steel-blue: #7b9eb8;
+    --steel-blue-strong: #5a7d9a;
+    --steel-blue-soft: rgba(123, 158, 184, 0.12);
+    --steel-blue-glow: rgba(123, 158, 184, 0.2);
+
+    --text-primary: #ffffff;
+    --text-secondary: #edf2f7;
+    --text-tertiary: #d5dde7;
+}
+
+body {
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    background: var(--obsidian);
+    color: var(--text-primary);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+.typo-display {
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    line-height: 1.2;
+}
+
+.typo-title {
+    font-weight: 600;
+    letter-spacing: -0.01em;
+}
+
+.typo-body {
+    font-weight: 400;
+    letter-spacing: 0.01em;
+}
+
+.typo-label {
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    font-size: 0.6875rem;
+}
+
+.glass-panel {
+    background: rgba(0, 0, 0, 0.88);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    backdrop-filter: blur(20px);
+}
+
+.glass-panel-medium {
+    background: rgba(0, 0, 0, 0.92);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    backdrop-filter: blur(16px);
+    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45);
+}
+
+@keyframes glow-pulse-muted {
+    0%,
+    100% {
+        box-shadow: 0 0 10px rgba(143, 188, 143, 0.06), 0 0 20px rgba(143, 188, 143, 0.03);
+    }
+
+    50% {
+        box-shadow: 0 0 18px rgba(143, 188, 143, 0.14), 0 0 36px rgba(143, 188, 143, 0.06);
+    }
+}
+
+@keyframes float {
+    0%,
+    100% {
+        transform: translateY(0);
+    }
+
+    50% {
+        transform: translateY(-6px);
+    }
+}
+
+@keyframes breathe {
+    0%,
+    100% {
+        opacity: 0.35;
+        transform: scale(1);
+    }
+
+    50% {
+        opacity: 0.75;
+        transform: scale(1.07);
+    }
+}
+
+@keyframes input-pulse {
+    0%,
+    100% {
+        box-shadow: 0 0 0 0 rgba(143, 188, 143, 0), 0 0 18px rgba(143, 188, 143, 0.03);
+    }
+
+    50% {
+        box-shadow: 0 0 0 3px rgba(143, 188, 143, 0.05), 0 0 30px rgba(143, 188, 143, 0.06);
+    }
+}
+
+@keyframes particle-drift {
+    0% {
+        transform: translate(0, 0) scale(1);
+        opacity: 0.3;
+    }
+
+    35% {
+        transform: translate(12px, -18px) scale(1.15);
+        opacity: 0.5;
+    }
+
+    70% {
+        transform: translate(-8px, -26px) scale(0.86);
+        opacity: 0.35;
+    }
+
+    100% {
+        transform: translate(0, 0) scale(1);
+        opacity: 0.3;
+    }
+}
+
+@keyframes particle-drift-2 {
+    0% {
+        transform: translate(0, 0) scale(0.84);
+        opacity: 0.24;
+    }
+
+    50% {
+        transform: translate(-14px, -18px) scale(1.06);
+        opacity: 0.42;
+    }
+
+    100% {
+        transform: translate(0, 0) scale(0.84);
+        opacity: 0.24;
+    }
+}
+
+@keyframes particle-drift-3 {
+    0% {
+        transform: translate(0, 0) scale(1.08);
+        opacity: 0.26;
+    }
+
+    50% {
+        transform: translate(-10px, 11px) scale(0.74);
+        opacity: 0.46;
+    }
+
+    100% {
+        transform: translate(0, 0) scale(1.08);
+        opacity: 0.26;
+    }
+}
+
+.glow-indicator {
+    animation: glow-pulse-muted 4s ease-in-out infinite;
+}
+
+.glow-ring {
+    position: relative;
+}
+
+.glow-ring::before {
+    content: "";
+    position: absolute;
+    inset: -1px;
+    border-radius: inherit;
+    padding: 1px;
+    background: linear-gradient(135deg, var(--sage-green-glow), transparent 45%, transparent 60%, var(--steel-blue-glow));
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    mask-composite: exclude;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.35s ease;
+}
+
+.glow-ring:focus-within::before {
+    opacity: 1;
+}
+
+.bento-card {
+    border-radius: 20px;
+    background: rgba(0, 0, 0, 0.58);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.34);
+    transition: all 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+    overflow: hidden;
+}
+
+.bento-card::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    opacity: 0;
+    background: linear-gradient(135deg, rgba(143, 188, 143, 0.08), rgba(123, 158, 184, 0.06));
+    transition: opacity 0.3s ease;
+    pointer-events: none;
+}
+
+.bento-card:hover {
+    transform: translateY(-2px);
+    border-color: rgba(143, 188, 143, 0.24);
+    box-shadow: 0 10px 28px rgba(143, 188, 143, 0.08), 0 0 22px rgba(143, 188, 143, 0.05);
+}
+
+.bento-card:hover::before {
+    opacity: 1;
+}
+
+.floating-input {
+    border-radius: 20px;
+    background: rgba(0, 0, 0, 0.74);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.36);
+    animation: input-pulse 4s ease-in-out infinite;
+    transition: border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+.floating-input:focus-within {
+    border-color: rgba(90, 125, 154, 0.7);
+    box-shadow: 0 0 0 2px rgba(90, 125, 154, 0.18), 0 10px 26px rgba(0, 0, 0, 0.3);
+}
+
+.chat-bubble-user {
+    background: linear-gradient(135deg, var(--steel-blue), var(--steel-blue-strong));
+    color: #fff;
+    border-radius: 20px 20px 6px 20px;
+    box-shadow: 0 8px 20px rgba(90, 125, 154, 0.24);
+}
+
+.chat-bubble-assistant {
+    background: rgba(0, 0, 0, 0.64);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    color: var(--text-primary);
+    border-radius: 20px 20px 20px 6px;
+}
+
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.18);
+}
+
+.agent-status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 999px;
+    background: var(--sage-green);
+    box-shadow: 0 0 10px var(--sage-green-glow);
+    animation: breathe 4s ease-in-out infinite;
+}
+
+.badge-neon {
+    background: rgba(0, 0, 0, 0.55);
+    color: #ffffff;
+    border: 1px solid rgba(123, 158, 184, 0.4);
+    border-radius: 999px;
+    font-size: 0.6875rem;
+    padding: 2px 10px;
+    font-weight: 500;
+}
+
+.badge-neon-green {
+    background: rgba(0, 0, 0, 0.55);
+    color: #ffffff;
+    border: 1px solid rgba(143, 188, 143, 0.4);
+    border-radius: 999px;
+    font-size: 0.6875rem;
+    padding: 2px 10px;
+    font-weight: 500;
+}
+
+.workflow-icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.58);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    transition: all 0.3s ease;
+}
+
+.bento-card:hover .workflow-icon {
+    background: rgba(143, 188, 143, 0.1);
+    border-color: rgba(143, 188, 143, 0.28);
+}
+
+.hero-sparkle {
+    width: 72px;
+    height: 72px;
+    border-radius: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.55);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    animation: float 6s ease-in-out infinite;
+    position: relative;
+}
+
+.particle-field {
+    position: relative;
+    width: 200px;
+    height: 200px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.particle-field::before,
+.particle-field::after {
+    content: "";
+    position: absolute;
+    border-radius: 999px;
+    pointer-events: none;
+}
+
+.particle-field::before {
+    width: 4px;
+    height: 4px;
+    background: var(--sage-green);
+    top: 24%;
+    left: 20%;
+    animation: particle-drift 8s ease-in-out infinite;
+}
+
+.particle-field::after {
+    width: 3px;
+    height: 3px;
+    background: var(--steel-blue);
+    top: 58%;
+    right: 18%;
+    animation: particle-drift-2 10s ease-in-out infinite;
+}
+
+.particle-dot-1,
+.particle-dot-2,
+.particle-dot-3,
+.particle-dot-4,
+.particle-dot-5 {
+    position: absolute;
+    border-radius: 999px;
+    pointer-events: none;
+}
+
+.particle-dot-1 {
+    width: 3px;
+    height: 3px;
+    background: rgba(143, 188, 143, 0.5);
+    top: 16%;
+    right: 30%;
+    animation: particle-drift 7s ease-in-out infinite 0.5s;
+}
+
+.particle-dot-2 {
+    width: 2px;
+    height: 2px;
+    background: rgba(123, 158, 184, 0.58);
+    bottom: 24%;
+    left: 26%;
+    animation: particle-drift-2 9s ease-in-out infinite 1s;
+}
+
+.particle-dot-3 {
+    width: 4px;
+    height: 4px;
+    background: rgba(143, 188, 143, 0.35);
+    top: 44%;
+    left: 12%;
+    animation: particle-drift-3 11s ease-in-out infinite 0.3s;
+}
+
+.particle-dot-4 {
+    width: 2px;
+    height: 2px;
+    background: rgba(123, 158, 184, 0.4);
+    bottom: 18%;
+    right: 22%;
+    animation: particle-drift 12s ease-in-out infinite 2s;
+}
+
+.particle-dot-5 {
+    width: 3px;
+    height: 3px;
+    background: rgba(143, 188, 143, 0.34);
+    top: 30%;
+    right: 12%;
+    animation: particle-drift-3 8s ease-in-out infinite 1.5s;
+}
+
+.sage-glow {
+    box-shadow: 0 0 24px rgba(143, 188, 143, 0.12);
+}
+
+.sage-glow-hover:hover {
+    box-shadow: 0 0 30px rgba(143, 188, 143, 0.18);
+}
+
+/* Readability-first overrides */
+.agentic-theme .text-white\/45,
+.agentic-theme .text-white\/50,
+.agentic-theme .text-white\/55,
+.agentic-theme .text-white\/60,
+.agentic-theme .text-white\/65,
+.agentic-theme .text-white\/70,
+.agentic-theme .text-white\/75 {
+    color: #eef3f8 !important;
+}
+
+.agentic-theme .text-\[\#A0A0A0\] {
+    color: #e1e7ef !important;
+}
