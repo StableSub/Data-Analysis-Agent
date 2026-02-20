@@ -1,4 +1,4 @@
-import { MutableRefObject } from 'react';
+import { MutableRefObject, useEffect, useState } from 'react';
 
 type Message = {
   id: string;
@@ -11,6 +11,11 @@ interface ChatMessagesProps {
   messages: Message[];
   isGenerating: boolean;
   streamingContent: string;
+  thinkingSteps?: Array<{
+    phase: string;
+    message: string;
+    status?: 'active' | 'completed' | 'failed';
+  }>;
   emptyTitle: string;
   emptySubtitle: string;
   endRef: MutableRefObject<HTMLDivElement | null>;
@@ -20,11 +25,26 @@ export function ChatMessages({
   messages,
   isGenerating,
   streamingContent,
+  thinkingSteps = [],
   emptyTitle,
   emptySubtitle,
   endRef,
 }: ChatMessagesProps) {
   const hasMessages = messages && messages.length > 0;
+  const [thinkingDots, setThinkingDots] = useState('...');
+
+  useEffect(() => {
+    if (!isGenerating || Boolean(streamingContent)) {
+      setThinkingDots('...');
+      return;
+    }
+    let dotCount = 0;
+    const timerId = window.setInterval(() => {
+      dotCount = (dotCount % 3) + 1;
+      setThinkingDots('.'.repeat(dotCount));
+    }, 350);
+    return () => window.clearInterval(timerId);
+  }, [isGenerating, streamingContent]);
 
   return (
     <div className="flex-1 overflow-auto p-6">
@@ -68,7 +88,7 @@ export function ChatMessages({
             </div>
           ))}
 
-          {isGenerating && streamingContent && (
+          {isGenerating && (streamingContent || thinkingSteps.length > 0) && (
             <div className="flex justify-start">
               <div className="max-w-[70%] flex items-start gap-3">
                 <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white flex-shrink-0">
@@ -77,9 +97,23 @@ export function ChatMessages({
                 <div>
                   <div className="px-4 py-3 rounded-2xl bg-gray-100 dark:bg-[#2f2f2f] text-gray-900 dark:text-white">
                     <p className="text-sm whitespace-pre-wrap">
-                      {streamingContent}
-                      <span className="inline-block w-2 h-4 ml-0.5 bg-blue-500 dark:bg-blue-400 animate-pulse" />
+                      {streamingContent || `AI가 생각 중 입니다${thinkingDots}`}
+                      {streamingContent && (
+                        <span className="inline-block w-2 h-4 ml-0.5 bg-gray-400 dark:bg-gray-500 animate-pulse" />
+                      )}
                     </p>
+                    {thinkingSteps.length > 0 && (
+                      <div className="mt-3 pt-2 border-t border-gray-200 dark:border-white/10 space-y-1">
+                        {thinkingSteps.map((step, index) => (
+                          <p
+                            key={`${step.phase}-${index}-${step.message}`}
+                            className="text-xs text-gray-600 dark:text-gray-300 whitespace-pre-wrap"
+                          >
+                            {index + 1}. {step.message}
+                          </p>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -92,4 +126,3 @@ export function ChatMessages({
     </div>
   );
 }
-

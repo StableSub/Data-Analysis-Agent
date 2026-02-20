@@ -21,9 +21,16 @@ class ChatRequest(BaseModel):
     source_id: Optional[str] = Field(default=None, description="Optional dataset source identifier.")
 
 
+class ChatThoughtStep(BaseModel):
+    phase: str
+    message: str
+    status: str = "completed"
+
+
 class ChatResponse(BaseModel):
     answer: str
     session_id: int
+    thought_steps: List[ChatThoughtStep] = Field(default_factory=list)
 
 
 class ChatHistoryResponse(BaseModel):

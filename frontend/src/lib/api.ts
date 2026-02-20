@@ -4,7 +4,7 @@ type ApiRequestOptions = RequestInit & {
   headers?: Record<string, string>;
 };
 
-function buildUrl(path: string) {
+export function buildApiUrl(path: string) {
   if (path.startsWith('http://') || path.startsWith('https://')) {
     return path;
   }
@@ -18,7 +18,7 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
     (key) => key.toLowerCase() === 'content-type'
   );
 
-  const response = await fetch(buildUrl(path), {
+  const response = await fetch(buildApiUrl(path), {
     ...options,
     headers: {
       ...(isFormData || hasContentType ? {} : { 'Content-Type': 'application/json' }),

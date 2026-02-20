@@ -16,9 +16,10 @@ import { apiRequest } from '../../lib/api';
 interface DataPreprocessingProps {
   isDark: boolean;
   selectedSourceId?: string | null; // 상위(워크벤치)에서 전달된 현재 선택 소스
+  onServerApplyResult?: (result: { output_source_id: string; output_filename: string }) => void;
 }
 
-export function DataPreprocessing({ isDark, selectedSourceId }: DataPreprocessingProps) {
+export function DataPreprocessing({ isDark, selectedSourceId, onServerApplyResult }: DataPreprocessingProps) {
   const {
     file,
     data,
@@ -326,7 +327,11 @@ export function DataPreprocessing({ isDark, selectedSourceId }: DataPreprocessin
     | { type: 'drop_columns'; target_columns: string[] }
     | { type: 'rename_columns'; mapping: Record<string,string> }
     | { type: 'derived_column'; name: string; expression: string };
-  type ApplyResponse = { source_id: string };
+  type ApplyResponse = {
+    input_source_id: string;
+    output_source_id: string;
+    output_filename: string;
+  };
 
   const [opsQueue, setOpsQueue] = useState<QueueOp[]>([]);
   const pushOp = (op: QueueOp) => setOpsQueue(prev => [...prev, op]);
@@ -457,8 +462,12 @@ export function DataPreprocessing({ isDark, selectedSourceId }: DataPreprocessin
         source_id: selectedSourceId,
         operations: toBackendOps(opsQueue),
       };
-      await apiRequest<ApplyResponse>('/preprocess/apply', { method: 'POST', body: JSON.stringify(payload) });
-      alert('서버 적용 완료');
+      const result = await apiRequest<ApplyResponse>('/preprocess/apply', { method: 'POST', body: JSON.stringify(payload) });
+      onServerApplyResult?.({
+        output_source_id: result.output_source_id,
+        output_filename: result.output_filename,
+      });
+      alert(`서버 적용 완료 (새 source_id: ${result.output_source_id})`);
       setOpsQueue([]);
     } catch (e) {
       alert('서버 적용 실패');

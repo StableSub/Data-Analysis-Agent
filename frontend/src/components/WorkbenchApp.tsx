@@ -10,7 +10,7 @@ import { AppHeader } from './workbench/AppHeader';
 import { SelectedFilesBar } from './workbench/SelectedFilesBar';
 import { ChatMessages } from './workbench/ChatMessages';
 import { ChatInputBar } from './workbench/ChatInputBar';
-import { apiRequest } from '../lib/api';
+import { apiRequest, buildApiUrl } from '../lib/api';
 import { toast } from 'sonner';
 
 // 데이터 분석(AI 챗봇)과 데이터 전처리 2가지 기능만
@@ -28,6 +28,41 @@ interface WorkbenchAppProps {
   initialFeature?: AppFeature; // 'analysis' | 'preprocessing'
 }
 
+type ThinkingStatus = 'active' | 'completed' | 'failed';
+
+interface ThinkingStep {
+  phase: string;
+  message: string;
+  status?: ThinkingStatus;
+}
+
+interface PreprocessResultPayload {
+  status?: string;
+  output_source_id?: string;
+  output_filename?: string;
+}
+
+function parseThinkingStep(payload: unknown): ThinkingStep | null {
+  if (!payload || typeof payload !== 'object') {
+    return null;
+  }
+  const step = payload as Record<string, unknown>;
+  const message = typeof step.message === 'string' ? step.message.trim() : '';
+  if (!message) {
+    return null;
+  }
+  const phase = typeof step.phase === 'string' && step.phase.trim() ? step.phase.trim() : 'thinking';
+  const status: ThinkingStatus | undefined =
+    step.status === 'active' || step.status === 'completed' || step.status === 'failed'
+      ? step.status
+      : undefined;
+  return {
+    phase,
+    message,
+    status,
+  };
+}
+
 export function WorkbenchApp({ initialFeature = 'analysis' }: WorkbenchAppProps) {
   const [isDark, setIsDark] = useState(false);
   const [activeFeature, setActiveFeature] = useState<AppFeature>(initialFeature); // 기본값: 라우트에서 전달 가능
@@ -36,6 +71,7 @@ export function WorkbenchApp({ initialFeature = 'analysis' }: WorkbenchAppProps)
   const [selectedModelId, setSelectedModelId] = useState(DEFAULT_MODEL_ID);
   const [isGenerating, setIsGenerating] = useState(false);
   const [streamingContent, setStreamingContent] = useState('');
+  const [thinkingSteps, setThinkingSteps] = useState<ThinkingStep[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -114,18 +150,27 @@ export function WorkbenchApp({ initialFeature = 'analysis' }: WorkbenchAppProps)
     }
 
     setIsGenerating(true);
-    setStreamingContent('응답 생성 중...');
+    setStreamingContent('');
+    setThinkingSteps([
+      {
+        phase: 'analysis',
+        message: '요청을 분석하고 있습니다.',
+        status: 'active',
+      },
+    ]);
 
     const abortController = new AbortController();
     abortControllerRef.current = abortController;
+    let typingTimer: ReturnType<typeof setInterval> | null = null;
 
     try {
       const selectedSourceId = currentSession?.files.find(
         (f) => f.selected && typeof f.sourceId === 'string'
       )?.sourceId;
 
-      const response = await apiRequest<{ answer: string; session_id: number }>('/chats', {
+      const streamResponse = await fetch(buildApiUrl('/chats/stream'), {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           question: userMessage,
           session_id: currentSession?.backendSessionId ?? undefined,
@@ -135,14 +180,266 @@ export function WorkbenchApp({ initialFeature = 'analysis' }: WorkbenchAppProps)
         signal: abortController.signal,
       });
 
-      if (activeSessionId) {
-        if (!currentSession?.backendSessionId) {
-          setSessionBackendId(activeSessionId, response.session_id);
-        }
-        addMessage(activeSessionId, {
-          role: 'assistant',
-          content: response.answer,
+      if (!streamResponse.ok) {
+        const detail = await streamResponse.text();
+        throw new Error(detail || '채팅 요청에 실패했습니다.');
+      }
+
+      if (!streamResponse.body) {
+        throw new Error('스트리밍 응답을 받을 수 없습니다.');
+      }
+
+      const reader = streamResponse.body.getReader();
+      const decoder = new TextDecoder('utf-8');
+      let buffer = '';
+      let streamedAnswer = '';
+      let displayedAnswer = '';
+      let pendingAnswer = '';
+      let finalAnswerFromDone = '';
+      let hasStartedAnswer = false;
+      let doneReceived = false;
+      let assistantSaved = false;
+
+      const appendThinkingStep = (step: ThinkingStep) => {
+        setThinkingSteps((prev) => {
+          if (prev.some((item) => item.phase === step.phase && item.message === step.message)) {
+            return prev;
+          }
+          return [...prev, step];
         });
+      };
+
+      const stopTypingLoop = () => {
+        if (typingTimer !== null) {
+          clearInterval(typingTimer);
+          typingTimer = null;
+        }
+      };
+
+      const tryFinalizeAnswer = () => {
+        if (!doneReceived || assistantSaved || pendingAnswer.length > 0) {
+          return;
+        }
+        const finalAnswer = (finalAnswerFromDone || streamedAnswer || displayedAnswer).trim();
+        if (activeSessionId && finalAnswer) {
+          addMessage(activeSessionId, {
+            role: 'assistant',
+            content: finalAnswer,
+          });
+          assistantSaved = true;
+        }
+      };
+
+      const startTypingLoop = () => {
+        if (typingTimer !== null) {
+          return;
+        }
+        typingTimer = setInterval(() => {
+          if (!pendingAnswer) {
+            tryFinalizeAnswer();
+            if (doneReceived) {
+              stopTypingLoop();
+            }
+            return;
+          }
+          const delta = pendingAnswer.slice(0, 2);
+          pendingAnswer = pendingAnswer.slice(2);
+          displayedAnswer += delta;
+          setStreamingContent(displayedAnswer);
+          tryFinalizeAnswer();
+          if (!pendingAnswer && doneReceived) {
+            stopTypingLoop();
+          }
+        }, 18);
+      };
+
+      const handleEvent = (rawEvent: string) => {
+        const lines = rawEvent.split('\n');
+        let eventName = 'message';
+        const dataLines: string[] = [];
+
+        for (const line of lines) {
+          if (line.startsWith('event:')) {
+            eventName = line.slice(6).trim();
+          } else if (line.startsWith('data:')) {
+            dataLines.push(line.slice(5).trim());
+          }
+        }
+
+        const dataRaw = dataLines.join('\n');
+        let payload: unknown = {};
+        if (dataRaw) {
+          try {
+            payload = JSON.parse(dataRaw);
+          } catch {
+            payload = { message: dataRaw };
+          }
+        }
+
+        const record = payload && typeof payload === 'object'
+          ? (payload as Record<string, unknown>)
+          : {};
+
+        if (eventName === 'session') {
+          const backendSessionId = record.session_id;
+          if (activeSessionId && typeof backendSessionId === 'number') {
+            setSessionBackendId(activeSessionId, backendSessionId);
+          }
+          return;
+        }
+
+        if (eventName === 'thought') {
+          const step = parseThinkingStep(record);
+          if (step) {
+            appendThinkingStep(step);
+          }
+          return;
+        }
+
+        if (eventName === 'chunk') {
+          const delta = record.delta;
+          if (typeof delta === 'string' && delta) {
+            if (!hasStartedAnswer) {
+              hasStartedAnswer = true;
+              displayedAnswer = '';
+              setStreamingContent('');
+            }
+            streamedAnswer += delta;
+            pendingAnswer += delta;
+            startTypingLoop();
+          }
+          return;
+        }
+
+        if (eventName === 'done') {
+          doneReceived = true;
+
+          const backendSessionId = record.session_id;
+          if (activeSessionId && typeof backendSessionId === 'number') {
+            setSessionBackendId(activeSessionId, backendSessionId);
+          }
+
+          const eventThoughtSteps = record.thought_steps;
+          if (Array.isArray(eventThoughtSteps)) {
+            const parsed = eventThoughtSteps
+              .map((item) => parseThinkingStep(item))
+              .filter((item): item is ThinkingStep => item !== null);
+            if (parsed.length > 0) {
+              setThinkingSteps(parsed);
+            }
+          }
+
+          const finalAnswer = typeof record.answer === 'string'
+            ? record.answer
+            : streamedAnswer;
+          finalAnswerFromDone = finalAnswer;
+
+          const preprocessResult = record.preprocess_result as PreprocessResultPayload | undefined;
+          if (
+            preprocessResult?.status === 'applied' &&
+            typeof preprocessResult.output_source_id === 'string' &&
+            preprocessResult.output_source_id &&
+            typeof preprocessResult.output_filename === 'string' &&
+            preprocessResult.output_filename
+          ) {
+            handlePreprocessApplyResult({
+              output_source_id: preprocessResult.output_source_id,
+              output_filename: preprocessResult.output_filename,
+            }, currentSession?.id ?? activeSessionId);
+          }
+
+          if (finalAnswerFromDone && !hasStartedAnswer) {
+            hasStartedAnswer = true;
+            displayedAnswer = '';
+            setStreamingContent('');
+            streamedAnswer = finalAnswerFromDone;
+            pendingAnswer += finalAnswerFromDone;
+            startTypingLoop();
+          } else if (
+            finalAnswerFromDone &&
+            finalAnswerFromDone.startsWith(streamedAnswer) &&
+            finalAnswerFromDone.length > streamedAnswer.length
+          ) {
+            const remain = finalAnswerFromDone.slice(streamedAnswer.length);
+            streamedAnswer = finalAnswerFromDone;
+            pendingAnswer += remain;
+            startTypingLoop();
+          } else if (
+            finalAnswerFromDone &&
+            !finalAnswerFromDone.startsWith(streamedAnswer)
+          ) {
+            streamedAnswer = finalAnswerFromDone;
+            displayedAnswer = '';
+            pendingAnswer = finalAnswerFromDone;
+            setStreamingContent('');
+            startTypingLoop();
+          }
+
+          tryFinalizeAnswer();
+          return;
+        }
+
+        if (eventName === 'error') {
+          const errorMessage = typeof record.message === 'string'
+            ? record.message
+            : '스트리밍 처리 중 오류가 발생했습니다.';
+          throw new Error(errorMessage);
+        }
+      };
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          break;
+        }
+        buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n');
+        while (true) {
+          const separatorIndex = buffer.indexOf('\n\n');
+          if (separatorIndex < 0) {
+            break;
+          }
+          const rawEvent = buffer.slice(0, separatorIndex).trim();
+          buffer = buffer.slice(separatorIndex + 2);
+          if (!rawEvent) {
+            continue;
+          }
+          handleEvent(rawEvent);
+        }
+      }
+
+      const tail = decoder.decode();
+      if (tail) {
+        buffer += tail.replace(/\r\n/g, '\n');
+      }
+      if (buffer.trim()) {
+        handleEvent(buffer.trim());
+      }
+
+      if (!assistantSaved) {
+        let waitCount = 0;
+        while (!assistantSaved && waitCount < 200) {
+          tryFinalizeAnswer();
+          if (assistantSaved) {
+            break;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 10));
+          waitCount += 1;
+        }
+
+        if (!assistantSaved) {
+          const fallbackAnswer = (finalAnswerFromDone || streamedAnswer || displayedAnswer).trim();
+          if (activeSessionId && fallbackAnswer) {
+            addMessage(activeSessionId, {
+              role: 'assistant',
+              content: fallbackAnswer,
+            });
+            assistantSaved = true;
+          }
+        }
+      }
+
+      if (!doneReceived && !assistantSaved) {
+        throw new Error('응답 스트리밍이 비정상적으로 종료되었습니다.');
       }
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') {
@@ -153,8 +450,12 @@ export function WorkbenchApp({ initialFeature = 'analysis' }: WorkbenchAppProps)
       }
       toast.error(error instanceof Error ? error.message : '채팅 요청에 실패했습니다.');
     } finally {
+      if (typingTimer !== null) {
+        clearInterval(typingTimer);
+      }
       setIsGenerating(false);
       setStreamingContent('');
+      setThinkingSteps([]);
       abortControllerRef.current = null;
     }
   };
@@ -166,6 +467,7 @@ export function WorkbenchApp({ initialFeature = 'analysis' }: WorkbenchAppProps)
     }
     setIsGenerating(false);
     setStreamingContent('');
+    setThinkingSteps([]);
   };
 
   const handleFileUpload = async (file: File, type: 'dataset' | 'document') => {
@@ -215,6 +517,57 @@ export function WorkbenchApp({ initialFeature = 'analysis' }: WorkbenchAppProps)
     messageCount: s.messages.length,
   }));
 
+  const handlePreprocessApplyResult = (
+    result: { output_source_id: string; output_filename: string },
+    targetSessionId?: string | null,
+  ) => {
+    const sessionId = targetSessionId ?? activeSessionId;
+    if (!sessionId) return;
+
+    useStore.setState((prev) => {
+      const nextSessions = prev.sessions.map((session) => {
+        if (session.id !== sessionId) {
+          return session;
+        }
+
+        const existing = session.files.find(
+          (file) => file.type === 'dataset' && file.sourceId === result.output_source_id
+        );
+        const unselected = session.files.map((file) =>
+          file.type === 'dataset' ? { ...file, selected: false } : file
+        );
+
+        if (existing) {
+          return {
+            ...session,
+            files: unselected.map((file) =>
+              file.id === existing.id ? { ...file, selected: true } : file
+            ),
+            updatedAt: new Date(),
+          };
+        }
+
+        const newFile = {
+          id: `file-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          name: result.output_filename,
+          size: 0,
+          type: 'dataset' as const,
+          sourceId: result.output_source_id,
+          uploadedAt: new Date(),
+          selected: true,
+        };
+
+        return {
+          ...session,
+          files: [...unselected, newFile],
+          updatedAt: new Date(),
+        };
+      });
+
+      return { sessions: nextSessions };
+    });
+  };
+
   return (
     <div className={isDark ? 'dark' : ''}>
       <div className="flex h-screen bg-gray-50 dark:bg-[#212121]">
@@ -237,7 +590,13 @@ export function WorkbenchApp({ initialFeature = 'analysis' }: WorkbenchAppProps)
             {(() => {
               const selectedDatasetSourceId = (activeSession?.files || [])
                 .find(f => f.selected && f.type === 'dataset' && f.sourceId)?.sourceId || null;
-              return <DataPreprocessing isDark={isDark} selectedSourceId={selectedDatasetSourceId} />;
+              return (
+                <DataPreprocessing
+                  isDark={isDark}
+                  selectedSourceId={selectedDatasetSourceId}
+                  onServerApplyResult={handlePreprocessApplyResult}
+                />
+              );
             })()}
           </div>
         ) : (
@@ -298,6 +657,7 @@ export function WorkbenchApp({ initialFeature = 'analysis' }: WorkbenchAppProps)
                 messages={activeSession?.messages || []}
                 isGenerating={isGenerating}
                 streamingContent={streamingContent}
+                thinkingSteps={thinkingSteps}
                 emptyTitle={activeFeature === 'analysis' ? 'AI 챗봇' : '데이터 전처리'}
                 emptySubtitle={
                   activeFeature === 'analysis'

@@ -4,9 +4,10 @@ LLMClient는 선택된 프리셋으로 LangChain 체인을 구성해 간단한 �
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, AsyncIterator, Dict
 
 from ...core.db import SessionLocal
 from .builder import WorkflowBuilder
@@ -19,14 +20,85 @@ class AgentClient:
     ) -> None:
         self.default_model = model
 
-    def ask(self, session_id: str | None = None,
-            question: str | None = None,
-            context: str | None = None,
-            dataset: Any | None = None,
-            model_id: str | None = None) -> str:
-        """
-        질문과 선택적 추가 컨텍스트를 받아 답변을 생성한다.
-        """
+    async def astream_with_trace(
+        self,
+        session_id: str | None = None,
+        question: str | None = None,
+        context: str | None = None,
+        dataset: Any | None = None,
+        model_id: str | None = None,
+    ) -> AsyncIterator[Dict[str, Any]]:
+        """비동기 스트리밍으로 답변과 사용자 표시용 사고 단계를 반환한다."""
+        state, early_answer = self._build_state(
+            session_id=session_id,
+            question=question,
+            context=context,
+            dataset=dataset,
+            model_id=model_id,
+        )
+
+        if early_answer is not None:
+            yield {"type": "chunk", "delta": early_answer}
+            yield {"type": "done", "answer": early_answer, "thought_steps": []}
+            return
+
+        seen: set[tuple[str, str]] = set()
+        thought_steps: list[Dict[str, str]] = []
+
+        initial_step = self._make_step(
+            phase="analysis",
+            message="요청을 분석하고 처리 경로를 결정하는 중입니다.",
+            status="active",
+        )
+        seen.add((initial_step["phase"], initial_step["message"]))
+        thought_steps.append(initial_step)
+        yield {"type": "thought", "step": initial_step}
+
+        db = SessionLocal()
+        final_state: Dict[str, Any] = {}
+        try:
+            workflow = WorkflowBuilder(
+                db=db,
+                model_name=self.default_model,
+            ).build()
+
+            async for snapshot in self._astream_workflow_values(workflow, state):
+                final_state = snapshot
+                for step in self._collect_thought_steps(snapshot):
+                    key = (step["phase"], step["message"])
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    thought_steps.append(step)
+                    yield {"type": "thought", "step": step}
+
+            answer = self._extract_answer(final_state)
+            for index in range(0, len(answer), 24):
+                delta = answer[index:index + 24]
+                yield {"type": "chunk", "delta": delta}
+                await asyncio.sleep(0)
+            preprocess_result = final_state.get("preprocess_result")
+            done_event: Dict[str, Any] = {
+                "type": "done",
+                "answer": answer,
+                "thought_steps": thought_steps,
+            }
+            if isinstance(preprocess_result, dict):
+                done_event["preprocess_result"] = preprocess_result
+            yield done_event
+        finally:
+            db.close()
+
+    def _build_state(
+        self,
+        *,
+        session_id: str | None,
+        question: str | None,
+        context: str | None,
+        dataset: Any | None,
+        model_id: str | None,
+    ) -> tuple[Dict[str, Any], str | None]:
+        """워크플로우 입력 상태를 구성한다."""
         dataset_context = self._build_dataset_context(dataset) if dataset is not None else ""
         merged_context_parts: list[str] = []
         if dataset_context:
@@ -36,14 +108,14 @@ class AgentClient:
         merged_context = "\n\n".join(merged_context_parts).strip()
         question_text = (question or "").strip()
         if not question_text:
-            return "질문을 입력해 주세요."
+            return {}, "질문을 입력해 주세요."
 
         if merged_context:
             message = f"{question_text}\n\ncontext:\n{merged_context}"
         else:
             message = question_text
 
-        state = {
+        state: Dict[str, Any] = {
             "user_input": message,
             "session_id": str(session_id or ""),
             "model_id": model_id or self.default_model,
@@ -51,22 +123,193 @@ class AgentClient:
             "dataset_id": getattr(dataset, "id", None) if dataset is not None else None,
             "source_id": getattr(dataset, "source_id", None) if dataset is not None else None,
         }
+        return state, None
 
-        db = SessionLocal()
-        try:
-            workflow = WorkflowBuilder(
-                db=db,
-                model_name=self.default_model,
-            ).build()
-            result_state = workflow.invoke(state)
-        finally:
-            db.close()
-
+    @staticmethod
+    def _extract_answer(result_state: Dict[str, Any]) -> str:
+        """워크플로우 상태에서 최종 답변 문자열을 추출한다."""
         output = result_state.get("output") or {}
         content = output.get("content")
         if isinstance(content, str) and content:
             return content
-        return str(output) if output else "No output"
+
+        preprocess_decision = result_state.get("preprocess_decision")
+        if isinstance(preprocess_decision, dict):
+            reason_summary = preprocess_decision.get("reason_summary")
+            if isinstance(reason_summary, str) and reason_summary.strip():
+                return reason_summary.strip()
+
+        preprocess_plan = result_state.get("preprocess_plan")
+        if isinstance(preprocess_plan, dict):
+            planner_comment = preprocess_plan.get("planner_comment")
+            if isinstance(planner_comment, str) and planner_comment.strip():
+                return planner_comment.strip()
+
+        preprocess_result = result_state.get("preprocess_result")
+        if isinstance(preprocess_result, dict):
+            status = preprocess_result.get("status")
+            if status == "applied":
+                applied_count = preprocess_result.get("applied_ops_count", 0)
+                return f"전처리가 완료되었습니다. 적용한 연산 수: {applied_count}개."
+            if status == "skipped":
+                return "전처리 필요성이 낮아 전처리를 생략했습니다."
+            if status == "failed":
+                error_message = preprocess_result.get("error")
+                if isinstance(error_message, str) and error_message.strip():
+                    return f"전처리 단계에서 오류가 발생했습니다: {error_message.strip()}"
+
+        if output:
+            return str(output)
+        return "응답을 생성하지 못했습니다."
+
+    @staticmethod
+    def _make_step(*, phase: str, message: str, status: str = "completed") -> Dict[str, str]:
+        return {"phase": phase, "message": message, "status": status}
+
+    @classmethod
+    def _collect_thought_steps(cls, state: Dict[str, Any]) -> list[Dict[str, str]]:
+        """워크플로우 상태를 사용자 표시용 단계 요약으로 변환한다."""
+        steps: list[Dict[str, str]] = []
+
+        handoff = state.get("handoff")
+        if not isinstance(handoff, dict):
+            handoff = {}
+        else:
+            next_step = handoff.get("next_step")
+            if next_step == "data_pipeline":
+                steps.append(
+                    cls._make_step(
+                        phase="intake",
+                        message="데이터셋 기반 파이프라인으로 라우팅했습니다.",
+                    )
+                )
+            elif next_step == "general_question":
+                steps.append(
+                    cls._make_step(
+                        phase="intake",
+                        message="일반 질의 경로로 라우팅했습니다.",
+                    )
+                )
+
+            if bool(handoff.get("ask_visualization", False)):
+                steps.append(
+                    cls._make_step(
+                        phase="intent",
+                        message="시각화 요청이 감지되어 시각화 경로를 준비했습니다.",
+                    )
+                )
+            if bool(handoff.get("ask_report", False)):
+                steps.append(
+                    cls._make_step(
+                        phase="intent",
+                        message="리포트 요청이 감지되어 리포트 경로를 준비했습니다.",
+                    )
+                )
+
+        decision = state.get("preprocess_decision")
+        if isinstance(decision, dict):
+            reason_summary = decision.get("reason_summary")
+            if isinstance(reason_summary, str) and reason_summary.strip():
+                steps.append(
+                    cls._make_step(
+                        phase="preprocess_decision",
+                        message=reason_summary.strip(),
+                    )
+                )
+            else:
+                decision_step = decision.get("step")
+                if decision_step == "run_preprocess":
+                    steps.append(
+                        cls._make_step(
+                            phase="preprocess_decision",
+                            message="전처리가 필요하다고 판단했습니다.",
+                        )
+                    )
+                elif decision_step == "skip_preprocess":
+                    steps.append(
+                        cls._make_step(
+                            phase="preprocess_decision",
+                            message="전처리를 생략해도 된다고 판단했습니다.",
+                        )
+                    )
+
+        plan = state.get("preprocess_plan")
+        if isinstance(plan, dict):
+            planner_comment = plan.get("planner_comment")
+            if isinstance(planner_comment, str) and planner_comment.strip():
+                steps.append(
+                    cls._make_step(
+                        phase="preprocess_plan",
+                        message=planner_comment.strip(),
+                    )
+                )
+            else:
+                operations = plan.get("operations")
+                if isinstance(operations, list) and operations:
+                    steps.append(
+                        cls._make_step(
+                            phase="preprocess_plan",
+                            message=f"전처리 연산 {len(operations)}개를 계획했습니다.",
+                        )
+                    )
+
+        result = state.get("preprocess_result")
+        if isinstance(result, dict):
+            status = result.get("status")
+            if status == "applied":
+                applied_count = result.get("applied_ops_count", 0)
+                steps.append(
+                    cls._make_step(
+                        phase="preprocess_result",
+                        message=f"전처리 연산 {applied_count}개를 적용했습니다.",
+                    )
+                )
+            elif status == "skipped":
+                steps.append(
+                    cls._make_step(
+                        phase="preprocess_result",
+                        message="전처리 없이 다음 단계로 진행했습니다.",
+                    )
+                )
+            elif status == "failed":
+                error_message = result.get("error")
+                if isinstance(error_message, str) and error_message.strip():
+                    steps.append(
+                        cls._make_step(
+                            phase="preprocess_result",
+                            message=f"전처리 단계에서 오류가 발생했습니다: {error_message.strip()}",
+                            status="failed",
+                        )
+                    )
+
+        output = state.get("output")
+        if not isinstance(output, dict):
+            return steps
+        output_type = output.get("type")
+        if isinstance(output_type, str) and output_type.strip():
+            steps.append(
+                cls._make_step(
+                    phase="output",
+                    message=f"{output_type} 응답을 구성하고 있습니다.",
+                )
+            )
+        return steps
+
+    @staticmethod
+    async def _astream_workflow_values(
+        workflow: Any,
+        state: Dict[str, Any],
+    ) -> AsyncIterator[Dict[str, Any]]:
+        """워크플로우 상태 스냅샷을 비동기 이터레이터로 제공한다."""
+        if hasattr(workflow, "astream"):
+            async for snapshot in workflow.astream(state, stream_mode="values"):
+                if isinstance(snapshot, dict):
+                    yield snapshot
+            return
+
+        final_state = await asyncio.to_thread(workflow.invoke, state)
+        if isinstance(final_state, dict):
+            yield final_state
 
     def _build_dataset_context(self, dataset: Any, max_rows: int = 20) -> str:
         """

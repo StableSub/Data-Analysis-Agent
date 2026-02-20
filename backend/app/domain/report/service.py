@@ -14,7 +14,7 @@ class ReportService:
     def __init__(self, db: Session) -> None:
         self.db = db
 
-    def create_report(
+    async def create_report(
         self,
         *,
         session_id: int,
@@ -36,7 +36,11 @@ class ReportService:
         context = json.dumps(payload, ensure_ascii=False)
 
         try:
-            summary_text = agent.ask(question=question, context=context)
+            summary_text = await self._collect_answer_from_agent_stream(
+                agent,
+                question=question,
+                context=context,
+            )
         except Exception as exc:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -51,6 +55,27 @@ class ReportService:
         self.db.commit()
         self.db.refresh(report)
         return report
+
+    @staticmethod
+    async def _collect_answer_from_agent_stream(
+        agent: AgentClient,
+        *,
+        question: str,
+        context: str,
+    ) -> str:
+        answer_parts: list[str] = []
+        final_answer: str | None = None
+        async for event in agent.astream_with_trace(question=question, context=context):
+            event_type = event.get("type")
+            if event_type == "chunk":
+                delta = event.get("delta")
+                if isinstance(delta, str) and delta:
+                    answer_parts.append(delta)
+            elif event_type == "done":
+                done_answer = event.get("answer")
+                if isinstance(done_answer, str):
+                    final_answer = done_answer
+        return final_answer if final_answer is not None else "".join(answer_parts)
 
     def get_report(self, report_id: str) -> Report:
         """리포트 단건을 조회한다."""

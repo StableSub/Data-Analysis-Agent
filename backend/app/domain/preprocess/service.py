@@ -1,9 +1,12 @@
 import os
 import re
+import uuid
+from pathlib import Path
 
 import pandas as pd
 from sqlalchemy.orm import Session
 
+from backend.app.domain.data_source.models import Dataset
 from backend.app.domain.data_source.repository import DataSourceRepository
 from backend.app.domain.preprocess.schemas import PreprocessApplyResponse, PreprocessOperation
 
@@ -21,12 +24,32 @@ class PreprocessService:
         source_id: str,
         operations: list[PreprocessOperation],
     ) -> PreprocessApplyResponse:
-        """선택한 source_id 데이터셋 CSV 파일에 전처리를 적용하고 같은 파일에 덮어쓴다."""
+        """선택한 source_id 데이터셋 CSV 파일에 전처리를 적용해 새 데이터셋으로 저장한다."""
+        input_dataset = self.repository.get_by_source_id(source_id)
+        if not input_dataset:
+            raise FileNotFoundError(f"Dataset not found: {source_id}")
+        if not input_dataset.storage_path:
+            raise FileNotFoundError("Dataset file path not found")
+
         file_path = self._resolve_dataset_file(source_id)
         df = pd.read_csv(file_path)
         processed = self._apply_operations(df, operations)
-        processed.to_csv(file_path, index=False)
-        return PreprocessApplyResponse(source_id=source_id)
+        output_path, output_filename = self._build_output_path(file_path)
+        processed.to_csv(output_path, index=False)
+        output_size = os.path.getsize(output_path)
+
+        output_dataset = self.repository.create(
+            Dataset(
+                filename=output_filename,
+                storage_path=str(output_path),
+                filesize=output_size,
+            )
+        )
+        return PreprocessApplyResponse(
+            input_source_id=source_id,
+            output_source_id=output_dataset.source_id,
+            output_filename=output_filename,
+        )
 
     def _resolve_dataset_file(self, source_id: str) -> str:
         """source_id로 파일 경로를 조회하고 존재 여부를 검증한다."""
@@ -38,6 +61,12 @@ class PreprocessService:
         if not os.path.exists(dataset.storage_path):
             raise FileNotFoundError(f"Dataset file missing: {dataset.storage_path}")
         return dataset.storage_path
+
+    def _build_output_path(self, source_path: str) -> tuple[Path, str]:
+        """원본 경로 기준으로 새 전처리 결과 파일 경로/파일명을 생성한다."""
+        source = Path(source_path)
+        output_filename = f"{source.stem}_preprocessed_{uuid.uuid4().hex[:8]}.csv"
+        return source.with_name(output_filename), output_filename
 
     def _apply_operations(self, df: pd.DataFrame, operations: list[PreprocessOperation]) -> pd.DataFrame:
         """지원하는 최소 연산만 순서대로 적용한다."""

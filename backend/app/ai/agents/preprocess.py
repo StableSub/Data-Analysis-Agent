@@ -24,6 +24,7 @@ class PreprocessPlan(BaseModel):
 
 class PreprocessDecision(BaseModel):
     step: Literal["run_preprocess", "skip_preprocess"] = Field(...)
+    reason_summary: str = ""
 
 def _call_structured(
     *,
@@ -110,14 +111,20 @@ def run_preprocess_executor(
             }
         }
 
-    preprocess_service.apply(source_id=str(source_id), operations=operations)
+    apply_response = preprocess_service.apply(source_id=str(source_id), operations=operations)
     if plan_comment:
         print(f"[preprocess] planner_comment={plan_comment}")
     updated_profile = dict(state.get("dataset_profile", {}))
     updated_profile["preprocess_applied"] = True
     return {
         "dataset_profile": updated_profile,
-        "preprocess_result": {"status": "applied", "applied_ops_count": len(operations)},
+        "preprocess_result": {
+            "status": "applied",
+            "applied_ops_count": len(operations),
+            "input_source_id": apply_response.input_source_id,
+            "output_source_id": apply_response.output_source_id,
+            "output_filename": apply_response.output_filename,
+        },
     }
 
 def build_preprocess_workflow(
@@ -157,7 +164,8 @@ def build_preprocess_workflow(
         decision = _call_structured(
             schema=PreprocessDecision,
             system_prompt=(
-                "데이터 프로파일을 보고 run_preprocess 또는 skip_preprocess를 반환하라."
+                "데이터 프로파일을 보고 run_preprocess 또는 skip_preprocess를 반환하라. "
+                "reason_summary에는 판단 근거를 1문장으로 남겨라."
             ),
             human_prompt=f"user_input={state.get('user_input', '')}\n{profile_json}",
             model_id=state.get("model_id"),

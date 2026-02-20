@@ -16,13 +16,13 @@ def get_report_service(db: Session = Depends(get_db)) -> ReportService:
 
 
 @router.post("/", response_model=ReportBase)
-def create_report(
+async def create_report(
     request: ReportCreateRequest,
     service: ReportService = Depends(get_report_service),
     agent: AgentClient = Depends(get_agent),
 ):
     """리포트를 생성한다."""
-    report = service.create_report(
+    report = await service.create_report(
         session_id=request.session_id,
         analysis_results=request.analysis_results,
         visualizations=request.visualizations,

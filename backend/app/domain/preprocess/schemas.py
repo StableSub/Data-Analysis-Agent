@@ -72,4 +72,6 @@ class PreprocessApplyRequest(StrictModel):
 class PreprocessApplyResponse(StrictModel):
     """전처리 적용 결과."""
 
-    source_id: str
+    input_source_id: str
+    output_source_id: str
+    output_filename: str
