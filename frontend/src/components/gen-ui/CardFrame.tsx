@@ -1,9 +1,23 @@
-import { AlertCircle, CheckCircle2, Clock3, PauseCircle, Pin, PlayCircle, XCircle } from 'lucide-react';
+import {
+  AlertCircle,
+  CheckCircle2,
+  Clock3,
+  PauseCircle,
+  Pin,
+  PlayCircle,
+  XCircle,
+} from "lucide-react";
 
-import { Badge } from '../ui/badge';
-import { Button } from '../ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/card';
-import { BaseCardProps, CardAction } from './types';
+import { Button } from "../ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "../ui/card";
+import { cn } from "../ui/utils";
+import { BaseCardProps, CardAction } from "./types";
 
 interface CardFrameProps {
   card: BaseCardProps;
@@ -11,119 +25,143 @@ interface CardFrameProps {
   children: React.ReactNode;
 }
 
-function statusLabel(status: BaseCardProps['status']): string {
-  if (status === 'queued') return 'Queued';
-  if (status === 'running') return 'Running';
-  if (status === 'success') return 'Success';
-  if (status === 'failed') return 'Failed';
-  if (status === 'canceled') return 'Canceled';
-  if (status === 'needs_user') return 'Need Input';
-  return 'Idle';
+function statusLabel(status: BaseCardProps["status"]): string {
+  if (status === "queued") return "Queued";
+  if (status === "running") return "Running";
+  if (status === "success") return "Success";
+  if (status === "failed") return "Failed";
+  if (status === "canceled") return "Canceled";
+  if (status === "needs_user") return "Need Input";
+  return "Idle";
 }
 
-function statusClass(status: BaseCardProps['status']): string {
-  if (status === 'success') return 'bg-genui-success-bg text-genui-success';
-  if (status === 'failed') return 'bg-genui-error-bg text-genui-error';
-  if (status === 'running') return 'bg-genui-running-bg text-genui-running';
-  if (status === 'queued') return 'bg-genui-warning-bg text-genui-warning';
-  if (status === 'needs_user') return 'bg-genui-needs-user-bg text-genui-needs-user';
-  return 'bg-genui-idle-bg text-genui-idle';
+function statusClass(status: BaseCardProps["status"]): string {
+  if (status === "success") return "genui-status-success";
+  if (status === "failed") return "genui-status-error";
+  if (status === "running") return "genui-status-running";
+  if (status === "queued") return "genui-status-warning";
+  if (status === "needs_user") return "genui-status-needs-user";
+  return "genui-chip";
 }
 
-function statusIcon(status: BaseCardProps['status']) {
-  if (status === 'running') return <PlayCircle className="h-3.5 w-3.5" />;
-  if (status === 'queued') return <Clock3 className="h-3.5 w-3.5" />;
-  if (status === 'success') return <CheckCircle2 className="h-3.5 w-3.5" />;
-  if (status === 'failed') return <XCircle className="h-3.5 w-3.5" />;
-  if (status === 'canceled') return <PauseCircle className="h-3.5 w-3.5" />;
-  if (status === 'needs_user') return <AlertCircle className="h-3.5 w-3.5" />;
+function statusIcon(status: BaseCardProps["status"]) {
+  if (status === "running") return <PlayCircle className="h-3.5 w-3.5" />;
+  if (status === "queued") return <Clock3 className="h-3.5 w-3.5" />;
+  if (status === "success") return <CheckCircle2 className="h-3.5 w-3.5" />;
+  if (status === "failed") return <XCircle className="h-3.5 w-3.5" />;
+  if (status === "canceled") return <PauseCircle className="h-3.5 w-3.5" />;
+  if (status === "needs_user") return <AlertCircle className="h-3.5 w-3.5" />;
   return <Clock3 className="h-3.5 w-3.5" />;
 }
 
 function actionLabel(action: CardAction): string {
   if (action.label) return action.label;
   switch (action.type) {
-    case 'add_to_report':
-      return 'Add to Report';
-    case 'view_log':
-      return 'View Log';
-    case 'open_artifact':
-      return 'Open Artifact';
-    case 'retry':
-      return 'Retry';
-    case 'cancel':
-      return 'Cancel';
-    case 'apply':
-      return 'Apply';
-    case 'edit':
-      return 'Edit';
-    case 'dismiss':
-      return 'Dismiss';
-    case 'pin':
-      return 'Pin';
-    case 'unpin':
-      return 'Unpin';
+    case "add_to_report":
+      return "Add to Report";
+    case "view_log":
+      return "View Log";
+    case "open_artifact":
+      return "Open Artifact";
+    case "retry":
+      return "Retry";
+    case "cancel":
+      return "Cancel";
+    case "apply":
+      return "Apply";
+    case "edit":
+      return "Edit";
+    case "dismiss":
+      return "Dismiss";
+    case "pin":
+      return "Pin";
+    case "unpin":
+      return "Unpin";
   }
 }
 
-function actionVariant(action: CardAction): 'outline' | 'default' | 'secondary' | 'destructive' {
-  if (action.type === 'apply') return 'default';
-  if (action.type === 'cancel') return 'destructive';
-  if (action.type === 'retry') return 'secondary';
-  return 'outline';
+function actionVariant(
+  action: CardAction,
+): "outline" | "default" | "secondary" | "destructive" {
+  if (action.type === "apply") return "default";
+  if (action.type === "cancel") return "destructive";
+  if (action.type === "retry") return "secondary";
+  return "outline";
 }
 
 export function CardFrame({ card, onAction, children }: CardFrameProps) {
   return (
-    <Card className="rounded-[var(--genui-card-radius)] border-genui-border bg-genui-card shadow-[var(--genui-card-shadow)] transition-shadow duration-150 ease-out hover:shadow-[var(--genui-card-shadow-hover)]">
-      <CardHeader className="space-y-3 border-b border-genui-border pb-4">
+    <Card className="genui-card genui-border genui-shadow-sm rounded-2xl border transition-shadow duration-150 ease-out hover:shadow-[var(--genui-shadow-md)]">
+      <CardHeader className="genui-border space-y-2.5 border-b pb-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <CardTitle className="text-base text-slate-900 dark:text-white">{card.title}</CardTitle>
+          <div className="min-w-0 flex-1">
+            <CardTitle className="genui-text text-sm font-semibold">
+              {card.title}
+            </CardTitle>
             {card.subtitle ? (
-              <CardDescription className="mt-1 text-sm text-slate-600 dark:text-slate-300">
+              <CardDescription className="genui-muted mt-0.5 text-xs">
                 {card.subtitle}
               </CardDescription>
             ) : null}
           </div>
 
-          <div className="flex items-center gap-2">
-            <Badge className={statusClass(card.status)}>
-              <span className="mr-1 inline-flex items-center">{statusIcon(card.status)}</span>
+          <div className="flex items-center gap-1.5">
+            <span
+              className={cn(
+                "inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[11px] font-medium",
+                statusClass(card.status),
+              )}
+            >
+              {statusIcon(card.status)}
               {statusLabel(card.status)}
-            </Badge>
+            </span>
             {card.source.runId ? (
-              <Badge variant="secondary" className="bg-genui-idle-bg text-genui-idle">
+              <span className="genui-chip inline-flex items-center rounded-full border px-2 py-0.5 text-[11px]">
                 run:{card.source.runId}
-              </Badge>
+              </span>
             ) : null}
           </div>
         </div>
 
         {card.badges?.length ? (
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-1.5">
             {card.badges.map((badge) => (
-              <Badge key={badge.label} variant="secondary" className="bg-genui-idle-bg text-genui-idle">
-                {badge.tone === 'success' ? <CheckCircle2 className="mr-1 h-3 w-3" /> : null}
+              <span
+                key={badge.label}
+                className="genui-chip inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px]"
+              >
+                {badge.tone === "success" ? (
+                  <CheckCircle2 className="h-3 w-3 text-genui-success" />
+                ) : null}
                 {badge.label}
-              </Badge>
+              </span>
             ))}
           </div>
         ) : null}
       </CardHeader>
 
-      <CardContent className="space-y-4 pt-4">
-        {card.summary ? <p className="text-sm text-slate-600 dark:text-slate-300">{card.summary}</p> : null}
+      <CardContent className="space-y-3.5 pt-4">
+        {card.summary ? (
+          <p className="genui-muted text-sm leading-relaxed">{card.summary}</p>
+        ) : null}
 
         {children}
 
         {card.details?.length ? (
-          <div className="space-y-2">
+          <div className="space-y-1.5">
             {card.details.map((detail) => (
-              <details key={detail.label} open={detail.defaultOpen} className="rounded-lg border border-genui-border px-3 py-2 text-xs">
-                <summary className="cursor-pointer text-slate-700 dark:text-slate-200">{detail.label}</summary>
-                <pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap rounded bg-slate-50 p-2 text-[11px] text-slate-700 dark:bg-[#202024] dark:text-slate-300">
-                  {typeof detail.content === 'string' ? detail.content : JSON.stringify(detail.content, null, 2)}
+              <details
+                key={detail.label}
+                open={detail.defaultOpen}
+                className="genui-border rounded-xl border px-3 py-2.5 text-xs"
+              >
+                <summary className="genui-muted cursor-pointer hover:text-[var(--genui-text)]">
+                  {detail.label}
+                </summary>
+                <pre className="genui-panel genui-text mt-2 max-h-56 overflow-auto whitespace-pre-wrap rounded-lg p-2.5 text-[11px]">
+                  {typeof detail.content === "string"
+                    ? detail.content
+                    : JSON.stringify(detail.content, null, 2)}
                 </pre>
               </details>
             ))}
@@ -131,10 +169,24 @@ export function CardFrame({ card, onAction, children }: CardFrameProps) {
         ) : null}
 
         {card.actions?.length ? (
-          <div className="flex flex-wrap items-center gap-2 border-t border-genui-border pt-3">
+          <div className="genui-border flex flex-wrap items-center gap-2 border-t pt-3.5">
             {card.actions.map((action, index) => (
-              <Button key={`${action.type}-${index}`} size="sm" variant={actionVariant(action)} onClick={() => onAction?.(card, action)}>
-                {action.type === 'pin' || action.type === 'unpin' ? <Pin className="mr-1.5 h-3.5 w-3.5" /> : null}
+              <Button
+                key={`${action.type}-${index}`}
+                size="sm"
+                variant={actionVariant(action)}
+                className={
+                  actionVariant(action) === "default"
+                    ? "bg-genui-running text-white hover:opacity-90"
+                    : actionVariant(action) === "destructive"
+                      ? "genui-status-error border"
+                      : "genui-border genui-card genui-text border hover:opacity-90"
+                }
+                onClick={() => onAction?.(card, action)}
+              >
+                {action.type === "pin" || action.type === "unpin" ? (
+                  <Pin className="mr-1.5 h-3.5 w-3.5" />
+                ) : null}
                 {actionLabel(action)}
               </Button>
             ))}

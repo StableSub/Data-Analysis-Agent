@@ -1,6 +1,5 @@
 import { CheckCircle2, Circle, Wand2 } from 'lucide-react';
 
-import { Badge } from '../ui/badge';
 import { CardFrame } from './CardFrame';
 import { CardAction, PreprocessPlanCardProps } from './types';
 
@@ -12,36 +11,62 @@ interface PreprocessPlanCardViewProps {
 export function PreprocessPlanCard({ card, onAction }: PreprocessPlanCardViewProps) {
   return (
     <CardFrame card={card} onAction={(base, action) => onAction?.(base as PreprocessPlanCardProps, action)}>
-      <div className="rounded-lg border border-genui-border bg-genui-card p-3">
-        <p className="inline-flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
-          <Wand2 className="h-3.5 w-3.5" />
-          plan: {card.plan.planId}
-        </p>
+      {/* Plan Meta */}
+      <div className="rounded-xl border border-slate-100 bg-slate-50 px-3.5 py-3">
+        <div className="flex items-center gap-2">
+          <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-indigo-100">
+            <Wand2 className="h-3.5 w-3.5 text-indigo-500" />
+          </div>
+          <span className="text-[11px] text-slate-400">plan: {card.plan.planId}</span>
+        </div>
         {card.plan.rationale ? (
-          <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">{card.plan.rationale}</p>
+          <p className="mt-2 text-sm leading-relaxed text-slate-500">{card.plan.rationale}</p>
         ) : null}
       </div>
 
+      {/* Steps */}
       <div className="space-y-2">
         {card.plan.steps.map((step, index) => (
-          <div key={step.stepId} className="rounded-lg border border-genui-border bg-genui-card p-3 text-sm">
-            <div className="flex items-start justify-between gap-2">
-              <div>
-                <p className="text-slate-900 dark:text-white">{index + 1}. {step.title}</p>
-                <p className="text-xs text-slate-500 dark:text-slate-400">{step.why}</p>
+          <div
+            key={step.stepId}
+            className={`rounded-xl border px-4 py-3 transition-colors ${
+              step.enabled
+                ? 'border-slate-100 bg-white hover:border-slate-200 hover:shadow-sm'
+                : 'border-slate-100 bg-slate-50 opacity-50'
+            }`}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex min-w-0 flex-1 items-start gap-3">
+                <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-slate-100 text-[10px] font-bold text-slate-500">
+                  {index + 1}
+                </span>
+                <div className="min-w-0">
+                  <p className={`text-sm font-medium ${step.enabled ? 'text-slate-800' : 'text-slate-400'}`}>
+                    {step.title}
+                  </p>
+                  {step.why ? (
+                    <p className="mt-0.5 text-xs leading-relaxed text-slate-400">{step.why}</p>
+                  ) : null}
+                </div>
               </div>
-              <Badge variant="secondary" className="bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-200">
-                {step.type}
-              </Badge>
+              <div className="flex shrink-0 items-center gap-1.5">
+                <span className="rounded-md border border-slate-100 bg-slate-50 px-2 py-0.5 text-[10px] text-slate-400">{step.type}</span>
+                {step.enabled ? (
+                  <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700">
+                    <CheckCircle2 className="h-3 w-3" />on
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] text-slate-400">
+                    <Circle className="h-3 w-3" />off
+                  </span>
+                )}
+              </div>
             </div>
-            <div className="mt-2 flex items-center gap-2 text-xs">
-              {step.enabled ? (
-                <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400"><CheckCircle2 className="h-3.5 w-3.5" />enabled</span>
-              ) : (
-                <span className="inline-flex items-center gap-1 text-slate-500 dark:text-slate-400"><Circle className="h-3.5 w-3.5" />disabled</span>
-              )}
-              {step.risk ? <span className="text-amber-600 dark:text-amber-400">risk: {step.risk}</span> : null}
-            </div>
+            {step.risk ? (
+              <div className="ml-8 mt-2 inline-flex items-center gap-1 rounded-lg border border-amber-100 bg-amber-50 px-2 py-0.5 text-[10px] text-amber-700">
+                ⚠️ risk: {step.risk}
+              </div>
+            ) : null}
           </div>
         ))}
       </div>

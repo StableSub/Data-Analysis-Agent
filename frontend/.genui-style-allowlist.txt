@@ -1,0 +1,13 @@
+# File-level allowlist for legacy components outside the initial Workbench/Gen-UI tokenization scope.
+src/components/gen-ui/CardFrame.stories.tsx
+src/components/gen-ui/ChartCard.tsx
+src/components/gen-ui/DatasetSummaryCard.tsx
+src/components/gen-ui/DocumentIndexCard.tsx
+src/components/gen-ui/PipelineRunCard.tsx
+src/components/gen-ui/PreprocessPlanCard.tsx
+src/components/gen-ui/ProcessChartCard.tsx
+src/components/gen-ui/RAGIngestCard.tsx
+src/components/gen-ui/ReportBuilderCard.tsx
+src/components/gen-ui/RetrievalEvidenceCard.tsx
+src/components/workbench/AppHeader.tsx
+src/components/workbench/ChatInputBar.tsx

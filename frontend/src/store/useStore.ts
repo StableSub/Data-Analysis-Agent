@@ -1,6 +1,15 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+
+import type { WorkbenchCardProps } from '../components/gen-ui';
 import { apiRequest } from '../lib/api';
+import {
+  DEFAULT_STREAMING_STATE,
+  type AgentPhase,
+  type SessionArtifact,
+  type StreamingState,
+  type ToolCallState,
+} from '../types/agent-state';
 
 interface UploadedFile {
   id: string;
@@ -36,20 +45,53 @@ interface ChatSession {
 interface AppState {
   sessions: ChatSession[];
   activeSessionId: string | null;
+  sessionArtifacts: Record<string, SessionArtifact[]>;
+  streamingStateBySession: Record<string, StreamingState>;
+  toolCallsBySession: Record<string, ToolCallState[]>;
+
   createSession: (feature: ChatSession['feature']) => string;
   deleteSession: (sessionId: string) => Promise<void>;
   setActiveSession: (sessionId: string | null) => void;
   setSessionBackendId: (sessionId: string, backendSessionId: number) => void;
   fetchMessages: (sessionId: string) => Promise<void>;
-  addMessage: (sessionId: string, message: Omit<ChatMessage, 'id' | 'timestamp'>) => void;
+  addMessage: (sessionId: string, message: Omit<ChatMessage, 'id' | 'timestamp'>) => string;
+  updateMessageContent: (sessionId: string, messageId: string, content: string) => void;
+  updateLastAssistantMessage: (sessionId: string, content: string) => void;
   addFile: (sessionId: string, file: Omit<UploadedFile, 'id' | 'uploadedAt' | 'selected'>) => boolean;
   removeFile: (sessionId: string, fileId: string) => void;
   toggleFileSelection: (sessionId: string, fileId: string) => void;
   updateSessionTitle: (sessionId: string, title: string) => void;
 
+  setSessionArtifacts: (sessionId: string, artifacts: SessionArtifact[]) => void;
+  appendArtifact: (sessionId: string, artifact: SessionArtifact) => void;
+  upsertCardArtifact: (sessionId: string, card: WorkbenchCardProps) => void;
+  removeCardArtifact: (sessionId: string, cardId: string) => void;
+  updateCardArtifact: (
+    sessionId: string,
+    cardId: string,
+    updater: (card: WorkbenchCardProps) => WorkbenchCardProps,
+  ) => void;
+
+  setStreamingState: (sessionId: string, patch: Partial<StreamingState>) => void;
+  setPhaseProgress: (
+    sessionId: string,
+    phase: AgentPhase,
+    progress: number,
+    lastTool?: string,
+  ) => void;
+  markStreamStale: (sessionId: string) => void;
+
+  setToolCalls: (sessionId: string, toolCalls: ToolCallState[]) => void;
+  upsertToolCall: (sessionId: string, toolCall: ToolCallState) => void;
+  clearToolCalls: (sessionId: string) => void;
+
   uploadedFile: UploadedFile | null;
   setUploadedFile: (file: UploadedFile | null) => void;
 }
+
+const nowIso = () => new Date().toISOString();
+
+const makeId = (prefix: string): string => `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
 
 const reviveDates = (sessions: ChatSession[]): ChatSession[] => {
   return sessions.map((session) => ({
@@ -67,6 +109,19 @@ const reviveDates = (sessions: ChatSession[]): ChatSession[] => {
   }));
 };
 
+function clampProgress(progress: number): number {
+  if (!Number.isFinite(progress)) return 0;
+  return Math.max(0, Math.min(1, progress));
+}
+
+function normalizeStreamingState(state: StreamingState): StreamingState {
+  return {
+    ...DEFAULT_STREAMING_STATE,
+    ...state,
+    progress: clampProgress(state.progress),
+  };
+}
+
 export const useStore = create<AppState>()(
   persist(
     (set, get) => ({
@@ -75,9 +130,12 @@ export const useStore = create<AppState>()(
 
       sessions: [],
       activeSessionId: null,
+      sessionArtifacts: {},
+      streamingStateBySession: {},
+      toolCallsBySession: {},
 
       createSession: (feature) => {
-        const sessionId = `session-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+        const sessionId = makeId('session');
         const newSession: ChatSession = {
           id: sessionId,
           backendSessionId: null,
@@ -92,6 +150,18 @@ export const useStore = create<AppState>()(
         set((state) => ({
           sessions: [newSession, ...state.sessions],
           activeSessionId: sessionId,
+          sessionArtifacts: {
+            ...state.sessionArtifacts,
+            [sessionId]: [],
+          },
+          streamingStateBySession: {
+            ...state.streamingStateBySession,
+            [sessionId]: { ...DEFAULT_STREAMING_STATE },
+          },
+          toolCallsBySession: {
+            ...state.toolCallsBySession,
+            [sessionId]: [],
+          },
         }));
 
         return sessionId;
@@ -108,10 +178,19 @@ export const useStore = create<AppState>()(
           }
         }
 
-        set((state) => ({
-          sessions: state.sessions.filter((s) => s.id !== sessionId),
-          activeSessionId: state.activeSessionId === sessionId ? null : state.activeSessionId,
-        }));
+        set((state) => {
+          const { [sessionId]: _removedArtifacts, ...nextArtifacts } = state.sessionArtifacts;
+          const { [sessionId]: _removedStreaming, ...nextStreaming } = state.streamingStateBySession;
+          const { [sessionId]: _removedToolCalls, ...nextToolCalls } = state.toolCallsBySession;
+
+          return {
+            sessions: state.sessions.filter((s) => s.id !== sessionId),
+            activeSessionId: state.activeSessionId === sessionId ? null : state.activeSessionId,
+            sessionArtifacts: nextArtifacts,
+            streamingStateBySession: nextStreaming,
+            toolCallsBySession: nextToolCalls,
+          };
+        });
       },
 
       setActiveSession: (sessionId) => {
@@ -151,7 +230,7 @@ export const useStore = create<AppState>()(
 
           set((state) => ({
             sessions: state.sessions.map((s) =>
-              s.id === sessionId ? { ...s, messages: newMessages } : s,
+              s.id === sessionId ? { ...s, messages: newMessages, updatedAt: new Date() } : s,
             ),
           }));
         } catch (error) {
@@ -162,7 +241,7 @@ export const useStore = create<AppState>()(
       addMessage: (sessionId, message) => {
         const fullMessage: ChatMessage = {
           ...message,
-          id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`,
+          id: makeId('msg'),
           timestamp: new Date(),
         };
 
@@ -181,6 +260,57 @@ export const useStore = create<AppState>()(
               : session,
           ),
         }));
+
+        return fullMessage.id;
+      },
+
+      updateMessageContent: (sessionId, messageId, content) => {
+        set((state) => ({
+          sessions: state.sessions.map((session) =>
+            session.id === sessionId
+              ? {
+                  ...session,
+                  messages: session.messages.map((message) =>
+                    message.id === messageId ? { ...message, content, timestamp: new Date() } : message,
+                  ),
+                  updatedAt: new Date(),
+                }
+              : session,
+          ),
+        }));
+      },
+
+      updateLastAssistantMessage: (sessionId, content) => {
+        set((state) => ({
+          sessions: state.sessions.map((session) => {
+            if (session.id !== sessionId) return session;
+
+            const messages = [...session.messages];
+            for (let i = messages.length - 1; i >= 0; i -= 1) {
+              if (messages[i]?.role === 'assistant') {
+                messages[i] = { ...messages[i], content, timestamp: new Date() };
+                return {
+                  ...session,
+                  messages,
+                  updatedAt: new Date(),
+                };
+              }
+            }
+
+            const fallback: ChatMessage = {
+              id: makeId('msg'),
+              role: 'assistant',
+              content,
+              timestamp: new Date(),
+            };
+            messages.push(fallback);
+            return {
+              ...session,
+              messages,
+              updatedAt: new Date(),
+            };
+          }),
+        }));
       },
 
       addFile: (sessionId, file) => {
@@ -188,14 +318,16 @@ export const useStore = create<AppState>()(
 
         if (session) {
           const duplicate = session.files.some(
-            (existing) => existing.name === file.name && existing.size === file.size,
+            (existing) =>
+              (file.sourceId && existing.sourceId && existing.sourceId === file.sourceId) ||
+              (existing.name === file.name && existing.size === file.size),
           );
           if (duplicate) return false;
         }
 
         const fullFile: UploadedFile = {
           ...file,
-          id: `file-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`,
+          id: makeId('file'),
           uploadedAt: new Date(),
           selected: true,
         };
@@ -252,16 +384,195 @@ export const useStore = create<AppState>()(
           ),
         }));
       },
+
+      setSessionArtifacts: (sessionId, artifacts) => {
+        set((state) => ({
+          sessionArtifacts: {
+            ...state.sessionArtifacts,
+            [sessionId]: artifacts,
+          },
+        }));
+      },
+
+      appendArtifact: (sessionId, artifact) => {
+        set((state) => ({
+          sessionArtifacts: {
+            ...state.sessionArtifacts,
+            [sessionId]: [...(state.sessionArtifacts[sessionId] ?? []), artifact],
+          },
+        }));
+      },
+
+      upsertCardArtifact: (sessionId, card) => {
+        set((state) => {
+          const artifacts = state.sessionArtifacts[sessionId] ?? [];
+          const index = artifacts.findIndex((artifact) => artifact.type === 'card' && artifact.card.cardId === card.cardId);
+          const nextArtifact: SessionArtifact = {
+            id: `artifact-${card.cardId}`,
+            createdAt: card.createdAt ?? nowIso(),
+            type: 'card',
+            card,
+          };
+
+          if (index === -1) {
+            return {
+              sessionArtifacts: {
+                ...state.sessionArtifacts,
+                [sessionId]: [...artifacts, nextArtifact],
+              },
+            };
+          }
+
+          return {
+            sessionArtifacts: {
+              ...state.sessionArtifacts,
+              [sessionId]: artifacts.map((artifact, i) => (i === index ? { ...artifact, card } : artifact)),
+            },
+          };
+        });
+      },
+
+      removeCardArtifact: (sessionId, cardId) => {
+        set((state) => ({
+          sessionArtifacts: {
+            ...state.sessionArtifacts,
+            [sessionId]: (state.sessionArtifacts[sessionId] ?? []).filter(
+              (artifact) => artifact.type !== 'card' || artifact.card.cardId !== cardId,
+            ),
+          },
+        }));
+      },
+
+      updateCardArtifact: (sessionId, cardId, updater) => {
+        set((state) => ({
+          sessionArtifacts: {
+            ...state.sessionArtifacts,
+            [sessionId]: (state.sessionArtifacts[sessionId] ?? []).map((artifact) => {
+              if (artifact.type !== 'card' || artifact.card.cardId !== cardId) return artifact;
+              return {
+                ...artifact,
+                card: updater(artifact.card),
+              };
+            }),
+          },
+        }));
+      },
+
+      setStreamingState: (sessionId, patch) => {
+        set((state) => {
+          const current = state.streamingStateBySession[sessionId] ?? { ...DEFAULT_STREAMING_STATE };
+          return {
+            streamingStateBySession: {
+              ...state.streamingStateBySession,
+              [sessionId]: normalizeStreamingState({ ...current, ...patch }),
+            },
+          };
+        });
+      },
+
+      setPhaseProgress: (sessionId, phase, progress, lastTool) => {
+        set((state) => {
+          const current = state.streamingStateBySession[sessionId] ?? { ...DEFAULT_STREAMING_STATE };
+          return {
+            streamingStateBySession: {
+              ...state.streamingStateBySession,
+              [sessionId]: normalizeStreamingState({
+                ...current,
+                phase,
+                progress,
+                lastTool,
+              }),
+            },
+          };
+        });
+      },
+
+      markStreamStale: (sessionId) => {
+        set((state) => {
+          const current = state.streamingStateBySession[sessionId] ?? { ...DEFAULT_STREAMING_STATE };
+          return {
+            streamingStateBySession: {
+              ...state.streamingStateBySession,
+              [sessionId]: {
+                ...normalizeStreamingState(current),
+                isStreaming: false,
+                staleStream: true,
+              },
+            },
+          };
+        });
+      },
+
+      setToolCalls: (sessionId, toolCalls) => {
+        set((state) => ({
+          toolCallsBySession: {
+            ...state.toolCallsBySession,
+            [sessionId]: toolCalls,
+          },
+        }));
+      },
+
+      upsertToolCall: (sessionId, toolCall) => {
+        set((state) => {
+          const current = state.toolCallsBySession[sessionId] ?? [];
+          const index = current.findIndex((item) => item.id === toolCall.id);
+          if (index === -1) {
+            return {
+              toolCallsBySession: {
+                ...state.toolCallsBySession,
+                [sessionId]: [...current, toolCall],
+              },
+            };
+          }
+
+          return {
+            toolCallsBySession: {
+              ...state.toolCallsBySession,
+              [sessionId]: current.map((item, i) => (i === index ? toolCall : item)),
+            },
+          };
+        });
+      },
+
+      clearToolCalls: (sessionId) => {
+        set((state) => ({
+          toolCallsBySession: {
+            ...state.toolCallsBySession,
+            [sessionId]: [],
+          },
+        }));
+      },
     }),
     {
       name: 'manufacturing-ai-storage',
       partialize: (state) => ({
         sessions: state.sessions,
         activeSessionId: state.activeSessionId,
+        sessionArtifacts: state.sessionArtifacts,
+        streamingStateBySession: state.streamingStateBySession,
+        toolCallsBySession: state.toolCallsBySession,
       }),
       onRehydrateStorage: () => (state) => {
-        if (state?.sessions) {
+        if (!state) return;
+
+        if (state.sessions) {
           state.sessions = reviveDates(state.sessions);
+        }
+
+        if (state.streamingStateBySession) {
+          const next: Record<string, StreamingState> = {};
+          for (const [sessionId, streaming] of Object.entries(state.streamingStateBySession)) {
+            const normalized = normalizeStreamingState({
+              ...DEFAULT_STREAMING_STATE,
+              ...streaming,
+              isStreaming: false,
+            });
+            if (streaming?.isStreaming) {
+              normalized.staleStream = true;
+            }
+            next[sessionId] = normalized;
+          }
+          state.streamingStateBySession = next;
         }
       },
     },

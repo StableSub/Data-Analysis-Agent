@@ -1,0 +1,32 @@
+import { Meta } from '@storybook/addon-docs/blocks';
+
+<Meta title="Guide/GenUI Capture Workflow" />
+
+# Gen-UI Capture Workflow
+
+이 가이드는 Storybook을 디자인 기준화의 단일 진실원천(SSOT)으로 사용하기 위한 절차입니다.
+
+## 1. 컴포넌트 캡처 기준
+
+- `GenUI/CanvasCardRenderer`의 `AllCardsGallery`를 기준 캡처로 사용합니다.
+- 개별 카드 상태는 동일 스토리의 타입별 story(`DatasetSummary`, `Chart`, `ErrorCard` 등)로 분리합니다.
+- 실행 상태 컴포넌트는 `Workbench/ToolCallIndicator`, `Workbench/PipelineProgress`를 기준으로 사용합니다.
+
+## 2. 피그마 매핑 원칙
+
+- Storybook의 컴포넌트 계층을 그대로 Figma 컴포넌트 세트로 분리합니다.
+- 상태 Variant 이름은 Storybook story 이름과 1:1로 맞춥니다.
+- 카드 Shell은 `CardFrame`을 공통 베이스로 두고, 내부 슬롯만 카드 타입별로 분기합니다.
+
+## 3. 운영 규칙
+
+- 새 카드 타입 추가 시 Storybook story를 먼저 추가한 뒤 구현을 진행합니다.
+- 디자인 수정은 Storybook 캡처 결과와 비교 가능한 단위로만 진행합니다.
+- 캡처는 라이트/다크 모드 모두 확인합니다.
+
+## 4. 권장 실행 명령
+
+```bash
+npm run storybook
+npm run build-storybook
+```

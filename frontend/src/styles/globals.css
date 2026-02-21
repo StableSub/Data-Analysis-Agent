@@ -40,28 +40,40 @@
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
 
-  /* Gen-UI Status — fg / bg */
+  /* Gen-UI Core */
+  --genui-surface: #f7f9fc;
+  --genui-panel: #ffffff;
+  --genui-card: #ffffff;
+  --genui-border: rgba(15, 23, 42, 0.12);
+  --genui-border-strong: rgba(15, 23, 42, 0.22);
+  --genui-text: #0f172a;
+  --genui-muted: #64748b;
+  --genui-shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06);
+  --genui-shadow-md: 0 6px 18px rgba(15, 23, 42, 0.1);
+  --genui-focus-ring: rgba(37, 99, 235, 0.35);
+
+  /* Gen-UI Status */
   --genui-success: #059669;
   --genui-success-bg: #ecfdf5;
-  --genui-error: #e11d48;
-  --genui-error-bg: #fff1f2;
-  --genui-error-muted: #ffe4e6;
   --genui-warning: #d97706;
   --genui-warning-bg: #fffbeb;
+  --genui-error: #e11d48;
+  --genui-error-bg: #fff1f2;
   --genui-running: #2563eb;
   --genui-running-bg: #eff6ff;
-  --genui-running-muted: #dbeafe;
   --genui-needs-user: #7c3aed;
   --genui-needs-user-bg: #f5f3ff;
   --genui-idle: #64748b;
-  --genui-idle-bg: #f8fafc;
+  --genui-idle-bg: #f1f5f9;
 
-  /* Card Shell */
+  /* Backward-compatible aliases */
+  --genui-error-muted: #ffe4e6;
+  --genui-running-muted: #dbeafe;
   --genui-card-radius: 0.75rem;
-  --genui-card-border: rgba(0, 0, 0, 0.08);
-  --genui-card-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.06);
-  --genui-card-shadow-hover: 0 4px 12px rgba(0, 0, 0, 0.06), 0 2px 4px rgba(0, 0, 0, 0.08);
-  --genui-card-inner-bg: #ffffff;
+  --genui-card-border: var(--genui-border);
+  --genui-card-shadow: var(--genui-shadow-sm);
+  --genui-card-shadow-hover: var(--genui-shadow-md);
+  --genui-card-inner-bg: var(--genui-card);
 
   /* Spacing */
   --genui-timeline-gap: 1rem;
@@ -70,7 +82,6 @@
 
   /* Misc */
   --genui-avatar-size: 1.75rem;
-
 }
 
 .dark {
@@ -110,25 +121,36 @@
   --sidebar-border: rgba(255, 255, 255, 0.1);
   --sidebar-ring: rgba(10, 132, 255, 0.5);
 
-  --genui-success: #34d399;
-  --genui-success-bg: rgba(16, 185, 129, 0.12);
-  --genui-error: #fb7185;
-  --genui-error-bg: rgba(244, 63, 94, 0.12);
-  --genui-error-muted: rgba(244, 63, 94, 0.22);
-  --genui-warning: #fbbf24;
-  --genui-warning-bg: rgba(245, 158, 11, 0.12);
-  --genui-running: #60a5fa;
-  --genui-running-bg: rgba(37, 99, 235, 0.12);
-  --genui-running-muted: rgba(37, 99, 235, 0.22);
-  --genui-needs-user: #a78bfa;
-  --genui-needs-user-bg: rgba(124, 58, 237, 0.12);
-  --genui-idle: #94a3b8;
-  --genui-idle-bg: #2c2c2e;
-  --genui-card-border: rgba(255, 255, 255, 0.08);
-  --genui-card-shadow: 0 1px 3px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2);
-  --genui-card-shadow-hover: 0 4px 12px rgba(0, 0, 0, 0.4), 0 2px 4px rgba(0, 0, 0, 0.3);
-  --genui-card-inner-bg: #232326;
+  --genui-surface: #17181b;
+  --genui-panel: #202226;
+  --genui-card: #23252a;
+  --genui-border: rgba(148, 163, 184, 0.24);
+  --genui-border-strong: rgba(148, 163, 184, 0.42);
+  --genui-text: #f8fafc;
+  --genui-muted: #94a3b8;
+  --genui-shadow-sm: 0 1px 2px rgba(2, 6, 23, 0.45);
+  --genui-shadow-md: 0 8px 24px rgba(2, 6, 23, 0.55);
+  --genui-focus-ring: rgba(96, 165, 250, 0.45);
 
+  --genui-success: #34d399;
+  --genui-success-bg: rgba(16, 185, 129, 0.16);
+  --genui-warning: #fbbf24;
+  --genui-warning-bg: rgba(245, 158, 11, 0.18);
+  --genui-error: #fb7185;
+  --genui-error-bg: rgba(244, 63, 94, 0.18);
+  --genui-running: #60a5fa;
+  --genui-running-bg: rgba(37, 99, 235, 0.18);
+  --genui-needs-user: #a78bfa;
+  --genui-needs-user-bg: rgba(124, 58, 237, 0.18);
+  --genui-idle: #94a3b8;
+  --genui-idle-bg: #2a2d33;
+
+  --genui-error-muted: rgba(244, 63, 94, 0.28);
+  --genui-running-muted: rgba(37, 99, 235, 0.3);
+  --genui-card-border: var(--genui-border);
+  --genui-card-shadow: var(--genui-shadow-sm);
+  --genui-card-shadow-hover: var(--genui-shadow-md);
+  --genui-card-inner-bg: var(--genui-card);
 }
 
 @theme inline {
@@ -185,8 +207,10 @@
   --color-genui-needs-user-bg: var(--genui-needs-user-bg);
   --color-genui-idle: var(--genui-idle);
   --color-genui-idle-bg: var(--genui-idle-bg);
-  --color-genui-border: var(--genui-card-border);
-  --color-genui-card: var(--genui-card-inner-bg);
+  --color-genui-border: var(--genui-border);
+  --color-genui-card: var(--genui-card);
+  --color-genui-surface: var(--genui-surface);
+  --color-genui-panel: var(--genui-panel);
 }
 
 @layer base {
@@ -196,6 +220,107 @@
 
   body {
     @apply bg-background text-foreground;
+  }
+}
+
+@layer utilities {
+  .genui-scope {
+    color: var(--genui-text);
+    background-color: var(--genui-surface);
+  }
+
+  .genui-scope a {
+    color: var(--genui-running);
+  }
+
+  .genui-scope code {
+    border: 1px solid var(--genui-border);
+    border-radius: 0.375rem;
+    background: var(--genui-card);
+    color: var(--genui-text);
+    padding: 0 0.3rem;
+  }
+
+  .genui-scope hr {
+    border-color: var(--genui-border);
+  }
+
+  .genui-surface {
+    background-color: var(--genui-surface);
+  }
+
+  .genui-panel {
+    background-color: var(--genui-panel);
+  }
+
+  .genui-card {
+    background-color: var(--genui-card);
+  }
+
+  .genui-border {
+    border-color: var(--genui-border);
+  }
+
+  .genui-border-strong {
+    border-color: var(--genui-border-strong);
+  }
+
+  .genui-text {
+    color: var(--genui-text);
+  }
+
+  .genui-muted {
+    color: var(--genui-muted);
+  }
+
+  .genui-shadow-sm {
+    box-shadow: var(--genui-shadow-sm);
+  }
+
+  .genui-shadow-md {
+    box-shadow: var(--genui-shadow-md);
+  }
+
+  .genui-chip {
+    border: 1px solid var(--genui-border);
+    border-radius: 9999px;
+    background-color: var(--genui-card);
+    color: var(--genui-muted);
+  }
+
+  .genui-focus {
+    outline: 2px solid var(--genui-focus-ring);
+    outline-offset: 2px;
+  }
+
+  .genui-status-success {
+    border-color: var(--genui-success);
+    background-color: var(--genui-success-bg);
+    color: var(--genui-success);
+  }
+
+  .genui-status-warning {
+    border-color: var(--genui-warning);
+    background-color: var(--genui-warning-bg);
+    color: var(--genui-warning);
+  }
+
+  .genui-status-error {
+    border-color: var(--genui-error);
+    background-color: var(--genui-error-bg);
+    color: var(--genui-error);
+  }
+
+  .genui-status-running {
+    border-color: var(--genui-running);
+    background-color: var(--genui-running-bg);
+    color: var(--genui-running);
+  }
+
+  .genui-status-needs-user {
+    border-color: var(--genui-needs-user);
+    background-color: var(--genui-needs-user-bg);
+    color: var(--genui-needs-user);
   }
 }
 
@@ -213,7 +338,7 @@
  * Base typography. This is not applied to elements which have an ancestor with a Tailwind text class.
  */
 @layer base {
-  :where(:not(:has([class*=' text-']), :not(:has([class^='text-'])))) {
+  :where(:not(:has([class*=" text-"]), :not(:has([class^="text-"])))) {
     h1 {
       font-size: var(--text-2xl);
       font-weight: var(--font-weight-medium);

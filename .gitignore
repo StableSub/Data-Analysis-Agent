@@ -58,3 +58,6 @@ pnpm-debug.log*
 .claude/
 *.sh
 dev.sh
+
+*storybook.log
+storybook-static
