@@ -58,3 +58,5 @@ pnpm-debug.log*
 *.sh
 dev.sh
 
+AGENTS.md
+graph_outputs/

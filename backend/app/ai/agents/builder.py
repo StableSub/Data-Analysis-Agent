@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict
@@ -75,23 +76,37 @@ def build_main_workflow(
         db=db,
         default_model=default_model,
     )
-    rag_graph = build_rag_workflow(default_model=default_model)
-    visualization_graph = build_visualization_workflow(default_model=default_model)
-    report_graph = build_report_workflow(default_model=default_model)
+    rag_graph = build_rag_workflow(
+        db=db,
+        default_model=default_model,
+    )
+    visualization_graph = build_visualization_workflow(
+        db=db,
+        default_model=default_model,
+    )
+    report_graph = build_report_workflow(
+        db=db,
+        default_model=default_model,
+    )
 
     def route_after_intake(state: MainWorkflowState) -> str:
         """Intake handoff 기준으로 다음 경로를 분기한다."""
         branch = str((state.get("handoff") or {}).get("next_step", "general_question"))
         return branch
 
-    def route_after_preprocess(state: MainWorkflowState) -> str:
-        """전처리 이후 요청 플래그 기준으로 RAG/시각화/리포트 분기를 결정한다."""
+    def route_after_rag(state: MainWorkflowState) -> str:
+        """RAG 이후 시각화 여부를 분기한다."""
+        handoff = state.get("handoff") or {}
+        if bool(handoff.get("ask_visualization", False)):
+            return "visualization"
+        return "merge_context"
+
+    def route_after_merge_context(state: MainWorkflowState) -> str:
+        """Merge Context 이후 리포트/데이터 QA를 분기한다."""
         handoff = state.get("handoff") or {}
         if bool(handoff.get("ask_report", False)):
             return "report"
-        if bool(handoff.get("ask_visualization", False)):
-            return "visualization"
-        return "rag"
+        return "data_qa"
 
     def general_question_terminal(state: MainWorkflowState) -> Dict[str, Any]:
         """데이터셋 미선택 일반 질문 경로를 종료한다."""
@@ -114,12 +129,89 @@ def build_main_workflow(
             }
         }
 
+    def merge_context_node(state: MainWorkflowState) -> Dict[str, Any]:
+        """누적 산출물을 단일 컨텍스트로 병합한다."""
+        merged_context: Dict[str, Any] = {"applied_steps": []}
+
+        handoff = state.get("handoff")
+        if isinstance(handoff, dict):
+            merged_context["request_flags"] = {
+                "ask_preprocess": bool(handoff.get("ask_preprocess", False)),
+                "ask_visualization": bool(handoff.get("ask_visualization", False)),
+                "ask_report": bool(handoff.get("ask_report", False)),
+            }
+
+        preprocess_result = state.get("preprocess_result")
+        if isinstance(preprocess_result, dict):
+            merged_context["preprocess_result"] = preprocess_result
+            if preprocess_result.get("status") == "applied":
+                merged_context["applied_steps"].append("preprocess")
+
+        rag_result = state.get("rag_result")
+        if isinstance(rag_result, dict):
+            merged_context["rag_result"] = rag_result
+            if int(rag_result.get("retrieved_count", 0) or 0) > 0:
+                merged_context["applied_steps"].append("rag")
+
+        insight = state.get("insight")
+        if isinstance(insight, dict):
+            merged_context["insight"] = insight
+            summary = insight.get("summary")
+            if isinstance(summary, str) and summary.strip():
+                merged_context["applied_steps"].append("insight")
+
+        visualization_result = state.get("visualization_result")
+        if isinstance(visualization_result, dict):
+            merged_context["visualization_result"] = visualization_result
+            if visualization_result.get("status") == "generated":
+                merged_context["applied_steps"].append("visualization")
+
+        return {"merged_context": merged_context}
+
+    def data_qa_terminal(state: MainWorkflowState) -> Dict[str, Any]:
+        """누적 컨텍스트 기반 데이터 QA 응답을 생성한다."""
+        model_name = state.get("model_id") or default_model
+        llm = init_chat_model(model_name)
+
+        user_input = state.get("user_input", "")
+        question = str(user_input).split("\n\ncontext:\n", 1)[0]
+        merged_context = state.get("merged_context")
+        context_json = (
+            json.dumps(merged_context, ensure_ascii=False)
+            if isinstance(merged_context, dict)
+            else "{}"
+        )
+
+        result = llm.invoke(
+            [
+                SystemMessage(
+                    content="주어진 merged_context를 근거로 사용자 데이터 질문에 간결하게 답하라."
+                ),
+                HumanMessage(
+                    content=(
+                        f"question:\n{question}\n\n"
+                        f"merged_context:\n{context_json}"
+                    )
+                ),
+            ]
+        )
+        answer = result.content if isinstance(result.content, str) else str(result.content)
+        return {
+            "data_qa_result": {"content": answer},
+            "output": {
+                "type": "data_qa",
+                "content": answer,
+            },
+        }
+
     graph = StateGraph(MainWorkflowState)
     graph.add_node("intake_flow", intake_graph)
     graph.add_node("general_question_terminal", general_question_terminal)
     graph.add_node("preprocess_flow", preprocess_graph)
     graph.add_node("rag_flow", rag_graph)
     graph.add_node("visualization_flow", visualization_graph)
+    graph.add_node("merge_context", merge_context_node)
+    graph.add_node("data_qa_terminal", data_qa_terminal)
     graph.add_node("report_flow", report_graph)
 
     graph.add_edge(START, "intake_flow")
@@ -131,18 +223,26 @@ def build_main_workflow(
             "data_pipeline": "preprocess_flow",
         },
     )
+    graph.add_edge("preprocess_flow", "rag_flow")
     graph.add_conditional_edges(
-        "preprocess_flow",
-        route_after_preprocess,
+        "rag_flow",
+        route_after_rag,
         {
-            "rag": "rag_flow",
             "visualization": "visualization_flow",
-            "report": "report_flow",
+            "merge_context": "merge_context",
         },
     )
-    graph.add_edge("rag_flow", END)
-    graph.add_edge("visualization_flow", END)
+    graph.add_edge("visualization_flow", "merge_context")
+    graph.add_conditional_edges(
+        "merge_context",
+        route_after_merge_context,
+        {
+            "report": "report_flow",
+            "data_qa": "data_qa_terminal",
+        },
+    )
     graph.add_edge("report_flow", END)
+    graph.add_edge("data_qa_terminal", END)
     graph.add_edge("general_question_terminal", END)
 
     return graph.compile()
@@ -194,13 +294,21 @@ def save_all_workflow_pngs(
     out_dir.mkdir(parents=True, exist_ok=True)
 
     intake_graph = build_intake_router_workflow(default_model=model_name)
-    rag_graph = build_rag_workflow(default_model=model_name)
-    visualization_graph = build_visualization_workflow(default_model=model_name)
-    report_graph = build_report_workflow(default_model=model_name)
-
     db = SessionLocal()
     try:
+        visualization_graph = build_visualization_workflow(
+            db=db,
+            default_model=model_name,
+        )
+        report_graph = build_report_workflow(
+            db=db,
+            default_model=model_name,
+        )
         preprocess_graph = build_preprocess_workflow(
+            db=db,
+            default_model=model_name,
+        )
+        rag_graph = build_rag_workflow(
             db=db,
             default_model=model_name,
         )

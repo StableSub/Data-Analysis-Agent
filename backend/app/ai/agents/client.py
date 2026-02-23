@@ -77,14 +77,20 @@ class AgentClient:
                 delta = answer[index:index + 24]
                 yield {"type": "chunk", "delta": delta}
                 await asyncio.sleep(0)
-            preprocess_result = final_state.get("preprocess_result")
             done_event: Dict[str, Any] = {
                 "type": "done",
                 "answer": answer,
                 "thought_steps": thought_steps,
             }
+            preprocess_result = final_state.get("preprocess_result")
             if isinstance(preprocess_result, dict):
                 done_event["preprocess_result"] = preprocess_result
+            visualization_result = final_state.get("visualization_result")
+            if (
+                isinstance(visualization_result, dict)
+                and visualization_result.get("status") == "generated"
+            ):
+                done_event["visualization_result"] = visualization_result
             yield done_event
         finally:
             db.close()
@@ -205,6 +211,20 @@ class AgentClient:
                         message="리포트 요청이 감지되어 리포트 경로를 준비했습니다.",
                     )
                 )
+            if bool(handoff.get("ask_preprocess", False)):
+                steps.append(
+                    cls._make_step(
+                        phase="intent",
+                        message="전처리 요청이 감지되어 전처리 단계를 준비했습니다.",
+                    )
+                )
+            elif "ask_preprocess" in handoff:
+                steps.append(
+                    cls._make_step(
+                        phase="intent",
+                        message="전처리 요청이 없어 전처리 생략 경로를 준비했습니다.",
+                    )
+                )
 
         decision = state.get("preprocess_decision")
         if isinstance(decision, dict):
@@ -281,6 +301,126 @@ class AgentClient:
                             status="failed",
                         )
                     )
+
+        rag_index_status = state.get("rag_index_status")
+        if isinstance(rag_index_status, dict):
+            index_status = rag_index_status.get("status")
+            source_id = rag_index_status.get("source_id")
+            source_text = source_id if isinstance(source_id, str) and source_id else "-"
+            if index_status == "created":
+                steps.append(
+                    cls._make_step(
+                        phase="rag_index",
+                        message=f"RAG 인덱스를 생성했습니다. (source_id={source_text})",
+                    )
+                )
+            elif index_status == "existing":
+                steps.append(
+                    cls._make_step(
+                        phase="rag_index",
+                        message=f"기존 RAG 인덱스를 재사용합니다. (source_id={source_text})",
+                    )
+                )
+            elif index_status == "dataset_missing":
+                steps.append(
+                    cls._make_step(
+                        phase="rag_index",
+                        message=f"RAG 인덱싱 대상 데이터셋을 찾지 못했습니다. (source_id={source_text})",
+                        status="failed",
+                    )
+                )
+
+        rag_result = state.get("rag_result")
+        if isinstance(rag_result, dict):
+            retrieved_count_raw = rag_result.get("retrieved_count")
+            retrieved_count = (
+                retrieved_count_raw if isinstance(retrieved_count_raw, int) else 0
+            )
+            source_id = rag_result.get("source_id")
+            source_text = source_id if isinstance(source_id, str) and source_id else "-"
+            if retrieved_count > 0:
+                steps.append(
+                    cls._make_step(
+                        phase="rag_retrieval",
+                        message=(
+                            f"RAG 검색으로 관련 청크 {retrieved_count}개를 찾았습니다. "
+                            f"(source_id={source_text})"
+                        ),
+                    )
+                )
+            else:
+                steps.append(
+                    cls._make_step(
+                        phase="rag_retrieval",
+                        message=(
+                            f"RAG 검색에서 관련 청크를 찾지 못했습니다. "
+                            f"(source_id={source_text})"
+                        ),
+                    )
+                )
+
+        insight = state.get("insight")
+        if isinstance(insight, dict):
+            insight_summary = insight.get("summary")
+            if isinstance(insight_summary, str) and insight_summary.strip():
+                steps.append(
+                    cls._make_step(
+                        phase="insight",
+                        message=insight_summary.strip(),
+                    )
+                )
+
+        visualization_result = state.get("visualization_result")
+        if isinstance(visualization_result, dict):
+            viz_summary = visualization_result.get("summary")
+            viz_status = visualization_result.get("status")
+            if isinstance(viz_summary, str) and viz_summary.strip():
+                steps.append(
+                    cls._make_step(
+                        phase="visualization",
+                        message=viz_summary.strip(),
+                    )
+                )
+            elif viz_status == "generated":
+                steps.append(
+                    cls._make_step(
+                        phase="visualization",
+                        message="시각화 결과를 생성했습니다.",
+                    )
+                )
+
+        merged_context = state.get("merged_context")
+        if isinstance(merged_context, dict):
+            applied_steps = merged_context.get("applied_steps")
+            if isinstance(applied_steps, list):
+                steps.append(
+                    cls._make_step(
+                        phase="merge_context",
+                        message=f"누적 컨텍스트를 병합했습니다. (steps={len(applied_steps)})",
+                    )
+                )
+
+        report_result = state.get("report_result")
+        if isinstance(report_result, dict):
+            report_summary = report_result.get("summary")
+            if isinstance(report_summary, str) and report_summary.strip():
+                steps.append(
+                    cls._make_step(
+                        phase="report",
+                        message="리포트 응답을 구성했습니다.",
+                    )
+                )
+
+        data_qa_result = state.get("data_qa_result")
+        if isinstance(data_qa_result, dict):
+            content = data_qa_result.get("content")
+            if isinstance(content, str) and content.strip():
+                steps.append(
+                    cls._make_step(
+                        phase="data_qa",
+                        message="데이터 QA 응답을 구성했습니다.",
+                    )
+                )
 
         output = state.get("output")
         if not isinstance(output, dict):

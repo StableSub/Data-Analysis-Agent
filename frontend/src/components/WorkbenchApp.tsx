@@ -42,6 +42,18 @@ interface PreprocessResultPayload {
   output_filename?: string;
 }
 
+interface VisualizationResultPayload {
+  status?: string;
+  source_id?: string;
+  summary?: string;
+  chart?: {
+    chart_type?: string;
+    x_key?: string;
+    y_key?: string;
+    points?: Array<{ x: number; y: number }>;
+  };
+}
+
 function parseThinkingStep(payload: unknown): ThinkingStep | null {
   if (!payload || typeof payload !== 'object') {
     return null;
@@ -196,6 +208,8 @@ export function WorkbenchApp({ initialFeature = 'analysis' }: WorkbenchAppProps)
       let displayedAnswer = '';
       let pendingAnswer = '';
       let finalAnswerFromDone = '';
+      let pipelineStepsFromDone: ThinkingStep[] = [];
+      let visualizationResultFromDone: VisualizationResultPayload | undefined;
       let hasStartedAnswer = false;
       let doneReceived = false;
       let assistantSaved = false;
@@ -225,6 +239,8 @@ export function WorkbenchApp({ initialFeature = 'analysis' }: WorkbenchAppProps)
           addMessage(activeSessionId, {
             role: 'assistant',
             content: finalAnswer,
+            pipelineSteps: pipelineStepsFromDone,
+            visualizationResult: visualizationResultFromDone,
           });
           assistantSaved = true;
         }
@@ -324,6 +340,7 @@ export function WorkbenchApp({ initialFeature = 'analysis' }: WorkbenchAppProps)
             const parsed = eventThoughtSteps
               .map((item) => parseThinkingStep(item))
               .filter((item): item is ThinkingStep => item !== null);
+            pipelineStepsFromDone = parsed;
             if (parsed.length > 0) {
               setThinkingSteps(parsed);
             }
@@ -335,6 +352,10 @@ export function WorkbenchApp({ initialFeature = 'analysis' }: WorkbenchAppProps)
           finalAnswerFromDone = finalAnswer;
 
           const preprocessResult = record.preprocess_result as PreprocessResultPayload | undefined;
+          const visualizationResult = record.visualization_result as VisualizationResultPayload | undefined;
+          if (visualizationResult?.status === 'generated') {
+            visualizationResultFromDone = visualizationResult;
+          }
           if (
             preprocessResult?.status === 'applied' &&
             typeof preprocessResult.output_source_id === 'string' &&
@@ -432,6 +453,8 @@ export function WorkbenchApp({ initialFeature = 'analysis' }: WorkbenchAppProps)
             addMessage(activeSessionId, {
               role: 'assistant',
               content: fallbackAnswer,
+              pipelineSteps: pipelineStepsFromDone,
+              visualizationResult: visualizationResultFromDone,
             });
             assistantSaved = true;
           }

@@ -79,6 +79,7 @@ class ChatService:
         answer_parts: list[str] = []
         thought_steps: list[Dict[str, Any]] = []
         preprocess_result: Dict[str, Any] | None = None
+        visualization_result: Dict[str, Any] | None = None
         async for event in self.agent.astream_with_trace(
             session_id=str(session.id),
             question=question,
@@ -106,20 +107,26 @@ class ChatService:
                 event_preprocess = event.get("preprocess_result")
                 if isinstance(event_preprocess, dict):
                     preprocess_result = event_preprocess
+                event_visualization = event.get("visualization_result")
+                if isinstance(event_visualization, dict):
+                    visualization_result = event_visualization
 
         final_answer = "".join(answer_parts).strip()
         if not final_answer:
             final_answer = "응답을 생성하지 못했습니다."
 
         self.repository.append_message(session, "assistant", final_answer)
+        done_data: Dict[str, Any] = {
+            "answer": final_answer,
+            "session_id": session.id,
+            "thought_steps": thought_steps,
+            "preprocess_result": preprocess_result,
+        }
+        if isinstance(visualization_result, dict):
+            done_data["visualization_result"] = visualization_result
         yield {
             "event": "done",
-            "data": {
-                "answer": final_answer,
-                "session_id": session.id,
-                "thought_steps": thought_steps,
-                "preprocess_result": preprocess_result,
-            },
+            "data": done_data,
         }
 
     def get_history(self, session_id: int) -> Optional[ChatHistoryResponse]:

@@ -160,6 +160,22 @@ def build_preprocess_workflow(
         }
 
     def preprocess_decision_node(state: PreprocessGraphState) -> Dict[str, Any]:
+        handoff = state.get("handoff")
+        if isinstance(handoff, dict) and "ask_preprocess" in handoff:
+            ask_preprocess = bool(handoff.get("ask_preprocess", False))
+            decision_step = "run_preprocess" if ask_preprocess else "skip_preprocess"
+            reason = (
+                "사용자 요청에 따라 전처리를 수행합니다."
+                if ask_preprocess
+                else "사용자 요청에 따라 전처리를 생략합니다."
+            )
+            return {
+                "preprocess_decision": {
+                    "step": decision_step,
+                    "reason_summary": reason,
+                }
+            }
+
         profile_json = json.dumps(state.get("dataset_profile", {}), ensure_ascii=False)
         decision = _call_structured(
             schema=PreprocessDecision,

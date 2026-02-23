@@ -20,6 +20,22 @@ interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
   content: string;
+  pipelineSteps?: Array<{
+    phase: string;
+    message: string;
+    status?: 'active' | 'completed' | 'failed';
+  }>;
+  visualizationResult?: {
+    status?: string;
+    source_id?: string;
+    summary?: string;
+    chart?: {
+      chart_type?: string;
+      x_key?: string;
+      y_key?: string;
+      points?: Array<{ x: number; y: number }>;
+    };
+  };
   timestamp: Date;
 }
 

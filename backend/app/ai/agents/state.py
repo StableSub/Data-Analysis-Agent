@@ -31,6 +31,7 @@ class IntakeRouterState(AgentState, total=False):
 class PreprocessGraphState(AgentState, total=False):
     """Preprocess 서브그래프 전용 상태."""
 
+    handoff: Dict[str, Any]
     preprocess_decision: Dict[str, Any]
     preprocess_plan: Dict[str, Any]
     preprocess_result: Dict[str, Any]
@@ -39,7 +40,9 @@ class PreprocessGraphState(AgentState, total=False):
 class RagGraphState(AgentState, total=False):
     """RAG 서브그래프 전용 상태."""
 
+    handoff: Dict[str, Any]
     preprocess_result: Dict[str, Any]
+    rag_index_status: Dict[str, Any]
     rag_data_exists: bool
     rag_result: Dict[str, Any]
     insight: Dict[str, Any]
@@ -49,8 +52,12 @@ class VisualizationGraphState(AgentState, total=False):
     """시각화 서브그래프 전용 상태."""
 
     handoff: Dict[str, Any]
+    preprocess_result: Dict[str, Any]
+    rag_result: Dict[str, Any]
     insight: Dict[str, Any]
+    # visualization_plan: {"status","source_id","chart_type","max_points"}
     visualization_plan: Dict[str, Any]
+    # visualization_result: {"status","source_id","summary","chart?":{"chart_type","x_key","y_key","points"}}
     visualization_result: Dict[str, Any]
 
 
@@ -58,8 +65,13 @@ class ReportGraphState(AgentState, total=False):
     """리포트 서브그래프 전용 상태."""
 
     handoff: Dict[str, Any]
+    preprocess_result: Dict[str, Any]
+    rag_result: Dict[str, Any]
     insight: Dict[str, Any]
+    # visualization_result.chart를 리포트 본문/메타에 반영
     visualization_result: Dict[str, Any]
+    merged_context: Dict[str, Any]
+    # report_result: {"summary","metrics","visualizations"}
     report_result: Dict[str, Any]
     output: Dict[str, Any]
 
@@ -67,17 +79,31 @@ class ReportGraphState(AgentState, total=False):
 class MainWorkflowState(AgentState, total=False):
     """최종 워크플로우 그래프 전용 상태."""
 
+    # intake/handoff
     intent: Dict[str, Any]
     handoff: Dict[str, Any]
+
+    # preprocess
     preprocess_decision: Dict[str, Any]
     preprocess_plan: Dict[str, Any]
     preprocess_result: Dict[str, Any]
+
+    # rag/insight (내부 처리용 상태, SSE done에서는 직접 노출하지 않음)
+    rag_index_status: Dict[str, Any]
     rag_data_exists: bool
     rag_result: Dict[str, Any]
     insight: Dict[str, Any]
+
+    # visualization/report/data qa (내부 처리용 상태, SSE done에서는 직접 노출하지 않음)
     visualization_plan: Dict[str, Any]
+    # chart payload 포함 가능: {"status","summary","chart"}
     visualization_result: Dict[str, Any]
+    merged_context: Dict[str, Any]
+    # report_result: {"summary","metrics","visualizations"}
     report_result: Dict[str, Any]
+    data_qa_result: Dict[str, Any]
+
+    # 최종 사용자 응답
     output: Dict[str, Any]
 
 

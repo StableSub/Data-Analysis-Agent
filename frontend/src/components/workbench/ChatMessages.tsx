@@ -1,9 +1,34 @@
 import { MutableRefObject, useEffect, useState } from 'react';
+import {
+  CartesianGrid,
+  ResponsiveContainer,
+  Scatter,
+  ScatterChart,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
 
 type Message = {
   id: string;
   role: 'user' | 'assistant';
   content: string;
+  pipelineSteps?: Array<{
+    phase: string;
+    message: string;
+    status?: 'active' | 'completed' | 'failed';
+  }>;
+  visualizationResult?: {
+    status?: string;
+    source_id?: string;
+    summary?: string;
+    chart?: {
+      chart_type?: string;
+      x_key?: string;
+      y_key?: string;
+      points?: Array<{ x: number; y: number }>;
+    };
+  };
   timestamp: Date | string;
 };
 
@@ -79,6 +104,48 @@ export function ChatMessages({
                     }`}
                   >
                     <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+                    {msg.role === 'assistant' && Array.isArray(msg.pipelineSteps) && msg.pipelineSteps.length > 0 && (
+                      <div className="mt-3 pt-3 border-t border-gray-200 dark:border-white/10 space-y-1">
+                        {msg.pipelineSteps.map((step, index) => (
+                          <p
+                            key={`${step.phase}-${index}-${step.message}`}
+                            className="text-xs text-gray-600 dark:text-gray-300 whitespace-pre-wrap"
+                          >
+                            {index + 1}. {step.message}
+                          </p>
+                        ))}
+                      </div>
+                    )}
+                    {msg.role === 'assistant' &&
+                      msg.visualizationResult?.status === 'generated' &&
+                      msg.visualizationResult.chart?.chart_type === 'scatter' &&
+                      Array.isArray(msg.visualizationResult.chart.points) &&
+                      msg.visualizationResult.chart.points.length > 0 && (
+                        <div className="mt-3 pt-3 border-t border-gray-200 dark:border-white/10">
+                          <p className="text-xs text-gray-600 dark:text-gray-300 mb-2">
+                            시각화: {msg.visualizationResult.chart.x_key || 'x'} vs {msg.visualizationResult.chart.y_key || 'y'}
+                          </p>
+                          <div className="w-full h-56 bg-white dark:bg-[#212121] rounded-lg p-2">
+                            <ResponsiveContainer width="100%" height="100%">
+                              <ScatterChart margin={{ top: 10, right: 10, bottom: 10, left: 10 }}>
+                                <CartesianGrid strokeDasharray="3 3" />
+                                <XAxis
+                                  type="number"
+                                  dataKey="x"
+                                  name={msg.visualizationResult.chart.x_key || 'x'}
+                                />
+                                <YAxis
+                                  type="number"
+                                  dataKey="y"
+                                  name={msg.visualizationResult.chart.y_key || 'y'}
+                                />
+                                <Tooltip cursor={{ strokeDasharray: '3 3' }} />
+                                <Scatter data={msg.visualizationResult.chart.points} fill="#3b82f6" />
+                              </ScatterChart>
+                            </ResponsiveContainer>
+                          </div>
+                        </div>
+                      )}
                   </div>
                   <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 px-2">
                     {new Date(msg.timestamp).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}

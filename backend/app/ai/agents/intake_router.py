@@ -20,6 +20,7 @@ from backend.app.ai.agents.state import IntakeRouterState
 
 class IntentDecision(BaseModel):
     step: Literal["general_question", "data_pipeline"] = Field(...)
+    ask_preprocess: bool = Field(False)
     ask_visualization: bool = Field(False)
     ask_report: bool = Field(False)
 
@@ -57,18 +58,14 @@ def build_intake_router_workflow(default_model: str = "gpt-5-nano"):
         decision = call_structured(
             IntentDecision,
             (
-                "사용자 의도를 분류하라. "
-                "데이터셋 기반 처리가 필요하면 data_pipeline, "
-                "아니면 general_question을 반환하라."
+                "데이터셋이 이미 선택된 상황이다. "
+                "step은 data_pipeline으로 반환하라. "
+                "질문을 보고 ask_preprocess, ask_visualization, ask_report를 true/false로 판단하라."
             ),
             state.get("user_input", ""),
             state.get("model_id"),
         )
         return {"intent": decision.model_dump()}
-
-    def route_after_intent(state: IntakeRouterState) -> str:
-        """의도 분석 결과에 따라 일반 질문/데이터 파이프라인 경로를 결정한다."""
-        return str((state.get("intent") or {}).get("step", "general_question"))
 
     def data_pipeline_node(state: IntakeRouterState) -> Dict[str, Any]:
         """최종 빌더 그래프의 데이터 파이프라인 시작 신호를 전달한다."""
@@ -76,6 +73,7 @@ def build_intake_router_workflow(default_model: str = "gpt-5-nano"):
         return {
             "handoff": {
                 "next_step": "data_pipeline",
+                "ask_preprocess": bool(intent.get("ask_preprocess", False)),
                 "ask_visualization": bool(intent.get("ask_visualization", False)),
                 "ask_report": bool(intent.get("ask_report", False)),
             }
@@ -94,14 +92,7 @@ def build_intake_router_workflow(default_model: str = "gpt-5-nano"):
             "data_selected": "analyze_intent",
         },
     )
-    graph.add_conditional_edges(
-        "analyze_intent",
-        route_after_intent,
-        {
-            "general_question": "general_question_handoff",
-            "data_pipeline": "data_pipeline_handoff",
-        },
-    )
+    graph.add_edge("analyze_intent", "data_pipeline_handoff")
     graph.add_edge("general_question_handoff", END)
     graph.add_edge("data_pipeline_handoff", END)
 
