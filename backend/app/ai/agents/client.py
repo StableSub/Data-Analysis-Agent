@@ -5,7 +5,6 @@ LLMClient는 선택된 프리셋으로 LangChain 체인을 구성해 간단한 �
 from __future__ import annotations
 
 import asyncio
-import json
 from pathlib import Path
 from typing import Any, AsyncIterator, Dict
 
@@ -15,7 +14,11 @@ from .builder import build_main_workflow
 
 def _load_pdf(file_path: Path, max_chars: int) -> str:
     """
-    간단한 PDF 텍스트 추출.
+    역할: PDF 파일에서 페이지별 텍스트를 읽어 지정 길이까지 누적 추출한다.
+    입력: PDF 경로(`file_path`)와 최대 문자 수(`max_chars`)를 받는다.
+    출력: 추출된 텍스트를 줄바꿈으로 합친 문자열을 반환하며, `pypdf` 미설치 시 예외를 발생시킨다.
+    데코레이터: 없음.
+    호출 맥락: `_load_text_from_file`에서 PDF 확장자를 처리할 때 내부 유틸로 호출된다.
     """
     try:
         from pypdf import PdfReader
@@ -43,7 +46,11 @@ def _load_pdf(file_path: Path, max_chars: int) -> str:
 
 def _load_text_from_file(path: str, max_chars: int = 4000) -> str:
     """
-    텍스트 또는 PDF 파일을 읽어 제한 길이만큼 잘라 반환한다.
+    역할: 파일 확장자에 따라 텍스트 파일 또는 PDF를 읽고 안전한 미리보기 문자열을 만든다.
+    입력: 파일 경로 문자열(`path`)과 최대 문자 수(`max_chars`)를 받는다.
+    출력: 최대 길이로 잘린 텍스트를 반환하며, 파일이 없으면 `FileNotFoundError`를 발생시킨다.
+    데코레이터: 없음.
+    호출 맥락: 현재는 데이터셋/문서 미리보기 생성 시 재사용 가능한 공용 파일 로더로 유지된다.
     """
     file_path = Path(path)
     if not file_path.exists():
@@ -62,6 +69,13 @@ class AgentClient:
         self,
         model: str = "gpt-5-nano",
     ) -> None:
+        """
+        역할: 에이전트 클라이언트의 기본 모델, DB 세션, 메인 워크플로우를 초기화한다.
+        입력: 기본 모델 식별자(`model`)를 받아 내부 상태(`default_model`)에 저장한다.
+        출력: 반환값은 없고, 이후 스트리밍 요청을 처리할 준비된 인스턴스를 구성한다.
+        데코레이터: 없음.
+        호출 맥락: 의존성 주입(`get_agent`)에서 싱글턴으로 생성되어 API 요청에서 재사용된다.
+        """
         self.default_model = model
         self._db = SessionLocal()
         self._workflow = build_main_workflow(
@@ -77,7 +91,13 @@ class AgentClient:
         dataset: Any | None = None,
         model_id: str | None = None,
     ) -> AsyncIterator[Dict[str, Any]]:
-        """비동기 스트리밍으로 답변과 사용자 표시용 사고 단계를 반환한다."""
+        """
+        역할: 워크플로우 실행 과정을 `thought/chunk/done` 이벤트 스트림으로 변환해 전달한다.
+        입력: 세션/질문/컨텍스트/데이터셋/모델 식별자를 받아 초기 상태를 구성한다.
+        출력: 비동기 이터레이터로 부분 응답과 최종 응답 이벤트 딕셔너리를 순차 반환한다.
+        데코레이터: 없음.
+        호출 맥락: 채팅/리포트 API 서비스 계층에서 SSE 응답을 만들 때 핵심 진입점으로 호출된다.
+        """
         state, early_answer = self._build_state(
             session_id=session_id,
             question=question,
@@ -144,28 +164,22 @@ class AgentClient:
         dataset: Any | None,
         model_id: str | None,
     ) -> tuple[Dict[str, Any], str | None]:
-        """워크플로우 입력 상태를 구성한다."""
-        dataset_context = self._build_dataset_context(dataset) if dataset is not None else ""
-        merged_context_parts: list[str] = []
-        if dataset_context:
-            merged_context_parts.append(dataset_context)
-        if context:
-            merged_context_parts.append(context)
-        merged_context = "\n\n".join(merged_context_parts).strip()
+        """
+        역할: 사용자 요청을 LangGraph 입력 상태 포맷으로 정규화한다.
+        입력: 세션, 질문, 컨텍스트, 데이터셋 객체, 모델 ID를 받아 상태 필드를 채운다.
+        출력: `(state, early_answer)` 튜플을 반환하며, 질문이 비면 즉시 안내 문구를 반환한다.
+        데코레이터: 없음.
+        호출 맥락: `astream_with_trace` 시작 시 가장 먼저 호출되어 실행 전 유효 상태를 만든다.
+        """
+        _ = context
         question_text = (question or "").strip()
         if not question_text:
             return {}, "질문을 입력해 주세요."
 
-        if merged_context:
-            message = f"{question_text}\n\ncontext:\n{merged_context}"
-        else:
-            message = question_text
-
         state: Dict[str, Any] = {
-            "user_input": message,
+            "user_input": question_text,
             "session_id": str(session_id or ""),
             "model_id": model_id or self.default_model,
-            "user_context": {"context": merged_context} if merged_context else {},
             "dataset_id": getattr(dataset, "id", None) if dataset is not None else None,
             "source_id": getattr(dataset, "source_id", None) if dataset is not None else None,
         }
@@ -173,48 +187,40 @@ class AgentClient:
 
     @staticmethod
     def _extract_answer(result_state: Dict[str, Any]) -> str:
-        """워크플로우 상태에서 최종 답변 문자열을 추출한다."""
-        output = result_state.get("output") or {}
-        content = output.get("content")
-        if isinstance(content, str) and content:
-            return content
-
-        preprocess_decision = result_state.get("preprocess_decision")
-        if isinstance(preprocess_decision, dict):
-            reason_summary = preprocess_decision.get("reason_summary")
-            if isinstance(reason_summary, str) and reason_summary.strip():
-                return reason_summary.strip()
-
-        preprocess_plan = result_state.get("preprocess_plan")
-        if isinstance(preprocess_plan, dict):
-            planner_comment = preprocess_plan.get("planner_comment")
-            if isinstance(planner_comment, str) and planner_comment.strip():
-                return planner_comment.strip()
-
-        preprocess_result = result_state.get("preprocess_result")
-        if isinstance(preprocess_result, dict):
-            status = preprocess_result.get("status")
-            if status == "applied":
-                applied_count = preprocess_result.get("applied_ops_count", 0)
-                return f"전처리가 완료되었습니다. 적용한 연산 수: {applied_count}개."
-            if status == "skipped":
-                return "전처리 필요성이 낮아 전처리를 생략했습니다."
-            if status == "failed":
-                error_message = preprocess_result.get("error")
-                if isinstance(error_message, str) and error_message.strip():
-                    return f"전처리 단계에서 오류가 발생했습니다: {error_message.strip()}"
-
-        if output:
-            return str(output)
+        """
+        역할: 최종 상태에서 사용자에게 보여줄 응답 본문 문자열을 추출한다.
+        입력: 워크플로우 종료 상태 딕셔너리(`result_state`)를 받는다.
+        출력: `output.content`가 있으면 해당 문자열, 없으면 기본 실패 메시지를 반환한다.
+        데코레이터: @staticmethod. 인스턴스 속성 없이 입력 상태만으로 동작하는 정적 유틸이다.
+        호출 맥락: 스트리밍 루프 종료 후 `done` 이벤트의 `answer` 값을 확정할 때 사용된다.
+        """
+        output = result_state.get("output")
+        if isinstance(output, dict):
+            content = output.get("content")
+            if isinstance(content, str) and content:
+                return content
         return "응답을 생성하지 못했습니다."
 
     @staticmethod
     def _make_step(*, phase: str, message: str, status: str = "completed") -> Dict[str, str]:
+        """
+        역할: 사용자 UI에 표시할 사고 단계(step) 레코드를 표준 구조로 생성한다.
+        입력: 단계 구분(`phase`), 메시지(`message`), 상태(`status`)를 키워드 인자로 받는다.
+        출력: `phase/message/status` 3개 키를 가진 딕셔너리를 반환한다.
+        데코레이터: @staticmethod. 클래스/인스턴스 상태를 사용하지 않는 순수 생성 헬퍼다.
+        호출 맥락: `_collect_thought_steps`와 초기 thought 이벤트 생성에서 공통으로 호출된다.
+        """
         return {"phase": phase, "message": message, "status": status}
 
     @classmethod
     def _collect_thought_steps(cls, state: Dict[str, Any]) -> list[Dict[str, str]]:
-        """워크플로우 상태를 사용자 표시용 단계 요약으로 변환한다."""
+        """
+        역할: 그래프 상태 스냅샷을 사용자 친화적인 단계 목록으로 변환한다.
+        입력: 노드 결과가 누적된 상태 딕셔너리(`state`)를 받아 단계 메시지를 조합한다.
+        출력: UI 표시용 step 딕셔너리 리스트를 반환한다.
+        데코레이터: @classmethod. `cls._make_step` 조합을 통해 클래스 단위 변환 규칙을 재사용한다.
+        호출 맥락: `astream_with_trace`에서 새 스냅샷마다 thought 이벤트를 생성할 때 반복 호출된다.
+        """
         steps: list[Dict[str, str]] = []
 
         handoff = state.get("handoff")
@@ -480,7 +486,13 @@ class AgentClient:
         workflow: Any,
         state: Dict[str, Any],
     ) -> AsyncIterator[Dict[str, Any]]:
-        """워크플로우 상태 스냅샷을 비동기 이터레이터로 제공한다."""
+        """
+        역할: 워크플로우 실행 인터페이스(`astream` 또는 `invoke`)를 단일 비동기 스트림으로 추상화한다.
+        입력: 컴파일된 워크플로우 객체(`workflow`)와 초기 상태(`state`)를 받는다.
+        출력: 상태 스냅샷 딕셔너리를 비동기 이터레이터 형태로 순차 반환한다.
+        데코레이터: @staticmethod. 인스턴스 필드에 의존하지 않고 입력 객체만으로 실행 경로를 결정한다.
+        호출 맥락: `astream_with_trace` 내부에서 워크플로우 엔진 차이를 숨기기 위한 어댑터로 사용된다.
+        """
         if hasattr(workflow, "astream"):
             async for snapshot in workflow.astream(state, stream_mode="values"):
                 if isinstance(snapshot, dict):
@@ -490,33 +502,3 @@ class AgentClient:
         final_state = await asyncio.to_thread(workflow.invoke, state)
         if isinstance(final_state, dict):
             yield final_state
-
-    def _build_dataset_context(self, dataset: Any, max_rows: int = 20) -> str:
-        """
-        Dataset 객체에서 파일 내용을 읽어 LLM에 전달할 축약 컨텍스트를 만든다.
-        """
-        storage_path = getattr(dataset, "storage_path", None)
-        filename = getattr(dataset, "filename", "dataset")
-        if not storage_path:
-            return ""
-
-        file_path = Path(storage_path)
-        if not file_path.exists() or not file_path.is_file():
-            return ""
-
-        try:
-            if file_path.suffix.lower() == ".csv":
-                import pandas as pd
-
-                df = pd.read_csv(file_path, nrows=max_rows)
-                preview_records = df.where(df.notnull(), None).to_dict(orient="records")
-                return (
-                    f"dataset filename={filename}\n"
-                    f"columns={json.dumps(df.columns.tolist(), ensure_ascii=False)}\n"
-                    f"preview_rows={json.dumps(preview_records, ensure_ascii=False)}"
-                )
-
-            raw_text = _load_text_from_file(str(file_path), max_chars=4000)
-            return f"dataset filename={filename}\ncontent_preview={raw_text}"
-        except Exception:
-            return ""

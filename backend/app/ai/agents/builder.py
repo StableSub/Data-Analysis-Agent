@@ -31,7 +31,13 @@ def build_main_workflow(
     db: Session,
     default_model: str = "gpt-5-nano",
 ):
-    """최종 오케스트레이션 그래프를 조립한다."""
+    """
+    역할: Intake, Preprocess, RAG, Visualization, Report 서브그래프를 하나의 메인 워크플로우로 조립한다.
+    입력: DB 세션(`db`)과 기본 모델명(`default_model`)을 받아 각 서브그래프 빌더에 전달한다.
+    출력: LangGraph `compile()` 결과인 실행 가능한 메인 그래프 객체를 반환한다.
+    데코레이터: 없음.
+    호출 맥락: `AgentClient` 초기화 시 1회 호출되어 전체 에이전트 파이프라인의 진입점으로 사용된다.
+    """
     intake_graph = build_intake_router_workflow(default_model=default_model)
     preprocess_graph = build_preprocess_workflow(
         db=db,
@@ -51,26 +57,50 @@ def build_main_workflow(
     )
 
     def route_after_intake(state: MainWorkflowState) -> str:
-        """Intake handoff 기준으로 다음 경로를 분기한다."""
+        """
+        역할: intake 단계가 남긴 handoff 정보를 읽어 다음 노드를 `general_question` 또는 `data_pipeline`으로 결정한다.
+        입력: `state.handoff.next_step`를 포함한 메인 상태 딕셔너리를 받는다.
+        출력: 조건 분기 키 문자열(`general_question` 또는 `data_pipeline`)을 반환한다.
+        데코레이터: 없음.
+        호출 맥락: 메인 그래프의 `intake_flow` 이후 conditional edge 라우터로 실행된다.
+        """
         branch = str((state.get("handoff") or {}).get("next_step", "general_question"))
         return branch
 
     def route_after_rag(state: MainWorkflowState) -> str:
-        """RAG 이후 시각화 여부를 분기한다."""
+        """
+        역할: RAG 이후 요청 플래그를 확인해 시각화 경로 진입 여부를 판단한다.
+        입력: `state.handoff.ask_visualization` 값을 포함한 메인 상태를 받는다.
+        출력: `visualization` 또는 `merge_context` 중 하나의 분기 키를 반환한다.
+        데코레이터: 없음.
+        호출 맥락: 메인 그래프에서 `rag_flow` 다음 conditional edge 라우팅에 사용된다.
+        """
         handoff = state.get("handoff") or {}
         if bool(handoff.get("ask_visualization", False)):
             return "visualization"
         return "merge_context"
 
     def route_after_merge_context(state: MainWorkflowState) -> str:
-        """Merge Context 이후 리포트/데이터 QA를 분기한다."""
+        """
+        역할: 병합된 컨텍스트 이후 최종 응답 유형을 리포트 또는 데이터 QA로 선택한다.
+        입력: `state.handoff.ask_report` 플래그를 포함한 메인 상태를 받는다.
+        출력: `report` 또는 `data_qa` 분기 키 문자열을 반환한다.
+        데코레이터: 없음.
+        호출 맥락: `merge_context` 노드 다음 conditional edge 라우터로 실행된다.
+        """
         handoff = state.get("handoff") or {}
         if bool(handoff.get("ask_report", False)):
             return "report"
         return "data_qa"
 
     def general_question_terminal(state: MainWorkflowState) -> Dict[str, Any]:
-        """데이터셋 미선택 일반 질문 경로를 종료한다."""
+        """
+        역할: 데이터셋이 없는 일반 질문 경로에서 LLM 단일 응답을 생성해 워크플로우를 종료한다.
+        입력: `state.user_input`, `state.model_id`를 포함한 메인 상태를 받는다.
+        출력: `output.type=general_question`과 `output.content`를 담은 상태 업데이트를 반환한다.
+        데코레이터: 없음.
+        호출 맥락: intake 라우팅 결과가 `general_question`일 때 터미널 노드로 실행된다.
+        """
         model_name = state.get("model_id") or default_model
         llm = init_chat_model(model_name)
         result = llm.invoke(
@@ -91,7 +121,13 @@ def build_main_workflow(
         }
 
     def merge_context_node(state: MainWorkflowState) -> Dict[str, Any]:
-        """누적 산출물을 단일 컨텍스트로 병합한다."""
+        """
+        역할: 전처리, RAG, 인사이트, 시각화 결과를 하나의 `merged_context` 구조로 정리한다.
+        입력: `preprocess_result`, `rag_result`, `insight`, `visualization_result`, `handoff`를 포함한 상태를 받는다.
+        출력: `applied_steps`와 세부 결과를 포함한 `merged_context` 딕셔너리를 반환한다.
+        데코레이터: 없음.
+        호출 맥락: 데이터 파이프라인 공통 합류 지점으로, report/data_qa 분기 직전에 실행된다.
+        """
         merged_context: Dict[str, Any] = {"applied_steps": []}
 
         handoff = state.get("handoff")
@@ -130,12 +166,17 @@ def build_main_workflow(
         return {"merged_context": merged_context}
 
     def data_qa_terminal(state: MainWorkflowState) -> Dict[str, Any]:
-        """누적 컨텍스트 기반 데이터 QA 응답을 생성한다."""
+        """
+        역할: 병합된 컨텍스트를 근거로 데이터 QA 최종 자연어 응답을 생성한다.
+        입력: `state.user_input`, `state.merged_context`, `state.model_id`를 포함한 메인 상태를 받는다.
+        출력: `data_qa_result.content`와 `output.type=data_qa`를 담은 상태 업데이트를 반환한다.
+        데코레이터: 없음.
+        호출 맥락: `merge_context` 이후 `ask_report`가 거짓일 때 최종 터미널 노드로 실행된다.
+        """
         model_name = state.get("model_id") or default_model
         llm = init_chat_model(model_name)
 
-        user_input = state.get("user_input", "")
-        question = str(user_input).split("\n\ncontext:\n", 1)[0]
+        question = str(state.get("user_input", ""))
         merged_context = state.get("merged_context")
         context_json = (
             json.dumps(merged_context, ensure_ascii=False)
@@ -215,7 +256,13 @@ if __name__ == "__main__":
         output_path: str = "builder_workflow.png",
         model_name: str = "gpt-5-nano",
     ) -> Path:
-        """최종 그래프를 PNG 이미지로 저장한다."""
+        """
+        역할: 메인 워크플로우 그래프를 Mermaid PNG로 렌더링해 파일로 저장한다.
+        입력: 저장 경로(`output_path`)와 그래프 빌드에 사용할 모델명(`model_name`)을 받는다.
+        출력: 저장된 PNG 파일의 절대 경로(`Path`)를 반환한다.
+        데코레이터: 없음.
+        호출 맥락: 모듈을 스크립트로 실행할 때 시각 확인용 산출물을 만들기 위해 사용된다.
+        """
         db = SessionLocal()
         try:
             main_workflow = build_main_workflow(
@@ -235,7 +282,13 @@ if __name__ == "__main__":
         output_dir: str = "graph_outputs",
         model_name: str = "gpt-5-nano",
     ) -> Dict[str, Path]:
-        """메인/서브 그래프 PNG를 한 번에 저장한다."""
+        """
+        역할: 메인 그래프와 모든 서브그래프를 일괄 렌더링해 PNG 파일 세트로 저장한다.
+        입력: 출력 디렉터리(`output_dir`)와 그래프 빌드용 모델명(`model_name`)을 받는다.
+        출력: 그래프 이름별 저장 경로를 담은 `Dict[str, Path]` 매핑을 반환한다.
+        데코레이터: 없음.
+        호출 맥락: `__main__` 실행 시 워크플로우 구조를 문서/디버깅 용도로 추출할 때 호출된다.
+        """
         out_dir = Path(output_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
 

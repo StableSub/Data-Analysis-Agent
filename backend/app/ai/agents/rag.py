@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from backend.app.ai.agents.state import RagGraphState
+from backend.app.ai.agents.utils import resolve_target_source_id
 from backend.app.domain.data_source.repository import DataSourceRepository
 from backend.app.rag.core.embedding import E5Embedder
 from backend.app.rag.repository import RagRepository
@@ -27,24 +28,14 @@ from backend.app.rag.service import RagService
 
 @lru_cache(maxsize=1)
 def _cached_embedder() -> E5Embedder:
+    """
+    역할: RAG 임베딩에 사용하는 `E5Embedder` 인스턴스를 단일 객체로 재사용한다.
+    입력: 인자를 받지 않고 내부에서 기본 임베더를 생성한다.
+    출력: 재사용 가능한 `E5Embedder` 객체를 반환한다.
+    데코레이터: @lru_cache(maxsize=1). 임베더 싱글톤 재사용으로 초기화 비용과 중복 객체 생성을 줄인다.
+    호출 맥락: RAG 워크플로우 빌드 시 `RagService` 생성자에 주입되는 공용 팩토리다.
+    """
     return E5Embedder()
-
-
-def _extract_query(user_input: str) -> str:
-    return user_input.split("\n\ncontext:\n", 1)[0].strip()
-
-
-def _resolve_target_source_id(state: RagGraphState) -> str | None:
-    preprocess_result = state.get("preprocess_result")
-    if isinstance(preprocess_result, dict) and preprocess_result.get("status") == "applied":
-        output_source_id = preprocess_result.get("output_source_id")
-        if isinstance(output_source_id, str) and output_source_id.strip():
-            return output_source_id.strip()
-
-    source_id = state.get("source_id")
-    if isinstance(source_id, str) and source_id.strip():
-        return source_id.strip()
-    return None
 
 
 class InsightSynthesisPayload(BaseModel):
@@ -53,7 +44,13 @@ class InsightSynthesisPayload(BaseModel):
 
 
 def build_rag_workflow(*, db: Session, default_model: str = "gpt-5-nano"):
-    """RAG 인덱스 확인/검색/인사이트 합성 서브그래프를 생성한다."""
+    """
+    역할: 인덱스 보장, 검색, 인사이트 합성 3단계로 구성된 RAG 서브그래프를 생성한다.
+    입력: DB 세션(`db`)과 인사이트 합성 기본 모델명(`default_model`)을 받는다.
+    출력: `rag_result`, `rag_index_status`, `insight`를 누적하는 컴파일된 그래프를 반환한다.
+    데코레이터: 없음.
+    호출 맥락: 메인 워크플로우에서 전처리 이후 `rag_flow` 노드로 연결되어 실행된다.
+    """
     dataset_repository = DataSourceRepository(db)
     rag_repository = RagRepository(db)
     rag_service = RagService(
@@ -63,7 +60,14 @@ def build_rag_workflow(*, db: Session, default_model: str = "gpt-5-nano"):
     )
 
     def ensure_rag_index_node(state: RagGraphState) -> Dict[str, Any]:
-        target_source_id = _resolve_target_source_id(state)
+        """
+        역할: 대상 source의 RAG 인덱스 존재 여부를 확인하고 필요 시 새로 인덱싱한다.
+        입력: `state.preprocess_result`, `state.rag_result`, `state.source_id`를 통해 대상 source를 해석한다.
+        출력: 인덱스 상태(`existing/created/missing/no_source/dataset_missing`)를 `rag_index_status`로 반환한다.
+        데코레이터: 없음.
+        호출 맥락: RAG 서브그래프 첫 노드로, 이후 검색 노드가 실행 가능한 전제조건을 마련한다.
+        """
+        target_source_id = resolve_target_source_id(state)
         if not target_source_id:
             return {"rag_index_status": {"status": "no_source"}}
 
@@ -98,9 +102,15 @@ def build_rag_workflow(*, db: Session, default_model: str = "gpt-5-nano"):
         }
 
     def retrieve_context_node(state: RagGraphState) -> Dict[str, Any]:
-        user_input = state.get("user_input", "")
-        query = _extract_query(user_input if isinstance(user_input, str) else "")
-        target_source_id = _resolve_target_source_id(state)
+        """
+        역할: 사용자 질문으로 벡터 검색을 수행해 컨텍스트 문자열과 청크 메타데이터를 구성한다.
+        입력: `state.user_input`, `state.rag_index_status`, 대상 source ID를 포함한 상태를 받는다.
+        출력: `rag_result`(query/context/retrieved_chunks 등)와 `rag_data_exists` 플래그를 반환한다.
+        데코레이터: 없음.
+        호출 맥락: 인덱스 확인 노드 다음 단계에서 실행되어 인사이트 합성의 근거 데이터를 준비한다.
+        """
+        query = str(state.get("user_input", "")).strip()
+        target_source_id = resolve_target_source_id(state)
         index_status = state.get("rag_index_status")
         status_value = ""
         if isinstance(index_status, dict):
@@ -141,6 +151,13 @@ def build_rag_workflow(*, db: Session, default_model: str = "gpt-5-nano"):
         }
 
     def insight_synthesis_node(state: RagGraphState) -> Dict[str, Any]:
+        """
+        역할: 검색 근거가 있을 때 LLM으로 인사이트 요약과 근거 요약을 생성하고 상태에 병합한다.
+        입력: `state.rag_result`, `state.rag_data_exists`, `state.model_id`를 참조한다.
+        출력: `insight.summary`와 `rag_result.evidence_summary`를 포함한 상태 업데이트를 반환한다.
+        데코레이터: 없음.
+        호출 맥락: RAG 서브그래프의 마지막 노드로, 이후 시각화/리포트 단계의 핵심 입력을 제공한다.
+        """
         rag_result = state.get("rag_result")
         rag_result_dict = rag_result if isinstance(rag_result, dict) else {}
         retrieved_count_raw = rag_result_dict.get("retrieved_count")

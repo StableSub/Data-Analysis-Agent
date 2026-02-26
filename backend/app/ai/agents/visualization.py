@@ -14,13 +14,15 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Literal
 
 import pandas as pd
 from langgraph.graph import END, START, StateGraph
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from backend.app.ai.agents.state import VisualizationGraphState
+from backend.app.ai.agents.utils import call_structured_llm, resolve_target_source_id
 from backend.app.domain.data_source.repository import DataSourceRepository
 
 PYTHON_EXECUTABLE = "/Users/anjeongseob/.virtualenvs/ai_agent/bin/python"
@@ -37,34 +39,21 @@ CHART_KEYWORDS: dict[str, tuple[str, ...]] = {
 }
 
 
-def _resolve_target_source_id(state: VisualizationGraphState) -> str | None:
-    preprocess_result = state.get("preprocess_result")
-    if isinstance(preprocess_result, dict) and preprocess_result.get("status") == "applied":
-        output_source_id = preprocess_result.get("output_source_id")
-        if isinstance(output_source_id, str) and output_source_id.strip():
-            return output_source_id.strip()
-
-    rag_result = state.get("rag_result")
-    if isinstance(rag_result, dict):
-        rag_source_id = rag_result.get("source_id")
-        if isinstance(rag_source_id, str) and rag_source_id.strip():
-            return rag_source_id.strip()
-
-    source_id = state.get("source_id")
-    if isinstance(source_id, str) and source_id.strip():
-        return source_id.strip()
-
-    return None
-
-
-def _extract_query_text(state: VisualizationGraphState) -> str:
-    user_input = state.get("user_input", "")
-    if not isinstance(user_input, str):
-        return ""
-    return user_input.split("\n\ncontext:\n", 1)[0].strip()
+class ChartSelection(BaseModel):
+    chart_type: Literal["scatter", "line", "bar", "hist", "box"] = Field(...)
+    x_column: str = Field(...)
+    y_column: str = Field(default="")
+    reason: str = Field(default="")
 
 
 def _detect_requested_chart_type(query: str) -> str | None:
+    """
+    역할: 사용자 질의 텍스트에서 차트 타입 키워드를 탐지해 요청 유형을 추정한다.
+    입력: 자연어 질의 문자열(`query`)을 받는다.
+    출력: 감지된 차트 타입(`scatter/line/bar/hist/box`) 또는 `None`을 반환한다.
+    데코레이터: 없음.
+    호출 맥락: 시각화 planner에서 LLM 선택 실패 시 규칙 기반 폴백의 시작점으로 사용된다.
+    """
     lowered = query.lower()
     for chart_type, keywords in CHART_KEYWORDS.items():
         for keyword in keywords:
@@ -78,6 +67,13 @@ def _detect_requested_chart_type(query: str) -> str | None:
 
 
 def _infer_datetime_columns(df: pd.DataFrame) -> list[str]:
+    """
+    역할: 데이터프레임에서 datetime 타입 또는 날짜/시간 형식으로 해석 가능한 컬럼을 추론한다.
+    입력: 샘플링된 데이터프레임(`df`)을 받는다.
+    출력: datetime으로 사용할 수 있는 컬럼명 문자열 리스트를 반환한다.
+    데코레이터: 없음.
+    호출 맥락: profile 정보가 없을 때 planner의 규칙 기반 컬럼 분류 단계에서 사용된다.
+    """
     datetime_columns = [
         str(col)
         for col in df.select_dtypes(include=["datetime64[ns]", "datetimetz"]).columns.tolist()
@@ -103,6 +99,13 @@ def _select_chart(
     datetime_columns: list[str],
     categorical_columns: list[str],
 ) -> Dict[str, Any]:
+    """
+    역할: 요청 차트 타입과 컬럼 집합을 기준으로 규칙 기반 시각화 계획을 선택한다.
+    입력: 요청 타입(`requested_chart_type`)과 numeric/datetime/categorical 컬럼 리스트를 받는다.
+    출력: 계획 가능 여부, 선택 축, 이유를 담은 표준 plan 딕셔너리를 반환한다.
+    데코레이터: 없음.
+    호출 맥락: LLM 차트 선택이 실패했을 때 안정적인 폴백 경로로 실행된다.
+    """
     mode = "specified" if requested_chart_type else "auto"
     chart_type = requested_chart_type or ""
     x_key = ""
@@ -234,6 +237,58 @@ def _select_chart(
     }
 
 
+def _select_chart_with_llm(
+    *,
+    query: str,
+    numeric_columns: list[str],
+    datetime_columns: list[str],
+    categorical_columns: list[str],
+    model_id: str | None,
+    default_model: str,
+) -> Dict[str, Any] | None:
+    """
+    역할: 질문 의미와 컬럼 타입 정보를 함께 사용해 LLM 기반 차트/축 선택을 수행한다.
+    입력: 사용자 질의, 컬럼 분류 리스트, 모델 식별자(`model_id`, `default_model`)를 받는다.
+    출력: 유효한 선택이면 `planned` plan 딕셔너리, 검증 실패 시 `None`을 반환한다.
+    데코레이터: 없음.
+    호출 맥락: visualization planner의 1차 선택기로 사용되고 실패 시 `_select_chart`로 폴백된다.
+    """
+    columns_info = (
+        f"numeric: {numeric_columns}\n"
+        f"datetime: {datetime_columns}\n"
+        f"categorical: {categorical_columns}"
+    )
+    result = call_structured_llm(
+        schema=ChartSelection,
+        system_prompt=(
+            "사용자 질문과 컬럼 목록을 보고 가장 적합한 차트를 선택하라. "
+            "x_column, y_column은 반드시 주어진 컬럼 목록에서 선택하라. "
+            "hist는 y_column이 빈 문자열이다."
+        ),
+        human_prompt=f"query: {query}\n\n{columns_info}",
+        model_id=model_id,
+        default_model=default_model,
+    )
+    dump = result.model_dump()
+    all_columns = numeric_columns + datetime_columns + categorical_columns
+    x_column = str(dump.get("x_column") or "")
+    y_column = str(dump.get("y_column") or "")
+    if x_column not in all_columns:
+        return None
+    if y_column and y_column not in all_columns:
+        return None
+    chart_type = str(dump.get("chart_type") or "")
+    return {
+        "status": "planned",
+        "mode": "llm",
+        "chart_type": chart_type,
+        "x_key": x_column,
+        "y_key": y_column,
+        "reason": str(dump.get("reason") or ""),
+        "x_is_datetime": x_column in datetime_columns,
+    }
+
+
 def _build_python_code(
     *,
     dataset_path: str,
@@ -244,6 +299,13 @@ def _build_python_code(
     max_points: int,
     x_is_datetime: bool,
 ) -> str:
+    """
+    역할: 선택된 차트 계획을 실제 matplotlib 실행 스크립트 문자열로 변환한다.
+    입력: 데이터 경로, 차트 타입, 축 컬럼, 출력 파일명, 포인트 제한, datetime 축 여부를 받는다.
+    출력: 별도 프로세스에서 실행 가능한 Python 코드 문자열을 반환한다.
+    데코레이터: 없음.
+    호출 맥락: planner 노드가 executor에 전달할 `python_code`를 생성할 때 호출된다.
+    """
     header = (
         "from pathlib import Path\n"
         "import pandas as pd\n"
@@ -342,6 +404,13 @@ def _chart_has_data(
     y_key: str,
     x_is_datetime: bool,
 ) -> bool:
+    """
+    역할: 선택된 차트/축 조합에서 실제 시각화 가능한 유효 데이터가 존재하는지 검증한다.
+    입력: 샘플 데이터프레임과 차트 타입, x/y 키, datetime 축 여부를 받는다.
+    출력: 유효 데이터가 있으면 `True`, 없으면 `False`를 반환한다.
+    데코레이터: 없음.
+    호출 맥락: executor 단계에서 스크립트 실행 전 최종 가드로 사용되어 무의미한 렌더링을 차단한다.
+    """
     if chart_type in {"scatter", "line"} and x_key and y_key:
         sample = df[[x_key, y_key]].dropna().copy()
         if chart_type == "line" and x_is_datetime:
@@ -362,6 +431,13 @@ def _chart_has_data(
 
 
 def _run_chart_script(script_path: Path) -> Dict[str, Any]:
+    """
+    역할: 생성된 차트 렌더링 스크립트를 별도 파이썬 프로세스로 실행하고 결과를 수집한다.
+    입력: 실행할 스크립트 경로(`script_path`)를 받는다.
+    출력: 타임아웃 여부, 리턴코드, stdout/stderr를 포함한 실행 결과 딕셔너리를 반환한다.
+    데코레이터: 없음.
+    호출 맥락: visualization executor에서 실제 PNG 아티팩트 생성을 트리거하는 런처로 사용된다.
+    """
     process = subprocess.Popen(
         [PYTHON_EXECUTABLE, str(script_path)],
         cwd=str(script_path.parent),
@@ -394,13 +470,25 @@ def _run_chart_script(script_path: Path) -> Dict[str, Any]:
 
 
 def build_visualization_workflow(*, db: Session, default_model: str = "gpt-5-nano"):
-    """시각화 계획/생성 서브그래프를 생성한다."""
-    _ = default_model
+    """
+    역할: 시각화 계획 수립과 코드 실행을 담당하는 2단계(Planner/Executor) 서브그래프를 생성한다.
+    입력: 데이터 조회용 DB 세션(`db`)과 LLM 계획 기본 모델명(`default_model`)을 받는다.
+    출력: `visualization_plan`과 `visualization_result`를 누적하는 컴파일된 그래프를 반환한다.
+    데코레이터: 없음.
+    호출 맥락: 메인 워크플로우에서 `ask_visualization` 요청이 감지된 경로에 삽입되어 실행된다.
+    """
     data_source_repository = DataSourceRepository(db)
 
     def visualization_planner_node(state: VisualizationGraphState) -> Dict[str, Any]:
-        source_id = _resolve_target_source_id(state)
-        query = _extract_query_text(state)
+        """
+        역할: 대상 데이터셋과 컬럼 정보를 바탕으로 차트 유형, 축, 실행 코드를 포함한 계획을 생성한다.
+        입력: `state.user_input`, `state.dataset_profile`, source 식별 정보, 모델 ID를 포함한 상태를 받는다.
+        출력: 실행 가능하면 `visualization_plan(status=planned)`, 아니면 사유 포함 `unavailable` 계획을 반환한다.
+        데코레이터: 없음.
+        호출 맥락: visualization 서브그래프 첫 노드로 executor가 사용할 실행 계획을 확정한다.
+        """
+        source_id = resolve_target_source_id(state)
+        query = str(state.get("user_input", "")).strip()
         requested_chart_type = _detect_requested_chart_type(query)
         mode = "specified" if requested_chart_type else "auto"
 
@@ -442,33 +530,57 @@ def build_visualization_workflow(*, db: Session, default_model: str = "gpt-5-nan
                 }
             }
 
-        df = pd.read_csv(file_path, nrows=MAX_SAMPLE_ROWS)
-        if df.empty:
-            return {
-                "visualization_plan": {
-                    **empty_plan,
-                    "reason": "데이터가 비어 있어 시각화 계획을 생성하지 못했습니다.",
+        numeric_columns: list[str] = []
+        datetime_columns: list[str] = []
+        categorical_columns: list[str] = []
+        profile = state.get("dataset_profile")
+        profile_dict = profile if isinstance(profile, dict) else {}
+        has_profile_columns = (
+            bool(profile_dict.get("available"))
+            and isinstance(profile_dict.get("numeric_columns"), list)
+            and isinstance(profile_dict.get("datetime_columns"), list)
+            and isinstance(profile_dict.get("categorical_columns"), list)
+        )
+        if has_profile_columns:
+            numeric_columns = [str(col) for col in profile_dict.get("numeric_columns", [])]
+            datetime_columns = [str(col) for col in profile_dict.get("datetime_columns", [])]
+            categorical_columns = [str(col) for col in profile_dict.get("categorical_columns", [])]
+        else:
+            df = pd.read_csv(file_path, nrows=MAX_SAMPLE_ROWS)
+            if df.empty:
+                return {
+                    "visualization_plan": {
+                        **empty_plan,
+                        "reason": "데이터가 비어 있어 시각화 계획을 생성하지 못했습니다.",
+                    }
                 }
-            }
+            numeric_columns = [
+                str(col) for col in df.select_dtypes(include="number").columns.tolist()
+            ]
+            datetime_columns = _infer_datetime_columns(df)
+            datetime_set = set(datetime_columns)
+            numeric_set = set(numeric_columns)
+            categorical_columns = [
+                str(col)
+                for col in df.columns
+                if str(col) not in datetime_set and str(col) not in numeric_set
+            ]
 
-        numeric_columns = [
-            str(col) for col in df.select_dtypes(include="number").columns.tolist()
-        ]
-        datetime_columns = _infer_datetime_columns(df)
-        datetime_set = set(datetime_columns)
-        numeric_set = set(numeric_columns)
-        categorical_columns = [
-            str(col)
-            for col in df.columns
-            if str(col) not in datetime_set and str(col) not in numeric_set
-        ]
-
-        selection = _select_chart(
-            requested_chart_type=requested_chart_type,
+        selection = _select_chart_with_llm(
+            query=query,
             numeric_columns=numeric_columns,
             datetime_columns=datetime_columns,
             categorical_columns=categorical_columns,
+            model_id=state.get("model_id"),
+            default_model=default_model,
         )
+        if selection is None:
+            selection = _select_chart(
+                requested_chart_type=requested_chart_type,
+                numeric_columns=numeric_columns,
+                datetime_columns=datetime_columns,
+                categorical_columns=categorical_columns,
+            )
         if selection["status"] != "planned":
             return {
                 "visualization_plan": {
@@ -481,22 +593,6 @@ def build_visualization_workflow(*, db: Session, default_model: str = "gpt-5-nan
         x_key = str(selection["x_key"])
         y_key = str(selection["y_key"])
         x_is_datetime = bool(selection["x_is_datetime"])
-        if not _chart_has_data(
-            df=df,
-            chart_type=chart_type,
-            x_key=x_key,
-            y_key=y_key,
-            x_is_datetime=x_is_datetime,
-        ):
-            return {
-                "visualization_plan": {
-                    **empty_plan,
-                    "chart_type": chart_type,
-                    "x_key": x_key,
-                    "y_key": y_key,
-                    "reason": "선택된 컬럼에서 유효한 시각화 데이터가 없습니다.",
-                }
-            }
 
         output_filename = f"viz_{chart_type}.png"
         python_code = _build_python_code(
@@ -518,10 +614,18 @@ def build_visualization_workflow(*, db: Session, default_model: str = "gpt-5-nan
             "reason": str(selection["reason"]),
             "python_code": python_code,
             "output_filename": output_filename,
+            "x_is_datetime": x_is_datetime,
         }
         return {"visualization_plan": plan}
 
     def visualization_executor_node(state: VisualizationGraphState) -> Dict[str, Any]:
+        """
+        역할: planner가 만든 코드를 샌드박스 프로세스로 실행해 PNG 아티팩트를 생성하고 결과를 상태에 기록한다.
+        입력: `state.visualization_plan`과 대상 데이터셋 경로를 포함한 시각화 상태를 받는다.
+        출력: 성공 시 chart/artifact를 포함한 `visualization_result(generated)`, 실패 시 `unavailable`을 반환한다.
+        데코레이터: 없음.
+        호출 맥락: planner 다음 노드로 연결되며 시각화 경로의 최종 산출물을 만드는 실행 단계다.
+        """
         plan = state.get("visualization_plan")
         plan_dict = plan if isinstance(plan, dict) else {}
         status = plan_dict.get("status")
@@ -532,6 +636,7 @@ def build_visualization_workflow(*, db: Session, default_model: str = "gpt-5-nan
         reason = str(plan_dict.get("reason") or "")
         python_code = str(plan_dict.get("python_code") or "")
         output_filename = str(plan_dict.get("output_filename") or "")
+        x_is_datetime = bool(plan_dict.get("x_is_datetime", False))
 
         if status != "planned":
             return {
@@ -548,6 +653,40 @@ def build_visualization_workflow(*, db: Session, default_model: str = "gpt-5-nan
                     "status": "unavailable",
                     "source_id": source_id,
                     "summary": "시각화 실행 코드가 없어 차트를 생성하지 못했습니다.",
+                }
+            }
+
+        dataset = data_source_repository.get_by_source_id(source_id) if source_id else None
+        if dataset is None or not dataset.storage_path:
+            return {
+                "visualization_result": {
+                    "status": "unavailable",
+                    "source_id": source_id,
+                    "summary": "시각화 대상 데이터셋을 찾지 못했습니다.",
+                }
+            }
+        file_path = Path(dataset.storage_path)
+        if not file_path.exists() or not file_path.is_file():
+            return {
+                "visualization_result": {
+                    "status": "unavailable",
+                    "source_id": source_id,
+                    "summary": "데이터 파일이 없어 차트를 생성하지 못했습니다.",
+                }
+            }
+        df = pd.read_csv(file_path, nrows=MAX_SAMPLE_ROWS)
+        if df.empty or not _chart_has_data(
+            df=df,
+            chart_type=chart_type,
+            x_key=x_key,
+            y_key=y_key,
+            x_is_datetime=x_is_datetime,
+        ):
+            return {
+                "visualization_result": {
+                    "status": "unavailable",
+                    "source_id": source_id,
+                    "summary": "선택된 컬럼에서 유효한 시각화 데이터가 없습니다.",
                 }
             }
 

@@ -18,36 +18,31 @@ from langgraph.graph import END, START, StateGraph
 from sqlalchemy.orm import Session
 
 from backend.app.ai.agents.state import ReportGraphState
+from backend.app.ai.agents.utils import resolve_target_source_id
 from backend.app.domain.data_source.repository import DataSourceRepository
 
 
-def _resolve_target_source_id(state: ReportGraphState) -> str | None:
-    preprocess_result = state.get("preprocess_result")
-    if isinstance(preprocess_result, dict) and preprocess_result.get("status") == "applied":
-        output_source_id = preprocess_result.get("output_source_id")
-        if isinstance(output_source_id, str) and output_source_id.strip():
-            return output_source_id.strip()
-
-    rag_result = state.get("rag_result")
-    if isinstance(rag_result, dict):
-        rag_source_id = rag_result.get("source_id")
-        if isinstance(rag_source_id, str) and rag_source_id.strip():
-            return rag_source_id.strip()
-
-    source_id = state.get("source_id")
-    if isinstance(source_id, str) and source_id.strip():
-        return source_id.strip()
-
-    return None
-
-
 def _safe_float(value: Any, ndigits: int = 4) -> float | None:
+    """
+    역할: 판다스 결측값을 안전하게 처리하면서 수치를 지정 자릿수로 반올림한다.
+    입력: 임의 값(`value`)과 소수점 자릿수(`ndigits`)를 받는다.
+    출력: 결측이면 `None`, 그렇지 않으면 `float` 반올림 값을 반환한다.
+    데코레이터: 없음.
+    호출 맥락: 리포트 정량 지표 계산 시 min/max/mean 등 수치 직렬화 헬퍼로 반복 호출된다.
+    """
     if pd.isna(value):
         return None
     return round(float(value), ndigits)
 
 
 def _build_metrics(*, df: pd.DataFrame, source_id: str) -> Dict[str, Any]:
+    """
+    역할: 데이터프레임에서 행/열/결측/기초통계/상관관계 요약을 계산해 리포트 메트릭을 만든다.
+    입력: 분석 대상 데이터프레임(`df`)과 데이터 식별자(`source_id`)를 받는다.
+    출력: 리포트 작성에 바로 사용할 수 있는 중첩 메트릭 딕셔너리를 반환한다.
+    데코레이터: 없음.
+    호출 맥락: report composer 노드에서 CSV 샘플을 읽은 뒤 정량 근거를 만들기 위해 호출된다.
+    """
     row_count = int(df.shape[0])
     column_count = int(df.shape[1])
     total_cells = row_count * column_count
@@ -125,11 +120,24 @@ def _build_metrics(*, df: pd.DataFrame, source_id: str) -> Dict[str, Any]:
 
 
 def build_report_workflow(*, db: Session, default_model: str = "gpt-5-nano"):
-    """리포트 합성 서브그래프를 생성한다."""
+    """
+    역할: 메트릭 계산과 LLM 리포트 작성을 담당하는 단일 노드 리포트 서브그래프를 생성한다.
+    입력: DB 세션(`db`)과 리포트 작성 기본 모델명(`default_model`)을 받는다.
+    출력: `report_result`와 `output(report_answer)`를 생성하는 컴파일된 그래프를 반환한다.
+    데코레이터: 없음.
+    호출 맥락: 메인 워크플로우에서 `ask_report`가 참일 때 최종 응답 경로로 호출된다.
+    """
     data_source_repository = DataSourceRepository(db)
 
     def report_composer_node(state: ReportGraphState) -> Dict[str, Any]:
-        target_source_id = _resolve_target_source_id(state)
+        """
+        역할: 정량 메트릭, RAG 인사이트, 시각화 요약을 합쳐 최종 리포트 본문을 생성한다.
+        입력: `state.user_input`, `state.insight`, `state.visualization_result`, 대상 source 정보를 받는다.
+        출력: `report_result(summary/metrics/visualizations)`와 `output.type=report_answer`를 반환한다.
+        데코레이터: 없음.
+        호출 맥락: 리포트 서브그래프의 핵심이자 유일한 실행 노드로, 결과가 곧 최종 사용자 응답이 된다.
+        """
+        target_source_id = resolve_target_source_id(state)
 
         metrics: Dict[str, Any] = {
             "source_id": target_source_id,
@@ -175,8 +183,7 @@ def build_report_workflow(*, db: Session, default_model: str = "gpt-5-nano"):
                         visualization_item["artifact"] = artifact
                     report_visualizations.append(visualization_item)
 
-        user_input = state.get("user_input", "")
-        question = str(user_input).split("\n\ncontext:\n", 1)[0]
+        question = str(state.get("user_input", ""))
         model_name = state.get("model_id") or default_model
         llm = init_chat_model(model_name)
         result = llm.invoke(

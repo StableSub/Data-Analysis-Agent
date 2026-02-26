@@ -10,12 +10,11 @@ from __future__ import annotations
 
 from typing import Any, Dict, Literal
 
-from langchain.chat_models import init_chat_model
-from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field
 
 from backend.app.ai.agents.state import IntakeRouterState
+from backend.app.ai.agents.utils import call_structured_llm
 
 
 class IntentDecision(BaseModel):
@@ -26,49 +25,64 @@ class IntentDecision(BaseModel):
 
 
 def build_intake_router_workflow(default_model: str = "gpt-5-nano"):
-    """의도 분기 전용 라우터 그래프를 생성한다."""
-
-    def call_structured(
-        schema: type[BaseModel],
-        system_prompt: str,
-        human_prompt: str,
-        model_id: str | None,
-    ):
-        """구조화 출력이 필요한 LLM 호출을 수행한다."""
-        model_name = model_id or default_model
-        llm = init_chat_model(model_name).with_structured_output(schema)
-        return llm.invoke(
-            [
-                SystemMessage(content=system_prompt),
-                HumanMessage(content=human_prompt),
-            ]
-        )
+    """
+    역할: 데이터셋 선택 여부와 사용자 의도를 분석해 handoff만 결정하는 intake 라우터 그래프를 만든다.
+    입력: 기본 모델명(`default_model`)을 받아 의도 분석 LLM 호출의 기본값으로 사용한다.
+    출력: `general_question` 또는 `data_pipeline` handoff를 반환하는 컴파일된 그래프를 반환한다.
+    데코레이터: 없음.
+    호출 맥락: 메인 워크플로우의 첫 단계(`intake_flow`)로 연결되어 전체 분기 방향을 정한다.
+    """
 
     def route_dataset_selected(state: IntakeRouterState) -> str:
-        """source_id 존재 여부로 첫 분기를 수행한다."""
+        """
+        역할: 입력 상태에 데이터셋 source가 있는지 확인해 첫 분기 키를 산출한다.
+        입력: `state.source_id`가 포함된 intake 상태를 받는다.
+        출력: source 존재 시 `data_selected`, 없으면 `no_dataset` 문자열을 반환한다.
+        데코레이터: 없음.
+        호출 맥락: intake 그래프 START 이후 conditional edge 라우터로 즉시 실행된다.
+        """
         source_id = state.get("source_id")
         return "data_selected" if source_id else "no_dataset"
 
     def general_question_node(_: IntakeRouterState) -> Dict[str, Any]:
-        """데이터셋이 없으면 일반 질문 경로로 handoff를 생성한다."""
+        """
+        역할: 데이터셋 미선택 요청을 일반 질의 경로로 넘기기 위한 handoff를 생성한다.
+        입력: intake 상태를 받지만 실제 값은 사용하지 않는다.
+        출력: `handoff.next_step=general_question`를 담은 상태 업데이트 딕셔너리를 반환한다.
+        데코레이터: 없음.
+        호출 맥락: `route_dataset_selected` 결과가 `no_dataset`일 때 실행되는 경량 노드다.
+        """
         return {"handoff": {"next_step": "general_question"}}
 
     def analyze_intent_node(state: IntakeRouterState) -> Dict[str, Any]:
-        """데이터셋 선택 상태에서 사용자 의도를 분석한다."""
-        decision = call_structured(
-            IntentDecision,
-            (
+        """
+        역할: 데이터셋이 이미 선택된 요청에서 전처리/시각화/리포트 의도를 구조화 출력으로 분류한다.
+        입력: `state.user_input`, `state.model_id`를 포함한 intake 상태를 받는다.
+        출력: `IntentDecision` 결과를 `intent` 키로 담은 상태 업데이트를 반환한다.
+        데코레이터: 없음.
+        호출 맥락: `data_selected` 분기에서 호출되며 이후 데이터 파이프라인 handoff 생성을 위한 전 단계다.
+        """
+        decision = call_structured_llm(
+            schema=IntentDecision,
+            system_prompt=(
                 "데이터셋이 이미 선택된 상황이다. "
                 "step은 data_pipeline으로 반환하라. "
                 "질문을 보고 ask_preprocess, ask_visualization, ask_report를 true/false로 판단하라."
             ),
-            state.get("user_input", ""),
-            state.get("model_id"),
+            human_prompt=state.get("user_input", ""),
+            model_id=state.get("model_id"),
+            default_model=default_model,
         )
         return {"intent": decision.model_dump()}
 
     def data_pipeline_node(state: IntakeRouterState) -> Dict[str, Any]:
-        """최종 빌더 그래프의 데이터 파이프라인 시작 신호를 전달한다."""
+        """
+        역할: intent 결과를 메인 그래프가 이해하는 `handoff` 플래그 묶음으로 변환한다.
+        입력: `state.intent` 내 ask_preprocess/ask_visualization/ask_report 값을 읽는다.
+        출력: `handoff.next_step=data_pipeline`과 세부 요청 플래그를 담은 딕셔너리를 반환한다.
+        데코레이터: 없음.
+        호출 맥락: intake 그래프의 마지막 노드로 메인 워크플로우의 데이터 경로 진입 신호를 만든다.
+        """
         intent = state.get("intent") or {}
         return {
             "handoff": {
