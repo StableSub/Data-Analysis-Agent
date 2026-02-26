@@ -10,7 +10,51 @@ from pathlib import Path
 from typing import Any, AsyncIterator, Dict
 
 from ...core.db import SessionLocal
-from .builder import WorkflowBuilder
+from .builder import build_main_workflow
+
+
+def _load_pdf(file_path: Path, max_chars: int) -> str:
+    """
+    간단한 PDF 텍스트 추출.
+    """
+    try:
+        from pypdf import PdfReader
+    except ImportError as exc:
+        raise RuntimeError(
+            "PDF 파일을 처리하려면 'pypdf' 패키지가 필요합니다. pip install pypdf 로 설치하세요."
+        ) from exc
+
+    reader = PdfReader(str(file_path))
+    chunks: list[str] = []
+    total_len = 0
+    for page in reader.pages:
+        text = page.extract_text() or ""
+        if text.strip():
+            available = max_chars - total_len
+            if available <= 0:
+                break
+            snippet = text[:available]
+            chunks.append(snippet)
+            total_len += len(snippet)
+        if total_len >= max_chars:
+            break
+    return "\n".join(chunks)
+
+
+def _load_text_from_file(path: str, max_chars: int = 4000) -> str:
+    """
+    텍스트 또는 PDF 파일을 읽어 제한 길이만큼 잘라 반환한다.
+    """
+    file_path = Path(path)
+    if not file_path.exists():
+        raise FileNotFoundError(f"파일을 찾을 수 없습니다: {file_path}")
+
+    suffix = file_path.suffix.lower()
+    if suffix == ".pdf":
+        return _load_pdf(file_path, max_chars)
+
+    data = file_path.read_text(encoding="utf-8", errors="ignore")
+    return data[:max_chars]
 
 
 class AgentClient:
@@ -19,6 +63,11 @@ class AgentClient:
         model: str = "gpt-5-nano",
     ) -> None:
         self.default_model = model
+        self._db = SessionLocal()
+        self._workflow = build_main_workflow(
+            db=self._db,
+            default_model=self.default_model,
+        )
 
     async def astream_with_trace(
         self,
@@ -54,46 +103,37 @@ class AgentClient:
         thought_steps.append(initial_step)
         yield {"type": "thought", "step": initial_step}
 
-        db = SessionLocal()
         final_state: Dict[str, Any] = {}
-        try:
-            workflow = WorkflowBuilder(
-                db=db,
-                model_name=self.default_model,
-            ).build()
+        async for snapshot in self._astream_workflow_values(self._workflow, state):
+            final_state = snapshot
+            for step in self._collect_thought_steps(snapshot):
+                key = (step["phase"], step["message"])
+                if key in seen:
+                    continue
+                seen.add(key)
+                thought_steps.append(step)
+                yield {"type": "thought", "step": step}
 
-            async for snapshot in self._astream_workflow_values(workflow, state):
-                final_state = snapshot
-                for step in self._collect_thought_steps(snapshot):
-                    key = (step["phase"], step["message"])
-                    if key in seen:
-                        continue
-                    seen.add(key)
-                    thought_steps.append(step)
-                    yield {"type": "thought", "step": step}
-
-            answer = self._extract_answer(final_state)
-            for index in range(0, len(answer), 24):
-                delta = answer[index:index + 24]
-                yield {"type": "chunk", "delta": delta}
-                await asyncio.sleep(0)
-            done_event: Dict[str, Any] = {
-                "type": "done",
-                "answer": answer,
-                "thought_steps": thought_steps,
-            }
-            preprocess_result = final_state.get("preprocess_result")
-            if isinstance(preprocess_result, dict):
-                done_event["preprocess_result"] = preprocess_result
-            visualization_result = final_state.get("visualization_result")
-            if (
-                isinstance(visualization_result, dict)
-                and visualization_result.get("status") == "generated"
-            ):
-                done_event["visualization_result"] = visualization_result
-            yield done_event
-        finally:
-            db.close()
+        answer = self._extract_answer(final_state)
+        for index in range(0, len(answer), 24):
+            delta = answer[index:index + 24]
+            yield {"type": "chunk", "delta": delta}
+            await asyncio.sleep(0)
+        done_event: Dict[str, Any] = {
+            "type": "done",
+            "answer": answer,
+            "thought_steps": thought_steps,
+        }
+        preprocess_result = final_state.get("preprocess_result")
+        if isinstance(preprocess_result, dict):
+            done_event["preprocess_result"] = preprocess_result
+        visualization_result = final_state.get("visualization_result")
+        if (
+            isinstance(visualization_result, dict)
+            and visualization_result.get("status") == "generated"
+        ):
+            done_event["visualization_result"] = visualization_result
+        yield done_event
 
     def _build_state(
         self,
@@ -476,51 +516,7 @@ class AgentClient:
                     f"preview_rows={json.dumps(preview_records, ensure_ascii=False)}"
                 )
 
-            raw_text = self.load_text_from_file(str(file_path), max_chars=4000)
+            raw_text = _load_text_from_file(str(file_path), max_chars=4000)
             return f"dataset filename={filename}\ncontent_preview={raw_text}"
         except Exception:
             return ""
-
-    @staticmethod
-    def load_text_from_file(path: str, max_chars: int = 4000) -> str:
-        """
-        텍스트 또는 PDF 파일을 읽어 제한 길이만큼 잘라 반환한다.
-        """
-        file_path = Path(path)
-        if not file_path.exists():
-            raise FileNotFoundError(f"파일을 찾을 수 없습니다: {file_path}")
-
-        suffix = file_path.suffix.lower()
-        if suffix == ".pdf":
-            return AgentClient._load_pdf(file_path, max_chars)
-
-        data = file_path.read_text(encoding="utf-8", errors="ignore")
-        return data[:max_chars]
-
-    @staticmethod
-    def _load_pdf(file_path: Path, max_chars: int) -> str:
-        """
-        간단한 PDF 텍스트 추출.
-        """
-        try:
-            from pypdf import PdfReader
-        except ImportError as exc:
-            raise RuntimeError(
-                "PDF 파일을 처리하려면 'pypdf' 패키지가 필요합니다. pip install pypdf 로 설치하세요."
-            ) from exc
-
-        reader = PdfReader(str(file_path))
-        chunks: list[str] = []
-        total_len = 0
-        for page in reader.pages:
-            text = page.extract_text() or ""
-            if text.strip():
-                available = max_chars - total_len
-                if available <= 0:
-                    break
-                snippet = text[:available]
-                chunks.append(snippet)
-                total_len += len(snippet)
-            if total_len >= max_chars:
-                break
-        return "\n".join(chunks)

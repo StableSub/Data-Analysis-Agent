@@ -1,13 +1,4 @@
 import { MutableRefObject, useEffect, useState } from 'react';
-import {
-  CartesianGrid,
-  ResponsiveContainer,
-  Scatter,
-  ScatterChart,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from 'recharts';
 
 type Message = {
   id: string;
@@ -26,7 +17,11 @@ type Message = {
       chart_type?: string;
       x_key?: string;
       y_key?: string;
-      points?: Array<{ x: number; y: number }>;
+    };
+    artifact?: {
+      mime_type?: string;
+      image_base64?: string;
+      code?: string;
     };
   };
   timestamp: Date | string;
@@ -118,32 +113,17 @@ export function ChatMessages({
                     )}
                     {msg.role === 'assistant' &&
                       msg.visualizationResult?.status === 'generated' &&
-                      msg.visualizationResult.chart?.chart_type === 'scatter' &&
-                      Array.isArray(msg.visualizationResult.chart.points) &&
-                      msg.visualizationResult.chart.points.length > 0 && (
+                      typeof msg.visualizationResult.artifact?.image_base64 === 'string' &&
+                      msg.visualizationResult.artifact.image_base64 && (
                         <div className="mt-3 pt-3 border-t border-gray-200 dark:border-white/10">
                           <p className="text-xs text-gray-600 dark:text-gray-300 mb-2">
-                            시각화: {msg.visualizationResult.chart.x_key || 'x'} vs {msg.visualizationResult.chart.y_key || 'y'}
+                            시각화: {msg.visualizationResult.chart?.x_key || 'x'} vs {msg.visualizationResult.chart?.y_key || 'y'}
                           </p>
-                          <div className="w-full h-56 bg-white dark:bg-[#212121] rounded-lg p-2">
-                            <ResponsiveContainer width="100%" height="100%">
-                              <ScatterChart margin={{ top: 10, right: 10, bottom: 10, left: 10 }}>
-                                <CartesianGrid strokeDasharray="3 3" />
-                                <XAxis
-                                  type="number"
-                                  dataKey="x"
-                                  name={msg.visualizationResult.chart.x_key || 'x'}
-                                />
-                                <YAxis
-                                  type="number"
-                                  dataKey="y"
-                                  name={msg.visualizationResult.chart.y_key || 'y'}
-                                />
-                                <Tooltip cursor={{ strokeDasharray: '3 3' }} />
-                                <Scatter data={msg.visualizationResult.chart.points} fill="#3b82f6" />
-                              </ScatterChart>
-                            </ResponsiveContainer>
-                          </div>
+                          <img
+                            src={`data:${msg.visualizationResult.artifact?.mime_type || 'image/png'};base64,${msg.visualizationResult.artifact?.image_base64}`}
+                            alt={`${msg.visualizationResult.chart?.chart_type || 'chart'} visualization`}
+                            className="w-full rounded-lg bg-white dark:bg-[#212121] border border-gray-200 dark:border-white/10"
+                          />
                         </div>
                       )}
                   </div>

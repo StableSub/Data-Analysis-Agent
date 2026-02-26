@@ -33,7 +33,11 @@ interface ChatMessage {
       chart_type?: string;
       x_key?: string;
       y_key?: string;
-      points?: Array<{ x: number; y: number }>;
+    };
+    artifact?: {
+      mime_type?: string;
+      image_base64?: string;
+      code?: string;
     };
   };
   timestamp: Date;

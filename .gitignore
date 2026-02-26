@@ -60,3 +60,5 @@ dev.sh
 
 AGENTS.md
 graph_outputs/
+.omc/
+CLAUDE.md

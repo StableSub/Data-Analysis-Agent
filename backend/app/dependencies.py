@@ -20,6 +20,7 @@ def get_chat_repository(db=Depends(get_db)) -> ChatRepository:
 def get_data_source_repository(db=Depends(get_db)) -> DataSourceRepository:
     return DataSourceRepository(db)
 
+@lru_cache(maxsize=1)
 def get_agent() -> AgentClient:
     return AgentClient()
 

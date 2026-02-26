@@ -55,9 +55,9 @@ class VisualizationGraphState(AgentState, total=False):
     preprocess_result: Dict[str, Any]
     rag_result: Dict[str, Any]
     insight: Dict[str, Any]
-    # visualization_plan: {"status","source_id","chart_type","max_points"}
+    # visualization_plan: {"status","source_id","mode","chart_type","x_key","y_key","reason","python_code","output_filename"}
     visualization_plan: Dict[str, Any]
-    # visualization_result: {"status","source_id","summary","chart?":{"chart_type","x_key","y_key","points"}}
+    # visualization_result: {"status","source_id","summary","chart?":{"chart_type","x_key","y_key"},"artifact?":{"mime_type","image_base64","code"}}
     visualization_result: Dict[str, Any]
 
 
@@ -68,10 +68,10 @@ class ReportGraphState(AgentState, total=False):
     preprocess_result: Dict[str, Any]
     rag_result: Dict[str, Any]
     insight: Dict[str, Any]
-    # visualization_result.chart를 리포트 본문/메타에 반영
+    # visualization_result.chart/artifact를 리포트 본문/메타에 반영
     visualization_result: Dict[str, Any]
     merged_context: Dict[str, Any]
-    # report_result: {"summary","metrics","visualizations"}
+    # report_result: {"summary","metrics","visualizations":[{"chart","artifact?"}]}
     report_result: Dict[str, Any]
     output: Dict[str, Any]
 
@@ -96,10 +96,10 @@ class MainWorkflowState(AgentState, total=False):
 
     # visualization/report/data qa (내부 처리용 상태, SSE done에서는 직접 노출하지 않음)
     visualization_plan: Dict[str, Any]
-    # chart payload 포함 가능: {"status","summary","chart"}
+    # chart+artifact payload 포함 가능: {"status","summary","chart","artifact"}
     visualization_result: Dict[str, Any]
     merged_context: Dict[str, Any]
-    # report_result: {"summary","metrics","visualizations"}
+    # report_result: {"summary","metrics","visualizations":[{"chart","artifact?"}]}
     report_result: Dict[str, Any]
     data_qa_result: Dict[str, Any]
 

@@ -168,8 +168,12 @@ def build_report_workflow(*, db: Session, default_model: str = "gpt-5-nano"):
                 visualization_summary = viz_summary.strip()
             if visualization_result.get("status") == "generated":
                 chart = visualization_result.get("chart")
+                artifact = visualization_result.get("artifact")
                 if isinstance(chart, dict):
-                    report_visualizations.append(chart)
+                    visualization_item: Dict[str, Any] = {"chart": chart}
+                    if isinstance(artifact, dict):
+                        visualization_item["artifact"] = artifact
+                    report_visualizations.append(visualization_item)
 
         user_input = state.get("user_input", "")
         question = str(user_input).split("\n\ncontext:\n", 1)[0]
