@@ -1,0 +1,221 @@
+@import "tailwindcss";
+
+@theme {
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
+
+  --animate-accordion-down: accordion-down 0.2s ease-out;
+  --animate-accordion-up: accordion-up 0.2s ease-out;
+
+  @keyframes accordion-down {
+    from {
+      height: 0;
+    }
+    to {
+      height: var(--radix-accordion-content-height);
+    }
+  }
+  @keyframes accordion-up {
+    from {
+      height: var(--radix-accordion-content-height);
+    }
+    to {
+      height: 0;
+    }
+  }
+
+  /* Gen-UI Custom Tokens - Strict Implementation */
+  --color-genui-surface: var(--genui-surface);
+  --color-genui-panel: var(--genui-panel);
+  --color-genui-card: var(--genui-card);
+  --color-genui-border: var(--genui-border);
+  --color-genui-border-strong: var(--genui-border-strong);
+  --color-genui-text: var(--genui-text);
+  --color-genui-muted: var(--genui-muted);
+  --color-genui-focus-ring: var(--genui-focus-ring);
+  
+  --color-genui-success: var(--genui-success);
+  --color-genui-warning: var(--genui-warning);
+  --color-genui-error: var(--genui-error);
+  --color-genui-running: var(--genui-running);
+  --color-genui-needs-user: var(--genui-needs-user);
+  
+  --shadow-genui-sm: var(--genui-shadow-sm);
+  --shadow-genui-md: var(--genui-shadow-md);
+}
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222.2 84% 4.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 222.2 84% 4.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222.2 84% 4.9%;
+    --primary: 222.2 47.4% 11.2%;
+    --primary-foreground: 210 40% 98%;
+    --secondary: 210 40% 96.1%;
+    --secondary-foreground: 222.2 47.4% 11.2%;
+    --muted: 210 40% 96.1%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+    --accent: 210 40% 96.1%;
+    --accent-foreground: 222.2 47.4% 11.2%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+    --ring: 222.2 84% 4.9%;
+    --radius: 0.5rem;
+
+    /* Gen-UI Light Mode Tokens */
+    --genui-surface: #f9fafb; /* zinc-50 */
+    --genui-panel: #ffffff;
+    --genui-card: #ffffff;
+    --genui-border: #e4e4e7; /* zinc-200 */
+    --genui-border-strong: #d4d4d8; /* zinc-300 */
+    --genui-text: #09090b; /* zinc-950 */
+    --genui-muted: #71717a; /* zinc-500 */
+    --genui-shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+    --genui-shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+    --genui-focus-ring: #3b82f6; /* blue-500 */
+
+    /* Status Tokens (Light) */
+    --genui-success: #10b981; /* emerald-500 */
+    --genui-warning: #f59e0b; /* amber-500 */
+    --genui-error: #ef4444; /* red-500 */
+    --genui-running: #3b82f6; /* blue-500 */
+    --genui-needs-user: #8b5cf6; /* violet-500 */
+  }
+
+  .dark {
+    --background: 222.2 84% 4.9%;
+    --foreground: 210 40% 98%;
+    --card: 222.2 84% 4.9%;
+    --card-foreground: 210 40% 98%;
+    --popover: 222.2 84% 4.9%;
+    --popover-foreground: 210 40% 98%;
+    --primary: 210 40% 98%;
+    --primary-foreground: 222.2 47.4% 11.2%;
+    --secondary: 217.2 32.6% 17.5%;
+    --secondary-foreground: 210 40% 98%;
+    --muted: 217.2 32.6% 17.5%;
+    --muted-foreground: 215 20.2% 65.1%;
+    --accent: 217.2 32.6% 17.5%;
+    --accent-foreground: 210 40% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 217.2 32.6% 17.5%;
+    --input: 217.2 32.6% 17.5%;
+    --ring: 212.7 26.8% 83.9%;
+
+    /* Gen-UI Dark Mode Tokens */
+    --genui-surface: #09090b; /* zinc-950 */
+    --genui-panel: #18181b; /* zinc-900 */
+    --genui-card: #27272a; /* zinc-800 */
+    --genui-border: #27272a; /* zinc-800 */
+    --genui-border-strong: #3f3f46; /* zinc-700 */
+    --genui-text: #fafafa; /* zinc-50 */
+    --genui-muted: #a1a1aa; /* zinc-400 */
+    --genui-shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.3);
+    --genui-shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.5);
+    --genui-focus-ring: #60a5fa; /* blue-400 */
+
+    /* Status Tokens (Dark) */
+    --genui-success: #34d399; /* emerald-400 */
+    --genui-warning: #fbbf24; /* amber-400 */
+    --genui-error: #f87171; /* red-400 */
+    --genui-running: #60a5fa; /* blue-400 */
+    --genui-needs-user: #a78bfa; /* violet-400 */
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/* Gen-UI Scoped Utility Classes */
+.genui-scope {
+  /* Ensure children inherit font and base styles */
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  color: var(--genui-text);
+  background-color: var(--genui-surface);
+}
+
+.genui-surface {
+  background-color: var(--genui-surface);
+  color: var(--genui-text);
+}
+
+.genui-panel {
+  background-color: var(--genui-panel);
+  border: 1px solid var(--genui-border);
+}
+
+.genui-card {
+  background-color: var(--genui-card);
+  border: 1px solid var(--genui-border);
+  border-radius: 0.5rem;
+  box-shadow: var(--genui-shadow-sm);
+}
+
+.genui-border {
+  border-color: var(--genui-border);
+}
+
+.genui-border-strong {
+  border-color: var(--genui-border-strong);
+}
+
+.genui-text {
+  color: var(--genui-text);
+}
+
+.genui-muted {
+  color: var(--genui-muted);
+}
+
+.genui-shadow-sm {
+  box-shadow: var(--genui-shadow-sm);
+}
+
+.genui-shadow-md {
+  box-shadow: var(--genui-shadow-md);
+}
+
+.genui-focus:focus-visible {
+  outline: 2px solid var(--genui-focus-ring);
+  outline-offset: 2px;
+}

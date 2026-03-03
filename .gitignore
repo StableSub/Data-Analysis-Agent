@@ -58,3 +58,6 @@ pnpm-debug.log*
 *.sh
 dev.sh
 
+# Claude workspace
+.claude/
+
