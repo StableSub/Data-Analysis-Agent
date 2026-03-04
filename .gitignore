@@ -62,3 +62,6 @@ AGENTS.md
 graph_outputs/
 .omc/
 CLAUDE.md
+# Claude workspace
+.claude/
+
