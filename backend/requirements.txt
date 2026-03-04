@@ -1,0 +1,15 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+pydantic
+python-multipart
+pandas
+numpy
+chardet
+python-dotenv
+langchain
+langchain-core
+langgraph
+langchain-tavily
+sentence-transformers
+faiss-cpu

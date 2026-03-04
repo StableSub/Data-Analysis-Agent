@@ -1,16 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import {
   uploadFile,
-  fetchSample,
-  sendChat,
-  queryRag,
-  applyPreprocess,
-  createReport,
+  buildApiUrl,
+  deleteDataset,
   type DatasetResponse,
-  type SampleResponse,
   type ChatResponse,
-  type RagResponse,
-  type ReportResponse,
+  type ChatHistoryMessage,
 } from "../../lib/api";
 import type { ReportSection } from "../components/genui/AssistantReportMessage";
 import type {
@@ -31,6 +26,7 @@ import type { PipelineStepStatus } from "../components/genui/PipelineTracker";
 export type PipelineState =
   | "empty"
   | "uploading"
+  | "ready"
   | "running"
   | "needs-user"
   | "error"
@@ -59,6 +55,48 @@ export interface HitlProposal {
   missingPercent: number;
 }
 
+export interface UploadedDatasetMeta {
+  datasetId: number;
+  sourceId: string;
+  fileName: string;
+}
+
+export interface VisualizationResultPayload {
+  status?: string;
+  source_id?: string;
+  summary?: string;
+  chart?: {
+    chart_type?: string;
+    x_key?: string;
+    y_key?: string;
+  };
+  artifact?: {
+    mime_type?: string;
+    image_base64?: string;
+    code?: string;
+  };
+}
+
+export type PipelineSessionStateHint = "empty" | "ready" | "success" | "error";
+
+export interface PipelineSessionContext {
+  backendSessionId: number | null;
+  fileName: string;
+  uploadedDatasets: UploadedDatasetMeta[];
+  selectedSourceId: string | null;
+  chatHistory: ChatHistoryMessage[];
+  latestAssistantAnswer: string | null;
+  latestVisualizationResult: VisualizationResultPayload | null;
+  stateHint: PipelineSessionStateHint;
+  errorMessage: string | null;
+}
+
+interface ThoughtStep {
+  phase: string;
+  message: string;
+  status?: "active" | "completed" | "failed";
+}
+
 export interface UseAnalysisPipelineReturn {
   // State
   state: PipelineState;
@@ -73,10 +111,18 @@ export interface UseAnalysisPipelineReturn {
   pipelineSteps: PipelineStep[] | undefined;
   decisionChips: DecisionChip[];
   evidence: EvidenceFooterProps;
+  chatHistory: ChatHistoryMessage[];
   milestones: HistoryItem[];
   history: HistoryItem[];
   hitlProposal: HitlProposal | null;
   rawLogs: RawLogEntry[];
+  latestVisualizationResult: VisualizationResultPayload | null;
+
+  // Upload selection
+  uploadedDatasets: UploadedDatasetMeta[];
+  selectedSourceId: string | null;
+  selectUploadedDataset: (sourceId: string | null) => void;
+  removeUploadedDataset: (sourceId: string) => Promise<void>;
 
   // Actions
   startUpload: (file: File) => void;
@@ -88,6 +134,9 @@ export interface UseAnalysisPipelineReturn {
   handleSend: (message: string) => void;
   handleCancel: () => void;
   reset: () => void;
+  captureSessionContext: () => PipelineSessionContext;
+  restoreSessionContext: (context: PipelineSessionContext) => void;
+  clearForNewDraft: () => void;
 
   // Meta
   fileName: string;
@@ -114,6 +163,15 @@ function subPhaseToStageKey(phase: RunningSubPhase): string {
   if (phase === "preprocessing") return "preprocess";
   if (phase === "visualization") return "viz";
   return phase;
+}
+
+function mapThoughtPhaseToSubPhase(phase: string): RunningSubPhase {
+  if (phase === "analysis" || phase === "intake") return "intake";
+  if (phase.startsWith("preprocess") || phase === "intent") return "preprocessing";
+  if (phase.startsWith("rag")) return "rag";
+  if (phase.startsWith("visualization")) return "visualization";
+  if (phase.startsWith("report")) return "report";
+  return "intake";
 }
 
 function now(): string {
@@ -154,42 +212,6 @@ function failToolCall(
   return { ...tc, status: "failed", result, duration: `${dur}s` };
 }
 
-/** Heuristic: detect if the chat answer suggests preprocessing is needed */
-function detectPreprocessNeeds(answer: string): boolean {
-  const keywords = [
-    "missing value",
-    "null",
-    "NaN",
-    "impute",
-    "imputation",
-    "preprocessing",
-    "empty cell",
-    "결측",
-    "누락",
-    "전처리",
-  ];
-  const lower = answer.toLowerCase();
-  return keywords.some((kw) => lower.includes(kw));
-}
-
-/** Extract a HITL proposal from the chat answer (best-effort parsing) */
-function extractProposal(answer: string): HitlProposal {
-  // Try to parse structured hints from the LLM answer
-  const colMatch = answer.match(/['"](\w+)['"]\s*(?:column|컬럼)/i)
-    ?? answer.match(/column\s*['"](\w+)['"]/i);
-  const countMatch = answer.match(/(\d+)\s*(?:missing|null|결측|누락)/i);
-  const percentMatch = answer.match(/([\d.]+)\s*%/);
-  const strategyMatch = answer.match(/(?:mode|median|mean|최빈값|중앙값|평균)/i);
-
-  return {
-    column: colMatch?.[1] ?? "unknown",
-    strategy: strategyMatch?.[0]?.toLowerCase() ?? "mode",
-    fillValue: "auto",
-    missingCount: countMatch ? parseInt(countMatch[1] ?? "0", 10) : 0,
-    missingPercent: percentMatch ? parseFloat(percentMatch[1] ?? "0") : 0,
-  };
-}
-
 function makeRawLog(label: string, payload: Record<string, unknown>, isError?: boolean): RawLogEntry {
   return {
     id: crypto.randomUUID(),
@@ -197,6 +219,90 @@ function makeRawLog(label: string, payload: Record<string, unknown>, isError?: b
     payload: JSON.stringify(payload, null, 2),
     isError,
   };
+}
+
+function parseThoughtStep(payload: unknown): ThoughtStep | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const data = payload as Record<string, unknown>;
+  const message = typeof data.message === "string" ? data.message.trim() : "";
+  if (!message) {
+    return null;
+  }
+  const phase =
+    typeof data.phase === "string" && data.phase.trim()
+      ? data.phase.trim()
+      : "analysis";
+  const status =
+    data.status === "active" || data.status === "completed" || data.status === "failed"
+      ? data.status
+      : undefined;
+  return { phase, message, status };
+}
+
+function parseVisualizationResult(payload: unknown): VisualizationResultPayload | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const data = payload as Record<string, unknown>;
+  const artifactRaw = data.artifact;
+  if (!artifactRaw || typeof artifactRaw !== "object") {
+    return null;
+  }
+  const artifact = artifactRaw as Record<string, unknown>;
+  const imageBase64 = artifact.image_base64;
+  if (typeof imageBase64 !== "string" || !imageBase64) {
+    return null;
+  }
+
+  const chartRaw = data.chart;
+  const chart = chartRaw && typeof chartRaw === "object"
+    ? chartRaw as Record<string, unknown>
+    : {};
+
+  return {
+    status: typeof data.status === "string" ? data.status : "generated",
+    source_id: typeof data.source_id === "string" ? data.source_id : undefined,
+    summary: typeof data.summary === "string" ? data.summary : undefined,
+    chart: {
+      chart_type: typeof chart.chart_type === "string" ? chart.chart_type : undefined,
+      x_key: typeof chart.x_key === "string" ? chart.x_key : undefined,
+      y_key: typeof chart.y_key === "string" ? chart.y_key : undefined,
+    },
+    artifact: {
+      mime_type: typeof artifact.mime_type === "string" ? artifact.mime_type : "image/png",
+      image_base64: imageBase64,
+      code: typeof artifact.code === "string" ? artifact.code : undefined,
+    },
+  };
+}
+
+function pickVisualizationResultFromDoneRecord(
+  record: Record<string, unknown>,
+): VisualizationResultPayload | null {
+  const direct = parseVisualizationResult(record.visualization_result);
+  if (direct) {
+    return direct;
+  }
+
+  const reportResult = record.report_result;
+  if (!reportResult || typeof reportResult !== "object") {
+    return null;
+  }
+  const report = reportResult as Record<string, unknown>;
+  const visualizations = report.visualizations;
+  if (!Array.isArray(visualizations) || visualizations.length === 0) {
+    return null;
+  }
+
+  for (const candidate of visualizations) {
+    const parsed = parseVisualizationResult(candidate);
+    if (parsed) {
+      return parsed;
+    }
+  }
+  return null;
 }
 
 /* ─────────────────────────────────────────────
@@ -210,15 +316,18 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
   const [uploadProgress, setUploadProgress] = useState(0);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
-  // --- API response accumulation ---
+  // --- Session / streaming state ---
   const [fileName, setFileName] = useState("");
-  const [datasetId, setDatasetId] = useState<number | null>(null);
-  const [sourceId, setSourceId] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<number | null>(null);
-  const [sampleData, setSampleData] = useState<SampleResponse | null>(null);
   const [chatResponse, setChatResponse] = useState<ChatResponse | null>(null);
-  const [ragResponse, setRagResponse] = useState<RagResponse | null>(null);
-  const [reportResult, setReportResult] = useState<ReportResponse | null>(null);
+  const [streamingAnswer, setStreamingAnswer] = useState("");
+  const [thoughtSteps, setThoughtSteps] = useState<ThoughtStep[]>([]);
+  const [latestVisualizationResult, setLatestVisualizationResult] = useState<VisualizationResultPayload | null>(null);
+  const [chatHistory, setChatHistory] = useState<ChatHistoryMessage[]>([]);
+
+  // --- Upload selection state ---
+  const [uploadedDatasets, setUploadedDatasets] = useState<UploadedDatasetMeta[]>([]);
+  const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
 
   // --- Pipeline tracking ---
   const [toolCalls, setToolCalls] = useState<ToolCallEntry[]>([]);
@@ -232,21 +341,23 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
   // --- Completed stage tracking ---
   const completedStagesRef = useRef<Set<string>>(new Set());
 
-  // --- Abort controller ---
+  // --- Abort / retry refs ---
   const abortRef = useRef<AbortController | null>(null);
+  const lastQuestionRef = useRef<string>("");
+  const localMessageIdRef = useRef(0);
 
   // --- Elapsed timer ---
   useEffect(() => {
     let iv: ReturnType<typeof setInterval>;
     if (state === "running" || state === "needs-user") {
       iv = setInterval(() => setElapsedSeconds((s) => s + 1), 1000);
-    } else if (state === "empty") {
+    } else if (state === "empty" || state === "ready") {
       setElapsedSeconds(0);
     }
     return () => clearInterval(iv);
   }, [state]);
 
-  /* ─── Tool call helpers (mutate via setState) ─── */
+  /* ─── State helpers ─── */
 
   const addToolCall = useCallback((tc: ToolCallEntry) => {
     setToolCalls((prev) => [...prev, tc]);
@@ -268,8 +379,6 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
     completedStagesRef.current.add(stageKey);
   }, []);
 
-  /* ─── Error transition ─── */
-
   const transitionToError = useCallback(
     (step: string, message: string) => {
       setErrorStep(step);
@@ -286,313 +395,128 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
     [addMilestone],
   );
 
-  /* ─── Pipeline stages ─── */
-
-  const runIntake = useCallback(
-    async (sid: string, signal: AbortSignal): Promise<SampleResponse | null> => {
-      setRunningSubPhase("intake");
-      const tc = makeToolCall("fetch_sample", { source_id: sid });
-      addToolCall(tc);
-      addLog(makeRawLog("tool_call: fetch_sample", { source_id: sid }));
-      const t0 = Date.now();
-      try {
-        const sample = await fetchSample(sid);
-        if (signal.aborted) return null;
-        const result = `${sample.columns.length} columns, ${sample.rows.length} sample rows`;
-        updateToolCall(tc.id, completeToolCall(tc, result, t0));
-        addLog(makeRawLog("tool_result: fetch_sample", { columns: sample.columns.length, rows: sample.rows.length }));
-        setSampleData(sample);
-        markStageCompleted("intake");
-        addMilestone({
-          status: "completed",
-          title: "Schema inspected",
-          subtext: result,
-          timestamp: now(),
-        });
-        return sample;
-      } catch (e: any) {
-        if (signal.aborted) return null;
-        updateToolCall(tc.id, failToolCall(tc, e.message, t0));
-        addLog(makeRawLog("tool_error: fetch_sample", { error: e.message }, true));
-        transitionToError("fetch_sample", e.message);
-        return null;
+  const upsertUploadedDataset = useCallback((nextDataset: UploadedDatasetMeta) => {
+    setUploadedDatasets((prev) => {
+      const index = prev.findIndex((item) => item.sourceId === nextDataset.sourceId);
+      if (index < 0) {
+        return [...prev, nextDataset];
       }
-    },
-    [addToolCall, updateToolCall, addMilestone, addLog, markStageCompleted, transitionToError],
-  );
+      const next = [...prev];
+      next[index] = nextDataset;
+      return next;
+    });
+  }, []);
 
-  const runAnalysis = useCallback(
-    async (sid: string, signal: AbortSignal): Promise<ChatResponse | null> => {
-      setRunningSubPhase("preprocessing");
-      const tc = makeToolCall("chat_analysis", { source_id: sid, question: "Analyze dataset" });
-      addToolCall(tc);
-      addLog(makeRawLog("tool_call: chat_analysis", { source_id: sid }));
-      const t0 = Date.now();
-      try {
-        const chat = await sendChat({
-          question: "Analyze this dataset. Identify any missing values, data quality issues, and recommend preprocessing steps.",
-          source_id: sid,
-        });
-        if (signal.aborted) return null;
-        const summary = chat.answer.slice(0, 100) + (chat.answer.length > 100 ? "..." : "");
-        updateToolCall(tc.id, completeToolCall(tc, summary, t0));
-        addLog(makeRawLog("tool_result: chat_analysis", { session_id: chat.session_id, answer_length: chat.answer.length }));
-        setSessionId(chat.session_id);
-        setChatResponse(chat);
-        markStageCompleted("preprocess");
-        addMilestone({
-          status: "completed",
-          title: "Analysis complete",
-          subtext: summary,
-          timestamp: now(),
-        });
-        return chat;
-      } catch (e: any) {
-        if (signal.aborted) return null;
-        updateToolCall(tc.id, failToolCall(tc, e.message, t0));
-        addLog(makeRawLog("tool_error: chat_analysis", { error: e.message }, true));
-        transitionToError("chat_analysis", e.message);
-        return null;
-      }
-    },
-    [addToolCall, updateToolCall, addMilestone, addLog, markStageCompleted, transitionToError],
-  );
-
-  const runRagPhase = useCallback(
-    async (sid: string, signal: AbortSignal): Promise<RagResponse | null> => {
-      setRunningSubPhase("rag");
-      const tc = makeToolCall("rag_query", { source_id: sid, top_k: 5 });
-      addToolCall(tc);
-      addLog(makeRawLog("tool_call: rag_query", { source_id: sid, top_k: 5 }));
-      const t0 = Date.now();
-      try {
-        const rag = await queryRag({
-          query: "Analyze patterns and anomalies in the dataset",
-          top_k: 5,
-          source_filter: [sid],
-        });
-        if (signal.aborted) return null;
-        // apiRequest returns undefined for 204
-        if (!rag) {
-          updateToolCall(tc.id, completeToolCall(tc, "No matching documents", t0));
-          addLog(makeRawLog("tool_result: rag_query", { chunks: 0 }));
-          markStageCompleted("rag");
-          addMilestone({ status: "completed", title: "RAG search", subtext: "No matching documents", timestamp: now() });
-          return null;
+  const appendThoughtStep = useCallback(
+    (step: ThoughtStep) => {
+      setThoughtSteps((prev) => {
+        if (prev.some((item) => item.phase === step.phase && item.message === step.message)) {
+          return prev;
         }
-        const result = `${rag.retrieved_chunks.length} chunks retrieved`;
-        updateToolCall(tc.id, completeToolCall(tc, result, t0));
-        addLog(makeRawLog("tool_result: rag_query", { chunks: rag.retrieved_chunks.length }));
-        setRagResponse(rag);
-        markStageCompleted("rag");
-        addMilestone({ status: "completed", title: "RAG retrieved", subtext: result, timestamp: now() });
-        return rag;
-      } catch (e: any) {
-        if (signal.aborted) return null;
-        updateToolCall(tc.id, failToolCall(tc, e.message, t0));
-        addLog(makeRawLog("tool_error: rag_query", { error: e.message }, true));
-        transitionToError("rag_query", e.message);
-        return null;
+        return [...prev, step];
+      });
+
+      const subPhase = mapThoughtPhaseToSubPhase(step.phase);
+      setRunningSubPhase(subPhase);
+
+      if (step.status === "completed") {
+        markStageCompleted(subPhaseToStageKey(subPhase));
       }
     },
-    [addToolCall, updateToolCall, addMilestone, addLog, markStageCompleted, transitionToError],
-  );
-
-  const runReportPhase = useCallback(
-    async (sessId: number, signal: AbortSignal): Promise<ReportResponse | null> => {
-      setRunningSubPhase("report");
-      const tc = makeToolCall("create_report", { session_id: sessId });
-      addToolCall(tc);
-      addLog(makeRawLog("tool_call: create_report", { session_id: sessId }));
-      const t0 = Date.now();
-      try {
-        const report = await createReport({ session_id: sessId });
-        if (signal.aborted) return null;
-        updateToolCall(tc.id, completeToolCall(tc, report.summary_text.slice(0, 80), t0));
-        addLog(makeRawLog("tool_result: create_report", { report_id: report.report_id }));
-        setReportResult(report);
-        markStageCompleted("report");
-        markStageCompleted("merge");
-        markStageCompleted("viz");
-        addMilestone({ status: "completed", title: "Report generated", subtext: report.report_id, timestamp: now() });
-        return report;
-      } catch (e: any) {
-        if (signal.aborted) return null;
-        updateToolCall(tc.id, failToolCall(tc, e.message, t0));
-        addLog(makeRawLog("tool_error: create_report", { error: e.message }, true));
-        transitionToError("create_report", e.message);
-        return null;
-      }
-    },
-    [addToolCall, updateToolCall, addMilestone, addLog, markStageCompleted, transitionToError],
-  );
-
-  /* ─── Main pipeline orchestration ─── */
-
-  const runPipeline = useCallback(
-    async (dsId: number, sid: string) => {
-      const ctrl = new AbortController();
-      abortRef.current = ctrl;
-      const { signal } = ctrl;
-
-      // 1. Intake
-      const sample = await runIntake(sid, signal);
-      if (!sample || signal.aborted) return;
-
-      // 2. Chat analysis
-      const chat = await runAnalysis(sid, signal);
-      if (!chat || signal.aborted) return;
-
-      // 3. Check if preprocessing is needed → HITL gate
-      if (detectPreprocessNeeds(chat.answer)) {
-        const proposal = extractProposal(chat.answer);
-        setHitlProposal(proposal);
-        setState("needs-user");
-        addMilestone({
-          status: "needs-user",
-          title: "Approval required",
-          subtext: `${proposal.column} · ${proposal.missingCount} rows · ${proposal.strategy}`,
-          timestamp: now(),
-          selected: true,
-        });
-        // Pipeline pauses here — resumed by handleApprove/handleReject/handleEditInstruction
-        return;
-      }
-
-      // 4. RAG
-      await runRagPhase(sid, signal);
-      if (signal.aborted) return;
-
-      // 5. Report
-      const reportSessId = chat.session_id;
-      const report = await runReportPhase(reportSessId, signal);
-      if (!report || signal.aborted) return;
-
-      setState("success");
-    },
-    [runIntake, runAnalysis, runRagPhase, runReportPhase, addMilestone],
-  );
-
-  /* ─── Resume after HITL ─── */
-
-  const resumeAfterApproval = useCallback(
-    async (doPreprocess: boolean, editText?: string) => {
-      setState("running");
-      const ctrl = new AbortController();
-      abortRef.current = ctrl;
-      const { signal } = ctrl;
-      const sid = sourceId;
-      const dsId = datasetId;
-      const sessId = sessionId;
-
-      if (!sid || dsId === null || sessId === null) {
-        transitionToError("resume", "Missing session context");
-        return;
-      }
-
-      // Optionally apply preprocessing
-      if (doPreprocess && hitlProposal) {
-        setRunningSubPhase("preprocessing");
-        const tc = makeToolCall("preprocess_apply", {
-          dataset_id: dsId,
-          column: hitlProposal.column,
-          strategy: hitlProposal.strategy,
-        });
-        addToolCall(tc);
-        addLog(makeRawLog("tool_call: preprocess_apply", { dataset_id: dsId, column: hitlProposal.column }));
-        const t0 = Date.now();
-        try {
-          await applyPreprocess({
-            dataset_id: dsId,
-            operations: [
-              {
-                op: "impute",
-                params: {
-                  column: hitlProposal.column,
-                  strategy: hitlProposal.strategy,
-                  fill_value: editText ?? hitlProposal.fillValue,
-                },
-              },
-            ],
-          });
-          if (signal.aborted) return;
-          updateToolCall(tc.id, completeToolCall(tc, "Preprocessing applied", t0));
-          addLog(makeRawLog("tool_result: preprocess_apply", { success: true }));
-          markStageCompleted("preprocess");
-        } catch (e: any) {
-          if (signal.aborted) return;
-          updateToolCall(tc.id, failToolCall(tc, e.message, t0));
-          addLog(makeRawLog("tool_error: preprocess_apply", { error: e.message }, true));
-          transitionToError("preprocess_apply", e.message);
-          return;
-        }
-      }
-
-      // RAG
-      await runRagPhase(sid, signal);
-      if (signal.aborted) return;
-
-      // Report
-      const report = await runReportPhase(sessId, signal);
-      if (!report || signal.aborted) return;
-
-      setState("success");
-    },
-    [
-      sourceId, datasetId, sessionId, hitlProposal,
-      addToolCall, updateToolCall, addLog, markStageCompleted,
-      runRagPhase, runReportPhase, transitionToError,
-    ],
+    [markStageCompleted],
   );
 
   /* ─── Actions ─── */
 
+  const selectUploadedDataset = useCallback(
+    (sourceId: string | null) => {
+      setSelectedSourceId(sourceId);
+      if (!sourceId) {
+        return;
+      }
+      const selected = uploadedDatasets.find((item) => item.sourceId === sourceId);
+      if (selected) {
+        setFileName(selected.fileName);
+      }
+    },
+    [uploadedDatasets],
+  );
+
+  const removeUploadedDataset = useCallback(
+    async (sourceId: string) => {
+      await deleteDataset(sourceId);
+
+      const nextDatasets = uploadedDatasets.filter((item) => item.sourceId !== sourceId);
+      setUploadedDatasets(nextDatasets);
+
+      if (selectedSourceId === sourceId) {
+        setSelectedSourceId(null);
+        setFileName("");
+      } else if (nextDatasets.length === 0) {
+        setFileName("");
+      }
+
+      if (state === "ready" && nextDatasets.length === 0) {
+        setState("empty");
+      }
+
+      addMilestone({
+        status: "completed",
+        title: "Dataset deleted",
+        subtext: sourceId,
+        timestamp: now(),
+      });
+    },
+    [uploadedDatasets, selectedSourceId, state, addMilestone],
+  );
+
+  const nextLocalMessageId = useCallback(() => {
+    localMessageIdRef.current += 1;
+    return Date.now() + localMessageIdRef.current;
+  }, []);
+
   const startUpload = useCallback(
     (file: File) => {
-      // Reset all state for new pipeline
-      setToolCalls([]);
-      setMilestones([]);
-      setHistory([]);
-      setRawLogs([]);
-      setSampleData(null);
       setChatResponse(null);
-      setRagResponse(null);
-      setReportResult(null);
-      setHitlProposal(null);
+      setStreamingAnswer("");
+      setThoughtSteps([]);
       setErrorMessage(null);
       setErrorStep(null);
-      setElapsedSeconds(0);
-      completedStagesRef.current = new Set();
-
+      setHitlProposal(null);
+      setUploadProgress(0);
       setFileName(file.name);
       setState("uploading");
-      setUploadProgress(0);
 
       uploadFile(file, (percent) => {
         setUploadProgress(percent);
       })
         .then((dataset: DatasetResponse) => {
-          setDatasetId(dataset.id);
-          setSourceId(dataset.source_id);
           setUploadProgress(100);
+          setState("ready");
+          setRunningSubPhase("intake");
+          setFileName(dataset.filename || file.name);
+
+          upsertUploadedDataset({
+            datasetId: dataset.id,
+            sourceId: dataset.source_id,
+            fileName: dataset.filename || file.name,
+          });
+
           addMilestone({
             status: "completed",
             title: "Upload complete",
             subtext: `${dataset.filename} · ${dataset.source_id}`,
             timestamp: now(),
           });
-          setState("running");
-          runPipeline(dataset.id, dataset.source_id);
         })
         .catch((err: Error) => {
           transitionToError("upload", err.message);
         });
     },
-    [addMilestone, runPipeline, transitionToError],
+    [addMilestone, transitionToError, upsertUploadedDataset],
   );
 
   const startWithSample = useCallback(() => {
-    // Create a minimal sample CSV file for the "Try Sample Dataset" flow
     const sampleContent = "id,name,region,price,date\n1,Product A,North,100,2024-01-01\n2,Product B,South,200,2024-01-02\n";
     const blob = new Blob([sampleContent], { type: "text/csv" });
     const file = new File([blob], "sample_data.csv", { type: "text/csv" });
@@ -605,8 +529,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
       { status: "completed" as TimelineItemStatus, title: "Approved", subtext: "User confirmed strategy", timestamp: now() },
     ]);
     setHitlProposal(null);
-    resumeAfterApproval(true);
-  }, [resumeAfterApproval]);
+  }, []);
 
   const handleReject = useCallback(() => {
     setHistory((prev) => [
@@ -614,67 +537,324 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
       { status: "failed" as TimelineItemStatus, title: "Rejected Changes", subtext: "User cancelled action", timestamp: now() },
     ]);
     setHitlProposal(null);
-    resumeAfterApproval(false);
-  }, [resumeAfterApproval]);
+  }, []);
 
-  const handleEditInstruction = useCallback(
-    (text: string) => {
-      setHistory((prev) => [
-        ...prev,
-        { status: "completed" as TimelineItemStatus, title: "User Edit", subtext: text, timestamp: now() },
-      ]);
-      resumeAfterApproval(true, text);
-    },
-    [resumeAfterApproval],
-  );
-
-  const handleRetry = useCallback(() => {
-    if (sourceId && datasetId !== null) {
-      setErrorMessage(null);
-      setErrorStep(null);
-      setState("running");
-      runPipeline(datasetId, sourceId);
-    }
-  }, [sourceId, datasetId, runPipeline]);
+  const handleEditInstruction = useCallback((text: string) => {
+    setHistory((prev) => [
+      ...prev,
+      { status: "completed" as TimelineItemStatus, title: "User Edit", subtext: text, timestamp: now() },
+    ]);
+  }, []);
 
   const handleSend = useCallback(
     (message: string) => {
-      if (!sourceId || sessionId === null) return;
-      const tc = makeToolCall("chat_followup", { question: message, session_id: sessionId });
+      const question = message.trim();
+      if (!question) return;
+
+      setChatHistory((prev) => [
+        ...prev,
+        {
+          id: nextLocalMessageId(),
+          role: "user",
+          content: question,
+          created_at: new Date().toISOString(),
+        },
+      ]);
+
+      lastQuestionRef.current = question;
+      setErrorMessage(null);
+      setErrorStep(null);
+      setState("running");
+      setRunningSubPhase("intake");
+      setStreamingAnswer("");
+      setChatResponse(null);
+      setThoughtSteps([]);
+      completedStagesRef.current = new Set();
+
+      const request: { question: string; session_id?: number; source_id?: string } = {
+        question,
+      };
+      if (sessionId !== null) request.session_id = sessionId;
+      if (selectedSourceId) request.source_id = selectedSourceId;
+
+      const tc = makeToolCall("chat_stream", request);
       addToolCall(tc);
-      const t0 = Date.now();
-      sendChat({ question: message, session_id: sessionId, source_id: sourceId })
-        .then((resp) => {
-          updateToolCall(tc.id, completeToolCall(tc, resp.answer.slice(0, 80), t0));
-          setChatResponse(resp);
-          addMilestone({ status: "completed", title: "Follow-up", subtext: message.slice(0, 40), timestamp: now() });
-        })
-        .catch((e: Error) => {
-          updateToolCall(tc.id, failToolCall(tc, e.message, t0));
-        });
+      addLog(makeRawLog("tool_call: chat_stream", request));
+
+      const startMs = Date.now();
+      const abortController = new AbortController();
+      abortRef.current = abortController;
+
+      void (async () => {
+        try {
+          const response = await fetch(buildApiUrl("/chats/stream"), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(request),
+            signal: abortController.signal,
+          });
+
+          if (!response.ok) {
+            const detail = await response.text();
+            throw new Error(detail || "채팅 요청에 실패했습니다.");
+          }
+
+          if (!response.body) {
+            throw new Error("스트리밍 응답을 받을 수 없습니다.");
+          }
+
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder("utf-8");
+          let buffer = "";
+          let streamText = "";
+          let finalAnswer = "";
+          let doneReceived = false;
+
+          const handleEvent = (rawEvent: string) => {
+            const lines = rawEvent.split("\n");
+            let eventName = "message";
+            const dataLines: string[] = [];
+
+            for (const line of lines) {
+              if (line.startsWith("event:")) {
+                eventName = line.slice(6).trim();
+              } else if (line.startsWith("data:")) {
+                dataLines.push(line.slice(5).trim());
+              }
+            }
+
+            const rawData = dataLines.join("\n");
+            let payload: unknown = {};
+            if (rawData) {
+              try {
+                payload = JSON.parse(rawData);
+              } catch {
+                payload = { message: rawData };
+              }
+            }
+
+            const record = payload && typeof payload === "object"
+              ? (payload as Record<string, unknown>)
+              : {};
+
+            if (eventName === "session") {
+              const nextSession = record.session_id;
+              if (typeof nextSession === "number") {
+                setSessionId(nextSession);
+              }
+              return;
+            }
+
+            if (eventName === "thought") {
+              const step = parseThoughtStep(record);
+              if (step) {
+                appendThoughtStep(step);
+              }
+              return;
+            }
+
+            if (eventName === "chunk") {
+              const delta = record.delta;
+              if (typeof delta === "string" && delta) {
+                streamText += delta;
+                setStreamingAnswer((prev) => prev + delta);
+              }
+              return;
+            }
+
+            if (eventName === "done") {
+              doneReceived = true;
+              const answer = typeof record.answer === "string" ? record.answer : streamText;
+              finalAnswer = answer;
+              setStreamingAnswer(answer);
+
+              const nextSession = record.session_id;
+              const resolvedSessionId = typeof nextSession === "number" ? nextSession : sessionId;
+              if (typeof resolvedSessionId === "number") {
+                setSessionId(resolvedSessionId);
+              }
+
+              const doneThoughts = record.thought_steps;
+              if (Array.isArray(doneThoughts)) {
+                for (const item of doneThoughts) {
+                  const step = parseThoughtStep(item);
+                  if (step) {
+                    appendThoughtStep(step);
+                  }
+                }
+              }
+
+              if (typeof resolvedSessionId === "number") {
+                setChatResponse({
+                  answer,
+                  session_id: resolvedSessionId,
+                  thought_steps: Array.isArray(doneThoughts) ? (doneThoughts as any[]) : [],
+                });
+              }
+
+              if (answer.trim()) {
+                setChatHistory((prev) => [
+                  ...prev,
+                  {
+                    id: nextLocalMessageId(),
+                    role: "assistant",
+                    content: answer,
+                    created_at: new Date().toISOString(),
+                  },
+                ]);
+              }
+
+              const visualizationResult = pickVisualizationResultFromDoneRecord(record);
+              if (visualizationResult) {
+                setLatestVisualizationResult(visualizationResult);
+              }
+
+              const preprocessResult = record.preprocess_result;
+              if (preprocessResult && typeof preprocessResult === "object") {
+                const preprocess = preprocessResult as Record<string, unknown>;
+                if (
+                  preprocess.status === "applied" &&
+                  typeof preprocess.output_source_id === "string" &&
+                  preprocess.output_source_id
+                ) {
+                  upsertUploadedDataset({
+                    datasetId: 0,
+                    sourceId: preprocess.output_source_id,
+                    fileName:
+                      typeof preprocess.output_filename === "string" && preprocess.output_filename
+                        ? preprocess.output_filename
+                        : `processed_${preprocess.output_source_id}`,
+                  });
+                }
+              }
+
+              setState("success");
+              return;
+            }
+
+            if (eventName === "error") {
+              const message = typeof record.message === "string"
+                ? record.message
+                : "스트리밍 처리 중 오류가 발생했습니다.";
+              throw new Error(message);
+            }
+          };
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) {
+              break;
+            }
+            buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
+            while (true) {
+              const separatorIndex = buffer.indexOf("\n\n");
+              if (separatorIndex < 0) {
+                break;
+              }
+              const rawEvent = buffer.slice(0, separatorIndex).trim();
+              buffer = buffer.slice(separatorIndex + 2);
+              if (!rawEvent) {
+                continue;
+              }
+              handleEvent(rawEvent);
+            }
+          }
+
+          const tail = decoder.decode();
+          if (tail) {
+            buffer += tail.replace(/\r\n/g, "\n");
+          }
+          if (buffer.trim()) {
+            handleEvent(buffer.trim());
+          }
+
+          const finalText = (finalAnswer || streamText).trim();
+          if (!doneReceived && finalText) {
+            setStreamingAnswer(finalText);
+            if (sessionId !== null) {
+              setChatResponse({ answer: finalText, session_id: sessionId, thought_steps: [] });
+            }
+            setChatHistory((prev) => [
+              ...prev,
+              {
+                id: nextLocalMessageId(),
+                role: "assistant",
+                content: finalText,
+                created_at: new Date().toISOString(),
+              },
+            ]);
+            setState("success");
+          }
+
+          updateToolCall(tc.id, completeToolCall(tc, finalText.slice(0, 80) || "stream done", startMs));
+          addMilestone({
+            status: "completed",
+            title: "Follow-up",
+            subtext: question.slice(0, 40),
+            timestamp: now(),
+          });
+          addLog(makeRawLog("tool_result: chat_stream", { answer_length: finalText.length }));
+        } catch (error: unknown) {
+          if (error instanceof DOMException && error.name === "AbortError") {
+            return;
+          }
+          if (error instanceof Error && error.name === "AbortError") {
+            return;
+          }
+
+          const message = error instanceof Error ? error.message : "채팅 요청에 실패했습니다.";
+          updateToolCall(tc.id, failToolCall(tc, message, startMs));
+          addLog(makeRawLog("tool_error: chat_stream", { error: message }, true));
+          transitionToError("chat_stream", message);
+        } finally {
+          abortRef.current = null;
+        }
+      })();
     },
-    [sourceId, sessionId, addToolCall, updateToolCall, addMilestone],
+    [
+      sessionId,
+      selectedSourceId,
+      addToolCall,
+      addLog,
+      updateToolCall,
+      addMilestone,
+      appendThoughtStep,
+      transitionToError,
+      upsertUploadedDataset,
+      nextLocalMessageId,
+    ],
   );
+
+  const handleRetry = useCallback(() => {
+    if (!lastQuestionRef.current) {
+      setState(uploadedDatasets.length > 0 ? "ready" : "empty");
+      return;
+    }
+    handleSend(lastQuestionRef.current);
+  }, [handleSend, uploadedDatasets.length]);
 
   const handleCancel = useCallback(() => {
     abortRef.current?.abort();
-    setState("empty");
+    abortRef.current = null;
     setUploadProgress(0);
-  }, []);
+    setStreamingAnswer("");
+    setThoughtSteps([]);
+    setState(uploadedDatasets.length > 0 ? "ready" : "empty");
+  }, [uploadedDatasets.length]);
 
   const reset = useCallback(() => {
     abortRef.current?.abort();
+    abortRef.current = null;
     setState("empty");
     setUploadProgress(0);
     setElapsedSeconds(0);
     setFileName("");
-    setDatasetId(null);
-    setSourceId(null);
     setSessionId(null);
-    setSampleData(null);
     setChatResponse(null);
-    setRagResponse(null);
-    setReportResult(null);
+    setStreamingAnswer("");
+    setThoughtSteps([]);
+    setUploadedDatasets([]);
+    setSelectedSourceId(null);
     setToolCalls([]);
     setMilestones([]);
     setHistory([]);
@@ -682,42 +862,157 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
     setErrorMessage(null);
     setErrorStep(null);
     setHitlProposal(null);
+    setLatestVisualizationResult(null);
+    setChatHistory([]);
+    lastQuestionRef.current = "";
+    localMessageIdRef.current = 0;
     completedStagesRef.current = new Set();
   }, []);
+
+  const captureSessionContext = useCallback((): PipelineSessionContext => {
+    const latestAssistantAnswer =
+      typeof chatResponse?.answer === "string" && chatResponse.answer.trim()
+        ? chatResponse.answer
+        : null;
+
+    let stateHint: PipelineSessionStateHint = "empty";
+    if (state === "error") {
+      stateHint = "error";
+    } else if (state === "success") {
+      stateHint = "success";
+    } else if (state === "ready") {
+      stateHint = "ready";
+    } else if (state === "running" || state === "uploading" || state === "needs-user") {
+      if (latestAssistantAnswer) {
+        stateHint = "success";
+      } else if (uploadedDatasets.length > 0) {
+        stateHint = "ready";
+      } else {
+        stateHint = "empty";
+      }
+    }
+
+    return {
+      backendSessionId: sessionId,
+      fileName,
+      uploadedDatasets: [...uploadedDatasets],
+      selectedSourceId,
+      chatHistory,
+      latestAssistantAnswer,
+      latestVisualizationResult,
+      stateHint,
+      errorMessage: stateHint === "error" ? errorMessage : null,
+    };
+  }, [
+    chatResponse,
+    state,
+    uploadedDatasets,
+    sessionId,
+    fileName,
+    selectedSourceId,
+    chatHistory,
+    latestVisualizationResult,
+    errorMessage,
+  ]);
+
+  const restoreSessionContext = useCallback((context: PipelineSessionContext) => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+
+    const nextSessionId = context.backendSessionId ?? null;
+    const nextUploadedDatasets = Array.isArray(context.uploadedDatasets)
+      ? context.uploadedDatasets
+      : [];
+    const nextStateHint: PipelineSessionStateHint = context.stateHint ?? "empty";
+    const latestAnswer =
+      typeof context.latestAssistantAnswer === "string" && context.latestAssistantAnswer.trim()
+        ? context.latestAssistantAnswer
+        : null;
+
+    setSessionId(nextSessionId);
+    setFileName(context.fileName || "");
+    setUploadedDatasets(nextUploadedDatasets);
+    setSelectedSourceId(context.selectedSourceId ?? null);
+    setLatestVisualizationResult(context.latestVisualizationResult ?? null);
+    setChatHistory(context.chatHistory || []);
+
+    setUploadProgress(0);
+    setElapsedSeconds(0);
+    setRunningSubPhase("intake");
+    setStreamingAnswer("");
+    setThoughtSteps([]);
+    setToolCalls([]);
+    setMilestones([]);
+    setHistory([]);
+    setRawLogs([]);
+    setHitlProposal(null);
+    setErrorStep(null);
+
+    if (nextStateHint === "error") {
+      setErrorMessage(context.errorMessage ?? "세션에서 오류 상태를 복원했습니다.");
+    } else {
+      setErrorMessage(null);
+    }
+
+    if (latestAnswer && typeof nextSessionId === "number") {
+      setChatResponse({
+        answer: latestAnswer,
+        session_id: nextSessionId,
+        thought_steps: [],
+      });
+    } else {
+      setChatResponse(null);
+    }
+
+    if (nextStateHint === "success") {
+      setState("success");
+    } else if (nextStateHint === "ready") {
+      setState("ready");
+    } else if (nextStateHint === "error") {
+      setState("error");
+    } else {
+      setState("empty");
+    }
+
+    lastQuestionRef.current = "";
+    completedStagesRef.current = new Set();
+  }, []);
+
+  const clearForNewDraft = useCallback(() => {
+    reset();
+  }, [reset]);
 
   /* ─── Derived data: GenUI prop mappings ─── */
 
   const reportSections: ReportSection[] = (() => {
-    if (state === "success" && reportResult) {
+    if (state === "ready") {
+      const selected = uploadedDatasets.find((item) => item.sourceId === selectedSourceId);
+      const selectedText = selected
+        ? `선택된 파일: ${selected.fileName}`
+        : "선택된 파일 없음 (일반 질문으로 전송됩니다).";
       return [
-        { type: "paragraph" as const, content: reportResult.summary_text },
-        ...(ragResponse
-          ? [
-              { type: "heading" as const, content: "Retrieved Evidence" },
-              {
-                type: "numbered-list" as const,
-                items: ragResponse.retrieved_chunks.map(
-                  (c) => `[score ${c.score.toFixed(2)}] ${c.snippet.slice(0, 120)}`,
-                ),
-              },
-            ]
-          : []),
+        { type: "paragraph" as const, content: "업로드가 완료되었습니다. 파일을 선택한 뒤 질문하면 해당 데이터로 라우팅됩니다." },
+        { type: "paragraph" as const, content: selectedText },
       ];
     }
+
     if (state === "running") {
-      const cols = sampleData?.columns?.length ?? 0;
-      const rows = sampleData?.rows?.length ?? 0;
-      const items: string[] = [];
-      if (sampleData) items.push(`Loaded dataset schema — ${rows} sample rows x ${cols} columns detected`);
-      if (chatResponse) items.push(chatResponse.answer.slice(0, 120));
-      else items.push("Scanning for patterns...");
-      items.push("Planning pipeline steps...");
-      return [
-        { type: "paragraph" as const, content: `Analyzing ${fileName}. Identifying preprocessing steps and patterns.` },
-        { type: "heading" as const, content: "Steps in Progress" },
-        { type: "numbered-list" as const, items },
-      ];
+      if (thoughtSteps.length > 0) {
+        return [
+          { type: "paragraph" as const, content: streamingAnswer || "질문을 처리 중입니다..." },
+          {
+            type: "numbered-list" as const,
+            items: thoughtSteps.map((step) => step.message),
+          },
+        ];
+      }
+      return [{ type: "paragraph" as const, content: streamingAnswer || "질문을 처리 중입니다..." }];
     }
+
+    if (state === "success" && chatResponse) {
+      return [{ type: "paragraph" as const, content: chatResponse.answer }];
+    }
+
     if (state === "needs-user" && hitlProposal) {
       const p = hitlProposal;
       return [
@@ -731,36 +1026,32 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
             "Downstream steps are blocked until this is resolved",
           ],
         },
-        { type: "heading" as const, content: "Proposed Changes" },
-        {
-          type: "checklist" as const,
-          items: [
-            `Impute '${p.column}' nulls with ${p.strategy} value ('${p.fillValue}')`,
-            `Flag imputed rows with a new boolean column '${p.column}_imputed'`,
-          ],
-        },
       ];
     }
+
     if (state === "error") {
-      return [
-        { type: "paragraph" as const, content: errorMessage ?? "An error occurred during analysis." },
-      ];
+      return [{ type: "paragraph" as const, content: errorMessage ?? "An error occurred during analysis." }];
     }
+
     return [];
   })();
 
+  const sourceId = selectedSourceId;
+
   const derivedRunStatus: RunStatusData | undefined = (() => {
     if (state !== "running" && state !== "needs-user" && state !== "error") return undefined;
-    const completedCount = toolCalls.filter((tc) => tc.status === "completed").length;
-    const totalExpected = 5;
+    const completedCount = completedStagesRef.current.size;
+    const totalExpected = sourceId ? 6 : 1;
     const progress = Math.min(Math.round((completedCount / totalExpected) * 100), 100);
     const lastTool = toolCalls[toolCalls.length - 1]?.name ?? "";
+
     if (state === "needs-user") {
       return { phase: "Awaiting approval", progress, lastTool, elapsedTime: formatElapsed(elapsedSeconds) };
     }
     if (state === "error") {
       return { phase: `Failed — ${errorStep ?? "unknown"}`, progress, lastTool, elapsedTime: formatElapsed(elapsedSeconds) };
     }
+
     const phaseLabels: Record<RunningSubPhase, string> = {
       intake: "데이터 수집",
       preprocessing: "자동 전처리",
@@ -768,6 +1059,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
       visualization: "시각화",
       report: "리포트 생성",
     };
+
     return {
       phase: phaseLabels[runningSubPhase],
       progress,
@@ -777,50 +1069,48 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
   })();
 
   const derivedPipelineSteps: PipelineStep[] | undefined = (() => {
-    if (state === "empty" || state === "uploading") return undefined;
+    if (!sourceId) return undefined;
+    if (state === "empty" || state === "uploading" || state === "ready") return undefined;
+
     const currentKey = subPhaseToStageKey(runningSubPhase);
-    const currentIdx = STAGES.indexOf(currentKey as typeof STAGES[number]);
+    const currentIdx = STAGES.indexOf(currentKey as (typeof STAGES)[number]);
     const completed = completedStagesRef.current;
 
     return STAGES.map((stageId, i) => {
-      let status: PipelineStepStatus;
+      let status: PipelineStepStatus = "queued";
       let sublabel: string | undefined;
-      const stageToolCount = toolCalls.filter((tc) => {
-        // Associate tool calls to stages by name heuristics
-        if (stageId === "intake") return tc.name === "fetch_sample";
-        if (stageId === "preprocess") return tc.name === "chat_analysis" || tc.name === "preprocess_apply";
-        if (stageId === "rag") return tc.name === "rag_query";
-        if (stageId === "report") return tc.name === "create_report";
-        return false;
-      }).length;
 
-      if (state === "error" && errorStep && stageId === subPhaseToStageKey(errorStep as RunningSubPhase)) {
+      if (state === "error" && i === currentIdx) {
         status = "failed";
         sublabel = `Failed — ${errorMessage?.slice(0, 40)}`;
-      } else if (state === "needs-user" && stageId === "preprocess") {
-        status = "needs-user";
-        sublabel = `Awaiting approval — ${hitlProposal?.column ?? ""}`;
-      } else if (completed.has(stageId) || state === "success") {
-        status = "success";
-      } else if (i === currentIdx && state === "running") {
+      } else if (state === "running" && i === currentIdx) {
         status = "running";
-        sublabel = "Processing...";
-      } else {
-        status = "queued";
+        const lastStageThought = [...thoughtSteps]
+          .reverse()
+          .find((step) => subPhaseToStageKey(mapThoughtPhaseToSubPhase(step.phase)) === stageId);
+        sublabel = lastStageThought?.message ?? "Processing...";
+      } else if (completed.has(stageId) || (state === "success" && i <= currentIdx)) {
+        status = "success";
       }
+
+      const toolCount = thoughtSteps.filter(
+        (step) => subPhaseToStageKey(mapThoughtPhaseToSubPhase(step.phase)) === stageId,
+      ).length;
 
       return {
         id: stageId,
         label: STAGE_LABELS[stageId] ?? stageId,
         status,
         sublabel,
-        toolCount: status === "success" || status === "running" ? stageToolCount : undefined,
+        toolCount: toolCount > 0 ? toolCount : undefined,
       };
     });
   })();
 
   const derivedDecisionChips: DecisionChip[] = (() => {
-    if (state === "empty" || state === "uploading") return [];
+    if (!sourceId) return [];
+    if (state === "empty" || state === "uploading" || state === "ready") return [];
+
     const CHIP_STAGES = ["Preprocess", "RAG", "Viz", "Report", "Mode"] as const;
     const completed = completedStagesRef.current;
     const stageKeyMap: Record<string, string> = {
@@ -834,25 +1124,17 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
       if (stage === "Mode") return { stage, value: "Full" as ChipValue };
 
       const key = stageKeyMap[stage] ?? "";
-      let value: ChipValue;
+      const currentKey = subPhaseToStageKey(runningSubPhase);
+      const currentIdx = STAGES.indexOf(currentKey as (typeof STAGES)[number]);
+      const stageIdx = STAGES.indexOf(key as (typeof STAGES)[number]);
 
-      if (state === "needs-user" && stage === "Preprocess") {
-        value = "BLOCKED";
-      } else if (state === "error" && errorStep && key === subPhaseToStageKey(errorStep as RunningSubPhase)) {
+      let value: ChipValue = "ON";
+      if (state === "error" && stageIdx === currentIdx) {
         value = "FAILED";
-      } else if (state === "success" || completed.has(key)) {
+      } else if (state === "running" && stageIdx === currentIdx) {
+        value = "RUNNING";
+      } else if (completed.has(key) || (state === "success" && stageIdx <= currentIdx)) {
         value = "DONE";
-      } else {
-        const currentKey = subPhaseToStageKey(runningSubPhase);
-        const currentIdx = STAGES.indexOf(currentKey as typeof STAGES[number]);
-        const stageIdx = STAGES.indexOf(key as typeof STAGES[number]);
-        if (state === "running" && stageIdx === currentIdx) {
-          value = "RUNNING";
-        } else if (stageIdx > currentIdx) {
-          value = "ON";
-        } else {
-          value = "ON";
-        }
       }
 
       return { stage, value };
@@ -860,13 +1142,14 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
   })();
 
   const derivedEvidence: EvidenceFooterProps = (() => {
-    const cols = sampleData?.columns?.length ?? 0;
-    const rows = sampleData?.rows?.length ?? 0;
+    const selectedDataset = uploadedDatasets.find((item) => item.sourceId === sourceId);
+    const ragUsed = thoughtSteps.some((step) => step.phase.startsWith("rag"));
+
     return {
-      data: fileName || "-",
-      scope: sampleData ? `${rows}x${cols}` : "-",
+      data: selectedDataset?.fileName || "-",
+      scope: uploadedDatasets.length > 0 ? `${uploadedDatasets.length} files` : "-",
       compute: `v3 · ${formatElapsed(elapsedSeconds)}`,
-      rag: ragResponse ? `${ragResponse.retrieved_chunks.length} chunks` : "OFF",
+      rag: ragUsed ? "ON" : "OFF",
     };
   })();
 
@@ -882,10 +1165,17 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
     pipelineSteps: derivedPipelineSteps,
     decisionChips: derivedDecisionChips,
     evidence: derivedEvidence,
+    chatHistory,
     milestones,
     history,
     hitlProposal,
     rawLogs,
+    latestVisualizationResult,
+
+    uploadedDatasets,
+    selectedSourceId,
+    selectUploadedDataset,
+    removeUploadedDataset,
 
     startUpload,
     startWithSample,
@@ -896,6 +1186,9 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
     handleSend,
     handleCancel,
     reset,
+    captureSessionContext,
+    restoreSessionContext,
+    clearForNewDraft,
 
     fileName,
     sourceId,

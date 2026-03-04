@@ -15,24 +15,53 @@ import { CardShell, CardHeader, CardBody, CardFooter } from "./CardShell";
 import { ApprovalCard } from "./ApprovalCard";
 import { ErrorCard } from "./ErrorCard";
 import { SkeletonLine } from "./Skeletons";
+import type { VisualizationResultPayload } from "../../hooks/useAnalysisPipeline";
+
+interface DetailsPanelSelectedItem {
+  visualization?: VisualizationResultPayload | null;
+  hasDatasetContext?: boolean;
+}
 
 interface DetailsPanelProps {
-  state: "empty" | "uploading" | "streaming" | "needs-user" | "error";
-  selectedItem?: any; 
+  state: "empty" | "uploading" | "ready" | "streaming" | "needs-user" | "error";
+  selectedItem?: DetailsPanelSelectedItem;
   onAction?: (action: string, payload?: any) => void;
   className?: string;
 }
 
 export function DetailsPanel({ state, selectedItem, onAction, className }: DetailsPanelProps) {
+  const visualization = selectedItem?.visualization ?? null;
+  const hasVisualization =
+    typeof visualization?.artifact?.image_base64 === "string" &&
+    visualization.artifact.image_base64.length > 0;
+  const hasDatasetContext = selectedItem?.hasDatasetContext ?? false;
+  const chartType = visualization?.chart?.chart_type ?? "chart";
+  const chartTitle = hasVisualization
+    ? `${visualization?.chart?.x_key || "x"} vs ${visualization?.chart?.y_key || "y"}`
+    : "Revenue Analysis";
+  const chartMeta = hasVisualization
+    ? `${chartType.toUpperCase()} Visualization`
+    : "Visualization";
+  const chartImageSrc = hasVisualization
+    ? `data:${visualization?.artifact?.mime_type || "image/png"};base64,${visualization?.artifact?.image_base64}`
+    : "";
+  const insightSummary =
+    typeof visualization?.summary === "string" && visualization.summary.trim()
+      ? visualization.summary.trim()
+      : hasDatasetContext
+        ? "시각화 요청이 완료되면 결과 차트가 이 영역에 표시됩니다."
+        : "데이터 소스를 선택하고 시각화 요청을 보내면 결과 차트가 표시됩니다.";
 
   // 1. EMPTY STATE: Help / orientation panel (no duplicate CTAs)
-  if (state === "empty") {
+  if (state === "empty" || state === "ready") {
     return (
       <div className={cn("h-full flex flex-col p-5 space-y-7 overflow-y-auto", className)}>
 
         {/* ── Getting Started ── */}
         <div className="space-y-4">
-          <h2 className="text-sm font-semibold text-[var(--genui-text)]">Getting Started</h2>
+          <h2 className="text-sm font-semibold text-[var(--genui-text)]">
+            {state === "ready" ? "업로드 완료" : "Getting Started"}
+          </h2>
 
           <div className="space-y-4">
             {[
@@ -269,23 +298,57 @@ export function DetailsPanel({ state, selectedItem, onAction, className }: Detai
         </div>
 
         <CardShell status="default" className="flex-1 flex flex-col border-none shadow-none bg-transparent p-0">
-            <CardHeader title="Revenue Analysis" meta="Visualization" statusLabel="Live" statusVariant="neutral" />
+            <CardHeader
+              title={chartTitle}
+              meta={chartMeta}
+              statusLabel={hasVisualization ? "Generated" : "Live"}
+              statusVariant="neutral"
+            />
             <CardBody className="flex-1 bg-[var(--genui-surface)]/30 rounded-lg border border-[var(--genui-border)] mt-4 p-4">
                 <div className="space-y-4">
-                    <div className="h-48 bg-[var(--genui-surface)] rounded border border-dashed border-[var(--genui-border)] flex items-center justify-center">
-                      <BarChart3 className="w-8 h-8 text-[var(--genui-muted)]/50" />
-                    </div>
+                    {hasVisualization ? (
+                      <img
+                        src={chartImageSrc}
+                        alt={`${chartType} visualization`}
+                        className="h-48 w-full rounded border border-[var(--genui-border)] bg-white dark:bg-[#212121] object-contain"
+                      />
+                    ) : (
+                      <div className="h-48 bg-[var(--genui-surface)] rounded border border-dashed border-[var(--genui-border)] flex items-center justify-center">
+                        <BarChart3 className="w-8 h-8 text-[var(--genui-muted)]/50" />
+                      </div>
+                    )}
                     <div className="space-y-2">
                       <h4 className="text-sm font-medium text-[var(--genui-text)]">Analysis Insights</h4>
                       <ul className="space-y-2">
-                        <li className="flex gap-2 text-xs text-[var(--genui-muted)]">
-                           <Lightbulb className="w-3 h-3 text-[var(--genui-warning)] flex-shrink-0" />
-                           <span>North region outperforms South by 15%.</span>
-                        </li>
-                        <li className="flex gap-2 text-xs text-[var(--genui-muted)]">
-                           <Lightbulb className="w-3 h-3 text-[var(--genui-warning)] flex-shrink-0" />
-                           <span>Q3 spike correlates with marketing campaign.</span>
-                        </li>
+                        {hasVisualization ? (
+                          <>
+                            <li className="flex gap-2 text-xs text-[var(--genui-muted)]">
+                               <Lightbulb className="w-3 h-3 text-[var(--genui-warning)] flex-shrink-0" />
+                               <span>{insightSummary}</span>
+                            </li>
+                            <li className="flex gap-2 text-xs text-[var(--genui-muted)]">
+                               <Lightbulb className="w-3 h-3 text-[var(--genui-warning)] flex-shrink-0" />
+                               <span>
+                                 시각화: {visualization?.chart?.x_key || "x"} vs {visualization?.chart?.y_key || "y"} ({chartType})
+                               </span>
+                            </li>
+                          </>
+                        ) : (
+                          <>
+                            <li className="flex gap-2 text-xs text-[var(--genui-muted)]">
+                               <Lightbulb className="w-3 h-3 text-[var(--genui-warning)] flex-shrink-0" />
+                               <span>{insightSummary}</span>
+                            </li>
+                            <li className="flex gap-2 text-xs text-[var(--genui-muted)]">
+                               <Lightbulb className="w-3 h-3 text-[var(--genui-warning)] flex-shrink-0" />
+                               <span>
+                                 {hasDatasetContext
+                                   ? "차트/시각화 관련 질문을 보내면 이 패널이 자동으로 갱신됩니다."
+                                   : "현재는 일반 질문 경로입니다. 상단에서 데이터 소스를 먼저 선택해 주세요."}
+                               </span>
+                            </li>
+                          </>
+                        )}
                       </ul>
                     </div>
                 </div>
