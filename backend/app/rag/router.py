@@ -16,6 +16,27 @@ from .types.schemas import (
 router = APIRouter(prefix="/rag", tags=["rag"])
 
 
+async def _collect_answer_from_agent_stream(
+    agent: AgentClient,
+    *,
+    question: str,
+    context: str,
+) -> str:
+    answer_parts: list[str] = []
+    final_answer: str | None = None
+    async for event in agent.astream_with_trace(question=question, context=context):
+        event_type = event.get("type")
+        if event_type == "chunk":
+            delta = event.get("delta")
+            if isinstance(delta, str) and delta:
+                answer_parts.append(delta)
+        elif event_type == "done":
+            done_answer = event.get("answer")
+            if isinstance(done_answer, str):
+                final_answer = done_answer
+    return final_answer if final_answer is not None else "".join(answer_parts)
+
+
 @router.post("/query", response_model=RagQueryResponse)
 async def rag_query(
     request: RagQueryRequest,
@@ -53,7 +74,11 @@ async def rag_query(
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     context = rag_service.build_context(retrieved)
-    answer = agent.ask(question=request.query, context=context)
+    answer = await _collect_answer_from_agent_stream(
+        agent,
+        question=request.query,
+        context=context,
+    )
 
     retrieved_chunks = [
         RagRetrievedChunk(

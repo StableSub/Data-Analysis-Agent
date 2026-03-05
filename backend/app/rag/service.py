@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List, Optional
 
-from ..ai.agents.client import AgentClient
 from ..domain.data_source.models import Dataset
 from .core.embedding import E5Embedder
 from .core.vector_store import FaissStore
@@ -193,9 +192,37 @@ class RagService:
         """파일 확장자에 따른 텍스트 추출."""
         path = Path(dataset.storage_path)
         if path.suffix.lower() == ".pdf":
-            return AgentClient.load_text_from_file(str(path), max_chars=200000)
+            return self._load_text_from_file(path=path, max_chars=200000)
         encoding = getattr(dataset, "encoding", None) or "utf-8"
         return path.read_text(encoding=encoding, errors="ignore")
+
+    @staticmethod
+    def _load_text_from_file(*, path: Path, max_chars: int) -> str:
+        suffix = path.suffix.lower()
+        if suffix == ".pdf":
+            return RagService._load_pdf(path=path, max_chars=max_chars)
+        return path.read_text(encoding="utf-8", errors="ignore")[:max_chars]
+
+    @staticmethod
+    def _load_pdf(*, path: Path, max_chars: int) -> str:
+        from pypdf import PdfReader
+
+        reader = PdfReader(str(path))
+        chunks: List[str] = []
+        total_len = 0
+        for page in reader.pages:
+            text = page.extract_text() or ""
+            if not text.strip():
+                continue
+            remaining = max_chars - total_len
+            if remaining <= 0:
+                break
+            snippet = text[:remaining]
+            chunks.append(snippet)
+            total_len += len(snippet)
+            if total_len >= max_chars:
+                break
+        return "\n".join(chunks)
 
     def _chunk_text(self, text: str) -> List[str]:
         """텍스트 분할"""

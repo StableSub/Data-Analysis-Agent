@@ -1,7 +1,11 @@
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 
+export function buildApiUrl(path: string): string {
+  return path.startsWith("http") ? path : `${API_BASE}${path}`;
+}
+
 export async function apiRequest<T>(path: string, options?: RequestInit): Promise<T> {
-  const url = path.startsWith("http") ? path : `${API_BASE}${path}`;
+  const url = buildApiUrl(path);
   const res = await fetch(url, {
     ...options,
     headers: {
@@ -43,6 +47,23 @@ export interface SampleResponse {
 export interface ChatResponse {
   answer: string;
   session_id: number;
+  thought_steps?: {
+    phase: string;
+    message: string;
+    status: string;
+  }[];
+}
+
+export interface ChatHistoryMessage {
+  id: number;
+  role: string;
+  content: string;
+  created_at: string;
+}
+
+export interface ChatHistoryResponse {
+  session_id: number;
+  messages: ChatHistoryMessage[];
 }
 
 export interface RagChunk {
@@ -127,11 +148,30 @@ export function fetchSample(sourceId: string): Promise<SampleResponse> {
   return apiRequest<SampleResponse>(`/datasets/${sourceId}/sample`);
 }
 
+/** DELETE /datasets/{source_id} */
+export function deleteDataset(sourceId: string): Promise<void> {
+  return apiRequest<void>(`/datasets/${sourceId}`, {
+    method: "DELETE",
+  });
+}
+
 /** POST /chats/ */
 export function sendChat(req: ChatRequest): Promise<ChatResponse> {
   return apiRequest<ChatResponse>("/chats/", {
     method: "POST",
     body: JSON.stringify(req),
+  });
+}
+
+/** GET /chats/{session_id}/history */
+export function getChatHistory(sessionId: number): Promise<ChatHistoryResponse> {
+  return apiRequest<ChatHistoryResponse>(`/chats/${sessionId}/history`);
+}
+
+/** DELETE /chats/{session_id} */
+export function deleteChatSession(sessionId: number): Promise<void> {
+  return apiRequest<void>(`/chats/${sessionId}`, {
+    method: "DELETE",
   });
 }
 

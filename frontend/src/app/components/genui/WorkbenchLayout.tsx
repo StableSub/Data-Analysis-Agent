@@ -61,7 +61,7 @@ export function WorkbenchLayout({
           >
             {isLeftPanelOpen
               ? <SidebarClose className="w-5 h-5 text-[var(--genui-text)]" />
-              : <SidebarOpen  className="w-5 h-5 text-[var(--genui-text)]" />
+              : <SidebarOpen className="w-5 h-5 text-[var(--genui-text)]" />
             }
           </button>
 
@@ -101,7 +101,7 @@ export function WorkbenchLayout({
           */}
           <div
             className={cn(
-              SUB_H,
+              "min-h-10 py-1.5 flex-wrap",
               "flex-shrink-0 border-b border-[var(--genui-border)] bg-[var(--genui-panel)] flex items-center px-4 gap-3",
             )}
           >
