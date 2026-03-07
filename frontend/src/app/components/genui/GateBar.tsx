@@ -4,12 +4,12 @@ import { cn } from "../../../lib/utils";
 
 interface GateBarProps {
   onApprove: () => void;
-  onReject: () => void;
+  onCancel: () => void;
   onSubmitChange: (text: string) => void;
   className?: string;
 }
 
-export function GateBar({ onApprove, onReject, onSubmitChange, className }: GateBarProps) {
+export function GateBar({ onApprove, onCancel, onSubmitChange, className }: GateBarProps) {
   const [value, setValue] = useState("");
   const [isEditing, setIsEditing] = useState(false);
 
@@ -45,13 +45,13 @@ export function GateBar({ onApprove, onReject, onSubmitChange, className }: Gate
         <span>Approve & Continue</span>
       </button>
 
-      {/* 2. Reject (Secondary Action) */}
+      {/* 2. Cancel (Secondary Action) */}
       <button
-        onClick={onReject}
+        onClick={onCancel}
         className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-[var(--genui-surface)] border border-[var(--genui-border)] text-[var(--genui-error)] font-medium rounded-xl hover:bg-[var(--genui-error)]/5 hover:border-[var(--genui-error)]/30 transition-all active:scale-[0.99]"
       >
         <X className="w-4 h-4" />
-        <span>Reject</span>
+        <span>Cancel Run</span>
       </button>
 
       {/* 3. Edit / Input (Tertiary Action) */}
@@ -62,7 +62,7 @@ export function GateBar({ onApprove, onReject, onSubmitChange, className }: Gate
              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 text-[var(--genui-muted)] hover:text-[var(--genui-text)] hover:bg-[var(--genui-panel)] rounded-xl transition-colors text-sm"
            >
              <MessageSquarePlus className="w-4 h-4" />
-             <span>Modify with instructions...</span>
+             <span>Request Changes...</span>
            </button>
         ) : (
            <div className="animate-in fade-in zoom-in-95 duration-200 bg-[var(--genui-panel)] rounded-xl border border-[var(--genui-focus-ring)]/50 p-1">

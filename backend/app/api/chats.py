@@ -5,7 +5,13 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 
 from ..dependencies import get_chat_service
-from ..domain.chat.schemas import ChatHistoryResponse, ChatRequest, ChatResponse
+from ..domain.chat.schemas import (
+    ChatHistoryResponse,
+    ChatRequest,
+    ChatResponse,
+    PendingApprovalResponse,
+    ResumeRunRequest,
+)
 from ..domain.chat.service import ChatService
 
 router = APIRouter(prefix="/chats", tags=["chats"])
@@ -64,6 +70,56 @@ async def ask_chat_stream(
         media_type="text/event-stream",
         headers=headers,
     )
+
+
+@router.post("/{session_id}/runs/{run_id}/resume")
+async def resume_chat_run(
+    session_id: int,
+    run_id: str,
+    request: ResumeRunRequest,
+    chat_service: ChatService = Depends(get_chat_service),
+):
+    async def event_generator():
+        try:
+            async for event in chat_service.resume_run_stream(
+                session_id=session_id,
+                run_id=run_id,
+                decision=request.decision,
+                stage=request.stage,
+                instruction=request.instruction,
+            ):
+                name = str(event.get("event") or "message")
+                data = event.get("data")
+                payload = data if isinstance(data, dict) else {"value": data}
+                yield _format_sse(name, payload)
+        except Exception as exc:
+            yield _format_sse("error", {"message": str(exc)})
+
+    headers = {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+    }
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers=headers,
+    )
+
+
+@router.get("/{session_id}/runs/{run_id}/pending-approval", response_model=PendingApprovalResponse)
+async def get_pending_approval(
+    session_id: int,
+    run_id: str,
+    chat_service: ChatService = Depends(get_chat_service),
+):
+    pending = chat_service.get_pending_approval(session_id=session_id, run_id=run_id)
+    if pending is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="pending approval not found",
+        )
+    return pending
 
 
 @router.get("/{session_id}/history", response_model=ChatHistoryResponse)

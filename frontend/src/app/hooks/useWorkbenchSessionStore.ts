@@ -32,12 +32,14 @@ function createSessionId(): string {
 function createEmptyContext(): PipelineSessionContext {
   return {
     backendSessionId: null,
+    runId: null,
     fileName: "",
     uploadedDatasets: [],
     selectedSourceId: null,
     chatHistory: [],
     latestAssistantAnswer: null,
     latestVisualizationResult: null,
+    pendingApproval: null,
     stateHint: "empty",
     errorMessage: null,
   };
@@ -50,6 +52,7 @@ function normalizeContext(value: unknown): PipelineSessionContext {
   const context = value as Partial<PipelineSessionContext>;
   return {
     backendSessionId: typeof context.backendSessionId === "number" ? context.backendSessionId : null,
+    runId: typeof context.runId === "string" ? context.runId : null,
     fileName: typeof context.fileName === "string" ? context.fileName : "",
     uploadedDatasets: Array.isArray(context.uploadedDatasets) ? context.uploadedDatasets : [],
     selectedSourceId: typeof context.selectedSourceId === "string" ? context.selectedSourceId : null,
@@ -57,7 +60,9 @@ function normalizeContext(value: unknown): PipelineSessionContext {
     latestAssistantAnswer:
       typeof context.latestAssistantAnswer === "string" ? context.latestAssistantAnswer : null,
     latestVisualizationResult: context.latestVisualizationResult ?? null,
+    pendingApproval: context.pendingApproval ?? null,
     stateHint:
+      context.stateHint === "needs-user" ||
       context.stateHint === "ready" ||
       context.stateHint === "success" ||
       context.stateHint === "error"

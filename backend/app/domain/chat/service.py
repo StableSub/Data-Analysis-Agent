@@ -1,9 +1,10 @@
+import uuid
 from typing import Any, AsyncIterator, Dict, Optional
 
 from ...ai.agents.client import AgentClient
 from ..data_source.repository import DataSourceRepository
 from .repository import ChatRepository
-from .schemas import ChatHistoryResponse, ChatResponse
+from .schemas import ChatHistoryResponse, ChatResponse, PendingApprovalResponse
 
 
 class ChatService:
@@ -29,6 +30,7 @@ class ChatService:
     ) -> ChatResponse:
         """질문을 저장하고 모델 응답을 반환한다."""
         done_payload: Dict[str, Any] | None = None
+        approval_payload: Dict[str, Any] | None = None
         async for event in self.ask_stream(
             question=question,
             session_id=session_id,
@@ -39,6 +41,25 @@ class ChatService:
                 payload = event.get("data")
                 if isinstance(payload, dict):
                     done_payload = payload
+            elif event.get("event") == "approval_required":
+                payload = event.get("data")
+                if isinstance(payload, dict):
+                    approval_payload = payload
+
+        if approval_payload is not None:
+            session_id_value = approval_payload.get("session_id")
+            run_id = approval_payload.get("run_id")
+            thought_steps = approval_payload.get("thought_steps")
+            pending_approval = approval_payload.get("pending_approval")
+            if not isinstance(session_id_value, int):
+                raise RuntimeError("chat stream finished without session id")
+            return ChatResponse(
+                answer="",
+                session_id=session_id_value,
+                run_id=run_id if isinstance(run_id, str) else None,
+                thought_steps=thought_steps if isinstance(thought_steps, list) else [],
+                pending_approval=pending_approval if isinstance(pending_approval, dict) else None,
+            )
 
         if done_payload is None:
             raise RuntimeError("chat stream finished without done event")
@@ -51,6 +72,7 @@ class ChatService:
         return ChatResponse(
             answer=str(answer) if isinstance(answer, str) else "",
             session_id=session_id_value,
+            run_id=done_payload.get("run_id") if isinstance(done_payload.get("run_id"), str) else None,
             thought_steps=thought_steps if isinstance(thought_steps, list) else [],
         )
 
@@ -74,24 +96,114 @@ class ChatService:
         )
 
         self.repository.append_message(session, "user", question)
-        yield {"event": "session", "data": {"session_id": session.id}}
+        run_id = uuid.uuid4().hex
+        yield {"event": "session", "data": {"session_id": session.id, "run_id": run_id}}
 
+        async for event in self._relay_agent_events(
+            session_id=session.id,
+            run_id=run_id,
+            agent_stream=self.agent.astream_with_trace(
+                session_id=str(session.id),
+                run_id=run_id,
+                question=question,
+                dataset=dataset,
+                model_id=model_id,
+            ),
+            append_assistant_message=True,
+            session=session,
+        ):
+            yield event
+
+    async def resume_run_stream(
+        self,
+        *,
+        session_id: int,
+        run_id: str,
+        decision: str,
+        stage: str,
+        instruction: Optional[str] = None,
+    ) -> AsyncIterator[Dict[str, Any]]:
+        session = self.repository.get_session(session_id)
+        if session is None:
+            raise RuntimeError("세션을 찾을 수 없습니다.")
+
+        yield {"event": "session", "data": {"session_id": session.id, "run_id": run_id}}
+
+        async for event in self._relay_agent_events(
+            session_id=session.id,
+            run_id=run_id,
+            agent_stream=self.agent.astream_with_trace(
+                session_id=str(session.id),
+                run_id=run_id,
+                resume={
+                    "decision": decision,
+                    "stage": stage,
+                    "instruction": instruction or "",
+                },
+            ),
+            append_assistant_message=True,
+            session=session,
+        ):
+            yield event
+
+    def get_pending_approval(
+        self,
+        *,
+        session_id: int,
+        run_id: str,
+    ) -> PendingApprovalResponse | None:
+        session = self.repository.get_session(session_id)
+        if session is None:
+            return None
+
+        pending_approval = self.agent.get_pending_approval(run_id=run_id)
+        if pending_approval is None:
+            return None
+
+        return PendingApprovalResponse(
+            session_id=session.id,
+            run_id=run_id,
+            pending_approval=pending_approval,
+        )
+
+    async def _relay_agent_events(
+        self,
+        *,
+        session_id: int,
+        run_id: str,
+        agent_stream: AsyncIterator[Dict[str, Any]],
+        append_assistant_message: bool,
+        session: Any,
+    ) -> AsyncIterator[Dict[str, Any]]:
         answer_parts: list[str] = []
         thought_steps: list[Dict[str, Any]] = []
         preprocess_result: Dict[str, Any] | None = None
         visualization_result: Dict[str, Any] | None = None
-        async for event in self.agent.astream_with_trace(
-            session_id=str(session.id),
-            question=question,
-            dataset=dataset,
-            model_id=model_id,
-        ):
+        output_type: str | None = None
+
+        async for event in agent_stream:
             event_type = event.get("type")
             if event_type == "thought":
                 step = event.get("step")
                 if isinstance(step, dict):
                     thought_steps.append(step)
                     yield {"event": "thought", "data": step}
+            elif event_type == "approval_required":
+                pending_approval = event.get("pending_approval")
+                if isinstance(pending_approval, dict):
+                    final_steps = event.get("thought_steps")
+                    if isinstance(final_steps, list):
+                        thought_steps = [step for step in final_steps if isinstance(step, dict)]
+                    yield {
+                        "event": "approval_required",
+                        "data": {
+                            "session_id": session_id,
+                            "run_id": run_id,
+                            "pending_approval": pending_approval,
+                            "thought_steps": thought_steps,
+                        },
+                    }
+                    return
             elif event_type == "chunk":
                 delta = event.get("delta")
                 if isinstance(delta, str) and delta:
@@ -110,20 +222,27 @@ class ChatService:
                 event_visualization = event.get("visualization_result")
                 if isinstance(event_visualization, dict):
                     visualization_result = event_visualization
+                event_output_type = event.get("output_type")
+                if isinstance(event_output_type, str) and event_output_type:
+                    output_type = event_output_type
 
         final_answer = "".join(answer_parts).strip()
         if not final_answer:
             final_answer = "응답을 생성하지 못했습니다."
 
-        self.repository.append_message(session, "assistant", final_answer)
+        if append_assistant_message:
+            self.repository.append_message(session, "assistant", final_answer)
         done_data: Dict[str, Any] = {
             "answer": final_answer,
-            "session_id": session.id,
+            "session_id": session_id,
+            "run_id": run_id,
             "thought_steps": thought_steps,
             "preprocess_result": preprocess_result,
         }
         if isinstance(visualization_result, dict):
             done_data["visualization_result"] = visualization_result
+        if output_type:
+            done_data["output_type"] = output_type
         yield {
             "event": "done",
             "data": done_data,

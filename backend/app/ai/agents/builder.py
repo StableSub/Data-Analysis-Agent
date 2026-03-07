@@ -30,6 +30,7 @@ def build_main_workflow(
     *,
     db: Session,
     default_model: str = "gpt-5-nano",
+    checkpointer: Any | None = None,
 ):
     """
     역할: Intake, Preprocess, RAG, Visualization, Report 서브그래프를 하나의 메인 워크플로우로 조립한다.
@@ -79,6 +80,13 @@ def build_main_workflow(
         if bool(handoff.get("ask_visualization", False)):
             return "visualization"
         return "merge_context"
+
+    def route_after_preprocess(state: MainWorkflowState) -> str:
+        preprocess_result = state.get("preprocess_result") or {}
+        output = state.get("output") or {}
+        if preprocess_result.get("status") == "cancelled" or output.get("type") == "cancelled":
+            return "cancelled"
+        return "rag"
 
     def route_after_merge_context(state: MainWorkflowState) -> str:
         """
@@ -225,7 +233,14 @@ def build_main_workflow(
             "data_pipeline": "preprocess_flow",
         },
     )
-    graph.add_edge("preprocess_flow", "rag_flow")
+    graph.add_conditional_edges(
+        "preprocess_flow",
+        route_after_preprocess,
+        {
+            "rag": "rag_flow",
+            "cancelled": END,
+        },
+    )
     graph.add_conditional_edges(
         "rag_flow",
         route_after_rag,
@@ -247,7 +262,7 @@ def build_main_workflow(
     graph.add_edge("data_qa_terminal", END)
     graph.add_edge("general_question_terminal", END)
 
-    return graph.compile()
+    return graph.compile(checkpointer=checkpointer)
 
 
 if __name__ == "__main__":

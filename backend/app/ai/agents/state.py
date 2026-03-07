@@ -45,6 +45,15 @@ class OutputPayload(TypedDict, total=False):
     content: str
 
 
+class PendingApprovalPayload(TypedDict, total=False):
+    stage: str
+    kind: str
+    title: str
+    summary: str
+    source_id: str
+    plan: Dict[str, Any]
+
+
 class AgentState(TypedDict, total=False):
     """
     여러 그래프 노드가 공통으로 참조할 입력/컨텍스트 상태.
@@ -53,9 +62,13 @@ class AgentState(TypedDict, total=False):
     user_input: str
     session_id: str
     model_id: str
+    run_id: str
     dataset_id: int
     source_id: str
     dataset_profile: Dict[str, Any]
+    pending_approval: PendingApprovalPayload
+    revision_request: str
+    approved_plan: Dict[str, Any]
 
 
 class IntakeRouterState(AgentState, total=False):
@@ -72,6 +85,7 @@ class PreprocessGraphState(AgentState, total=False):
     preprocess_decision: Dict[str, Any]
     preprocess_plan: Dict[str, Any]
     preprocess_result: PreprocessResultPayload
+    output: OutputPayload
 
 
 class RagGraphState(AgentState, total=False):

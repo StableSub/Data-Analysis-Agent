@@ -47,11 +47,13 @@ export interface SampleResponse {
 export interface ChatResponse {
   answer: string;
   session_id: number;
+  run_id?: string;
   thought_steps?: {
     phase: string;
     message: string;
     status: string;
   }[];
+  pending_approval?: PendingApprovalPayload;
 }
 
 export interface ChatHistoryMessage {
@@ -92,6 +94,40 @@ export interface ChatRequest {
   session_id?: number;
   model_id?: string;
   source_id?: string;
+}
+
+export interface PendingApprovalColumnSummary {
+  column: string;
+  missing_rate: number;
+}
+
+export interface PendingApprovalPlan {
+  operations: Record<string, unknown>[];
+  planner_comment?: string;
+  top_missing_columns?: PendingApprovalColumnSummary[];
+  affected_columns?: string[];
+  row_count?: number | null;
+}
+
+export interface PendingApprovalPayload {
+  stage: "preprocess";
+  kind: "plan_review";
+  title: string;
+  summary: string;
+  source_id: string;
+  plan: PendingApprovalPlan;
+}
+
+export interface ResumeRunRequest {
+  decision: "approve" | "revise" | "cancel";
+  stage: "preprocess";
+  instruction?: string;
+}
+
+export interface PendingApprovalResponse {
+  session_id: number;
+  run_id: string;
+  pending_approval: PendingApprovalPayload;
 }
 
 export interface RagQueryRequest {
@@ -166,6 +202,27 @@ export function sendChat(req: ChatRequest): Promise<ChatResponse> {
 /** GET /chats/{session_id}/history */
 export function getChatHistory(sessionId: number): Promise<ChatHistoryResponse> {
   return apiRequest<ChatHistoryResponse>(`/chats/${sessionId}/history`);
+}
+
+export function fetchPendingApproval(
+  sessionId: number,
+  runId: string,
+): Promise<PendingApprovalResponse> {
+  return apiRequest<PendingApprovalResponse>(`/chats/${sessionId}/runs/${runId}/pending-approval`);
+}
+
+export function resumeChatRun(
+  sessionId: number,
+  runId: string,
+  req: ResumeRunRequest,
+  signal?: AbortSignal,
+): Promise<Response> {
+  return fetch(buildApiUrl(`/chats/${sessionId}/runs/${runId}/resume`), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+    signal,
+  });
 }
 
 /** DELETE /chats/{session_id} */

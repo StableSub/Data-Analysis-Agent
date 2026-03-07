@@ -3,9 +3,11 @@ import {
   uploadFile,
   buildApiUrl,
   deleteDataset,
+  resumeChatRun,
   type DatasetResponse,
   type ChatResponse,
   type ChatHistoryMessage,
+  type PendingApprovalPayload,
 } from "../../lib/api";
 import type { ReportSection } from "../components/genui/AssistantReportMessage";
 import type {
@@ -47,14 +49,6 @@ export interface HistoryItem {
   selected?: boolean;
 }
 
-export interface HitlProposal {
-  column: string;
-  strategy: string;
-  fillValue: string;
-  missingCount: number;
-  missingPercent: number;
-}
-
 export interface UploadedDatasetMeta {
   datasetId: number;
   sourceId: string;
@@ -77,16 +71,18 @@ export interface VisualizationResultPayload {
   };
 }
 
-export type PipelineSessionStateHint = "empty" | "ready" | "success" | "error";
+export type PipelineSessionStateHint = "empty" | "ready" | "success" | "error" | "needs-user";
 
 export interface PipelineSessionContext {
   backendSessionId: number | null;
+  runId: string | null;
   fileName: string;
   uploadedDatasets: UploadedDatasetMeta[];
   selectedSourceId: string | null;
   chatHistory: ChatHistoryMessage[];
   latestAssistantAnswer: string | null;
   latestVisualizationResult: VisualizationResultPayload | null;
+  pendingApproval: PendingApprovalPayload | null;
   stateHint: PipelineSessionStateHint;
   errorMessage: string | null;
 }
@@ -114,7 +110,8 @@ export interface UseAnalysisPipelineReturn {
   chatHistory: ChatHistoryMessage[];
   milestones: HistoryItem[];
   history: HistoryItem[];
-  hitlProposal: HitlProposal | null;
+  runId: string | null;
+  pendingApproval: PendingApprovalPayload | null;
   rawLogs: RawLogEntry[];
   latestVisualizationResult: VisualizationResultPayload | null;
 
@@ -127,6 +124,7 @@ export interface UseAnalysisPipelineReturn {
   // Actions
   startUpload: (file: File) => void;
   startWithSample: () => void;
+  resumeRun: (decision: "approve" | "revise" | "cancel", instruction?: string) => void;
   handleApprove: () => void;
   handleReject: () => void;
   handleEditInstruction: (text: string) => void;
@@ -305,6 +303,89 @@ function pickVisualizationResultFromDoneRecord(
   return null;
 }
 
+function parsePendingApproval(payload: unknown): PendingApprovalPayload | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+
+  const data = payload as Record<string, unknown>;
+  const planRaw = data.plan;
+  const plan = planRaw && typeof planRaw === "object"
+    ? (planRaw as Record<string, unknown>)
+    : {};
+
+  const topMissingColumns = Array.isArray(plan.top_missing_columns)
+    ? plan.top_missing_columns
+        .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
+        .map((item) => ({
+          column: typeof item.column === "string" ? item.column : "",
+          missing_rate: typeof item.missing_rate === "number" ? item.missing_rate : 0,
+        }))
+        .filter((item) => item.column)
+    : [];
+
+  const affectedColumns = Array.isArray(plan.affected_columns)
+    ? plan.affected_columns.filter(
+        (item): item is string => typeof item === "string" && item.trim().length > 0,
+      )
+    : [];
+
+  const operations = Array.isArray(plan.operations)
+    ? plan.operations.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
+    : [];
+
+  return {
+    stage: "preprocess",
+    kind: "plan_review",
+    title: typeof data.title === "string" && data.title.trim() ? data.title : "Preprocess plan review",
+    summary:
+      typeof data.summary === "string" && data.summary.trim()
+        ? data.summary
+        : "전처리 계획을 검토한 뒤 승인 여부를 결정해 주세요.",
+    source_id: typeof data.source_id === "string" ? data.source_id : "",
+    plan: {
+      operations,
+      planner_comment:
+        typeof plan.planner_comment === "string" && plan.planner_comment.trim()
+          ? plan.planner_comment
+          : undefined,
+      top_missing_columns: topMissingColumns,
+      affected_columns: affectedColumns,
+      row_count: typeof plan.row_count === "number" ? plan.row_count : null,
+    },
+  };
+}
+
+function formatPendingValue(value: unknown): string {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item)).join(", ");
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  if (
+    typeof value === "number" ||
+    typeof value === "boolean" ||
+    value === null
+  ) {
+    return String(value);
+  }
+  if (value && typeof value === "object") {
+    return JSON.stringify(value);
+  }
+  return "";
+}
+
+function formatPendingOperation(operation: Record<string, unknown>): string {
+  const op = typeof operation.op === "string" && operation.op.trim() ? operation.op : "operation";
+  const details = Object.entries(operation)
+    .filter(([key, value]) => key !== "op" && value !== undefined && value !== "")
+    .map(([key, value]) => `${key}: ${formatPendingValue(value)}`)
+    .filter((value) => value.trim());
+
+  return details.length > 0 ? `${op} (${details.join(" · ")})` : op;
+}
+
 /* ─────────────────────────────────────────────
    Hook
 ───────────────────────────────────────────── */
@@ -319,11 +400,13 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
   // --- Session / streaming state ---
   const [fileName, setFileName] = useState("");
   const [sessionId, setSessionId] = useState<number | null>(null);
+  const [runId, setRunId] = useState<string | null>(null);
   const [chatResponse, setChatResponse] = useState<ChatResponse | null>(null);
   const [streamingAnswer, setStreamingAnswer] = useState("");
   const [thoughtSteps, setThoughtSteps] = useState<ThoughtStep[]>([]);
   const [latestVisualizationResult, setLatestVisualizationResult] = useState<VisualizationResultPayload | null>(null);
   const [chatHistory, setChatHistory] = useState<ChatHistoryMessage[]>([]);
+  const [pendingApproval, setPendingApproval] = useState<PendingApprovalPayload | null>(null);
 
   // --- Upload selection state ---
   const [uploadedDatasets, setUploadedDatasets] = useState<UploadedDatasetMeta[]>([]);
@@ -336,7 +419,6 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
   const [rawLogs, setRawLogs] = useState<RawLogEntry[]>([]);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [errorStep, setErrorStep] = useState<string | null>(null);
-  const [hitlProposal, setHitlProposal] = useState<HitlProposal | null>(null);
 
   // --- Completed stage tracking ---
   const completedStagesRef = useRef<Set<string>>(new Set());
@@ -345,6 +427,10 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
   const abortRef = useRef<AbortController | null>(null);
   const lastQuestionRef = useRef<string>("");
   const localMessageIdRef = useRef(0);
+  const nextLocalMessageId = useCallback(() => {
+    localMessageIdRef.current += 1;
+    return Date.now() + localMessageIdRef.current;
+  }, []);
 
   // --- Elapsed timer ---
   useEffect(() => {
@@ -426,6 +512,305 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
     [markStageCompleted],
   );
 
+  const consumeSseResponse = useCallback(
+    async ({
+      response,
+      tc,
+      startMs,
+      question,
+      successMilestoneTitle,
+      successMilestoneSubtext,
+    }: {
+      response: Response;
+      tc: ToolCallEntry;
+      startMs: number;
+      question?: string;
+      successMilestoneTitle?: string;
+      successMilestoneSubtext?: string;
+    }) => {
+      if (!response.ok) {
+        const detail = await response.text();
+        throw new Error(detail || "채팅 요청에 실패했습니다.");
+      }
+
+      if (!response.body) {
+        throw new Error("스트리밍 응답을 받을 수 없습니다.");
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder("utf-8");
+      let buffer = "";
+      let streamText = "";
+      let finalAnswer = "";
+      let doneReceived = false;
+      let approvalReceived = false;
+
+      const handleEvent = (rawEvent: string) => {
+        const lines = rawEvent.split("\n");
+        let eventName = "message";
+        const dataLines: string[] = [];
+
+        for (const line of lines) {
+          if (line.startsWith("event:")) {
+            eventName = line.slice(6).trim();
+          } else if (line.startsWith("data:")) {
+            dataLines.push(line.slice(5).trim());
+          }
+        }
+
+        const rawData = dataLines.join("\n");
+        let payload: unknown = {};
+        if (rawData) {
+          try {
+            payload = JSON.parse(rawData);
+          } catch {
+            payload = { message: rawData };
+          }
+        }
+
+        const record = payload && typeof payload === "object"
+          ? (payload as Record<string, unknown>)
+          : {};
+
+        if (eventName === "session") {
+          const nextSession = record.session_id;
+          if (typeof nextSession === "number") {
+            setSessionId(nextSession);
+          }
+          const nextRunId = record.run_id;
+          if (typeof nextRunId === "string" && nextRunId.trim()) {
+            setRunId(nextRunId);
+          }
+          return;
+        }
+
+        if (eventName === "thought") {
+          const step = parseThoughtStep(record);
+          if (step) {
+            appendThoughtStep(step);
+          }
+          return;
+        }
+
+        if (eventName === "chunk") {
+          const delta = record.delta;
+          if (typeof delta === "string" && delta) {
+            streamText += delta;
+            setStreamingAnswer((prev) => prev + delta);
+          }
+          return;
+        }
+
+        if (eventName === "approval_required") {
+          approvalReceived = true;
+
+          const nextSession = record.session_id;
+          if (typeof nextSession === "number") {
+            setSessionId(nextSession);
+          }
+
+          const nextRunId = record.run_id;
+          if (typeof nextRunId === "string" && nextRunId.trim()) {
+            setRunId(nextRunId);
+          }
+
+          const pending = parsePendingApproval(record.pending_approval);
+          if (!pending) {
+            throw new Error("승인 대기 payload를 해석할 수 없습니다.");
+          }
+
+          const approvalThoughts = record.thought_steps;
+          if (Array.isArray(approvalThoughts)) {
+            for (const item of approvalThoughts) {
+              const step = parseThoughtStep(item);
+              if (step) {
+                appendThoughtStep(step);
+              }
+            }
+          }
+
+          setPendingApproval(pending);
+          setStreamingAnswer("");
+          setChatResponse(null);
+          setState("needs-user");
+          setRunningSubPhase("preprocessing");
+
+          updateToolCall(tc.id, {
+            status: "needs-user",
+            result: pending.summary,
+            duration: `${((Date.now() - startMs) / 1000).toFixed(1)}s`,
+          });
+          addMilestone({
+            status: "needs-user",
+            title: "Approval required",
+            subtext: pending.title,
+            timestamp: now(),
+            selected: true,
+          });
+          addLog(makeRawLog("approval_required", pending as unknown as Record<string, unknown>));
+          return;
+        }
+
+        if (eventName === "done") {
+          doneReceived = true;
+          const answer = typeof record.answer === "string" ? record.answer : streamText;
+          finalAnswer = answer;
+          setStreamingAnswer(answer);
+          setPendingApproval(null);
+
+          const nextSession = record.session_id;
+          const resolvedSessionId = typeof nextSession === "number" ? nextSession : sessionId;
+          if (typeof resolvedSessionId === "number") {
+            setSessionId(resolvedSessionId);
+          }
+
+          const nextRunId = record.run_id;
+          if (typeof nextRunId === "string" && nextRunId.trim()) {
+            setRunId(nextRunId);
+          }
+
+          const doneThoughts = record.thought_steps;
+          if (Array.isArray(doneThoughts)) {
+            for (const item of doneThoughts) {
+              const step = parseThoughtStep(item);
+              if (step) {
+                appendThoughtStep(step);
+              }
+            }
+          }
+
+          if (typeof resolvedSessionId === "number") {
+            setChatResponse({
+              answer,
+              session_id: resolvedSessionId,
+              run_id: typeof nextRunId === "string" ? nextRunId : undefined,
+              thought_steps: Array.isArray(doneThoughts) ? doneThoughts as ChatResponse["thought_steps"] : [],
+            });
+          }
+
+          if (answer.trim()) {
+            setChatHistory((prev) => [
+              ...prev,
+              {
+                id: nextLocalMessageId(),
+                role: "assistant",
+                content: answer,
+                created_at: new Date().toISOString(),
+              },
+            ]);
+          }
+
+          const visualizationResult = pickVisualizationResultFromDoneRecord(record);
+          if (visualizationResult) {
+            setLatestVisualizationResult(visualizationResult);
+          }
+
+          const preprocessResult = record.preprocess_result;
+          if (preprocessResult && typeof preprocessResult === "object") {
+            const preprocess = preprocessResult as Record<string, unknown>;
+            if (
+              preprocess.status === "applied" &&
+              typeof preprocess.output_source_id === "string" &&
+              preprocess.output_source_id
+            ) {
+              upsertUploadedDataset({
+                datasetId: 0,
+                sourceId: preprocess.output_source_id,
+                fileName:
+                  typeof preprocess.output_filename === "string" && preprocess.output_filename
+                    ? preprocess.output_filename
+                    : `processed_${preprocess.output_source_id}`,
+              });
+            }
+          }
+
+          setState("success");
+          return;
+        }
+
+        if (eventName === "error") {
+          const message = typeof record.message === "string"
+            ? record.message
+            : "스트리밍 처리 중 오류가 발생했습니다.";
+          throw new Error(message);
+        }
+      };
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          break;
+        }
+        buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
+        while (true) {
+          const separatorIndex = buffer.indexOf("\n\n");
+          if (separatorIndex < 0) {
+            break;
+          }
+          const rawEvent = buffer.slice(0, separatorIndex).trim();
+          buffer = buffer.slice(separatorIndex + 2);
+          if (!rawEvent) {
+            continue;
+          }
+          handleEvent(rawEvent);
+        }
+      }
+
+      const tail = decoder.decode();
+      if (tail) {
+        buffer += tail.replace(/\r\n/g, "\n");
+      }
+      if (buffer.trim()) {
+        handleEvent(buffer.trim());
+      }
+
+      if (approvalReceived) {
+        return;
+      }
+
+      const finalText = (finalAnswer || streamText).trim();
+      if (!doneReceived && finalText) {
+        setStreamingAnswer(finalText);
+        if (sessionId !== null) {
+          setChatResponse({ answer: finalText, session_id: sessionId, thought_steps: [] });
+        }
+        setChatHistory((prev) => [
+          ...prev,
+          {
+            id: nextLocalMessageId(),
+            role: "assistant",
+            content: finalText,
+            created_at: new Date().toISOString(),
+          },
+        ]);
+        setState("success");
+      }
+
+      updateToolCall(tc.id, completeToolCall(tc, finalText.slice(0, 80) || "stream done", startMs));
+      if (successMilestoneTitle) {
+        addMilestone({
+          status: "completed",
+          title: successMilestoneTitle,
+          subtext: successMilestoneSubtext ?? question?.slice(0, 40),
+          timestamp: now(),
+        });
+      }
+      addLog(makeRawLog("tool_result", {
+        tool: tc.name,
+        answer_length: finalText.length,
+      }));
+    },
+    [
+      addLog,
+      addMilestone,
+      appendThoughtStep,
+      nextLocalMessageId,
+      sessionId,
+      updateToolCall,
+      upsertUploadedDataset,
+    ],
+  );
+
   /* ─── Actions ─── */
 
   const selectUploadedDataset = useCallback(
@@ -470,11 +855,6 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
     [uploadedDatasets, selectedSourceId, state, addMilestone],
   );
 
-  const nextLocalMessageId = useCallback(() => {
-    localMessageIdRef.current += 1;
-    return Date.now() + localMessageIdRef.current;
-  }, []);
-
   const startUpload = useCallback(
     (file: File) => {
       setChatResponse(null);
@@ -482,7 +862,8 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
       setThoughtSteps([]);
       setErrorMessage(null);
       setErrorStep(null);
-      setHitlProposal(null);
+      setRunId(null);
+      setPendingApproval(null);
       setUploadProgress(0);
       setFileName(file.name);
       setState("uploading");
@@ -523,33 +904,115 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
     startUpload(file);
   }, [startUpload]);
 
+  const resumeRun = useCallback(
+    (decision: "approve" | "revise" | "cancel", instruction?: string) => {
+      if (sessionId === null || !runId || !pendingApproval) {
+        return;
+      }
+
+      setErrorMessage(null);
+      setErrorStep(null);
+      setState("running");
+      setRunningSubPhase("preprocessing");
+      setStreamingAnswer("");
+      setThoughtSteps([]);
+      completedStagesRef.current = new Set(["intake"]);
+
+      const request = {
+        decision,
+        stage: "preprocess" as const,
+        instruction: instruction?.trim() || undefined,
+      };
+
+      const tc = makeToolCall("resume_run", request);
+      addToolCall(tc);
+      addLog(makeRawLog("tool_call: resume_run", { session_id: sessionId, run_id: runId, ...request }));
+
+      const startMs = Date.now();
+      const abortController = new AbortController();
+      abortRef.current = abortController;
+
+      void (async () => {
+        try {
+          const response = await resumeChatRun(
+            sessionId,
+            runId,
+            request,
+            abortController.signal,
+          );
+
+          await consumeSseResponse({
+            response,
+            tc,
+            startMs,
+            successMilestoneTitle:
+              decision === "approve"
+                ? "Preprocess approved"
+                : decision === "revise"
+                  ? "Plan revision requested"
+                  : "Run cancelled",
+            successMilestoneSubtext:
+              decision === "approve"
+                ? pendingApproval.title
+                : instruction?.trim() || pendingApproval.title,
+          });
+        } catch (error: unknown) {
+          if (error instanceof DOMException && error.name === "AbortError") {
+            return;
+          }
+          if (error instanceof Error && error.name === "AbortError") {
+            return;
+          }
+
+          const message = error instanceof Error ? error.message : "재개 요청에 실패했습니다.";
+          updateToolCall(tc.id, failToolCall(tc, message, startMs));
+          addLog(makeRawLog("tool_error: resume_run", { error: message }, true));
+          transitionToError("resume_run", message);
+        } finally {
+          abortRef.current = null;
+        }
+      })();
+    },
+    [
+      sessionId,
+      runId,
+      pendingApproval,
+      addToolCall,
+      addLog,
+      consumeSseResponse,
+      transitionToError,
+      updateToolCall,
+    ],
+  );
+
   const handleApprove = useCallback(() => {
-    setHistory((prev) => [
-      ...prev,
-      { status: "completed" as TimelineItemStatus, title: "Approved", subtext: "User confirmed strategy", timestamp: now() },
-    ]);
-    setHitlProposal(null);
-  }, []);
+    resumeRun("approve");
+  }, [resumeRun]);
 
   const handleReject = useCallback(() => {
     setHistory((prev) => [
       ...prev,
-      { status: "failed" as TimelineItemStatus, title: "Rejected Changes", subtext: "User cancelled action", timestamp: now() },
+      { status: "failed" as TimelineItemStatus, title: "Run cancelled", subtext: pendingApproval?.title, timestamp: now() },
     ]);
-    setHitlProposal(null);
-  }, []);
+    resumeRun("cancel");
+  }, [pendingApproval, resumeRun]);
 
   const handleEditInstruction = useCallback((text: string) => {
+    const nextText = text.trim();
+    if (!nextText) {
+      return;
+    }
     setHistory((prev) => [
       ...prev,
-      { status: "completed" as TimelineItemStatus, title: "User Edit", subtext: text, timestamp: now() },
+      { status: "completed" as TimelineItemStatus, title: "Revision requested", subtext: nextText, timestamp: now() },
     ]);
-  }, []);
+    resumeRun("revise", nextText);
+  }, [resumeRun]);
 
   const handleSend = useCallback(
     (message: string) => {
       const question = message.trim();
-      if (!question) return;
+      if (!question || pendingApproval) return;
 
       setChatHistory((prev) => [
         ...prev,
@@ -569,6 +1032,8 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
       setStreamingAnswer("");
       setChatResponse(null);
       setThoughtSteps([]);
+      setRunId(null);
+      setPendingApproval(null);
       completedStagesRef.current = new Set();
 
       const request: { question: string; session_id?: number; source_id?: string } = {
@@ -594,206 +1059,14 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
             signal: abortController.signal,
           });
 
-          if (!response.ok) {
-            const detail = await response.text();
-            throw new Error(detail || "채팅 요청에 실패했습니다.");
-          }
-
-          if (!response.body) {
-            throw new Error("스트리밍 응답을 받을 수 없습니다.");
-          }
-
-          const reader = response.body.getReader();
-          const decoder = new TextDecoder("utf-8");
-          let buffer = "";
-          let streamText = "";
-          let finalAnswer = "";
-          let doneReceived = false;
-
-          const handleEvent = (rawEvent: string) => {
-            const lines = rawEvent.split("\n");
-            let eventName = "message";
-            const dataLines: string[] = [];
-
-            for (const line of lines) {
-              if (line.startsWith("event:")) {
-                eventName = line.slice(6).trim();
-              } else if (line.startsWith("data:")) {
-                dataLines.push(line.slice(5).trim());
-              }
-            }
-
-            const rawData = dataLines.join("\n");
-            let payload: unknown = {};
-            if (rawData) {
-              try {
-                payload = JSON.parse(rawData);
-              } catch {
-                payload = { message: rawData };
-              }
-            }
-
-            const record = payload && typeof payload === "object"
-              ? (payload as Record<string, unknown>)
-              : {};
-
-            if (eventName === "session") {
-              const nextSession = record.session_id;
-              if (typeof nextSession === "number") {
-                setSessionId(nextSession);
-              }
-              return;
-            }
-
-            if (eventName === "thought") {
-              const step = parseThoughtStep(record);
-              if (step) {
-                appendThoughtStep(step);
-              }
-              return;
-            }
-
-            if (eventName === "chunk") {
-              const delta = record.delta;
-              if (typeof delta === "string" && delta) {
-                streamText += delta;
-                setStreamingAnswer((prev) => prev + delta);
-              }
-              return;
-            }
-
-            if (eventName === "done") {
-              doneReceived = true;
-              const answer = typeof record.answer === "string" ? record.answer : streamText;
-              finalAnswer = answer;
-              setStreamingAnswer(answer);
-
-              const nextSession = record.session_id;
-              const resolvedSessionId = typeof nextSession === "number" ? nextSession : sessionId;
-              if (typeof resolvedSessionId === "number") {
-                setSessionId(resolvedSessionId);
-              }
-
-              const doneThoughts = record.thought_steps;
-              if (Array.isArray(doneThoughts)) {
-                for (const item of doneThoughts) {
-                  const step = parseThoughtStep(item);
-                  if (step) {
-                    appendThoughtStep(step);
-                  }
-                }
-              }
-
-              if (typeof resolvedSessionId === "number") {
-                setChatResponse({
-                  answer,
-                  session_id: resolvedSessionId,
-                  thought_steps: Array.isArray(doneThoughts) ? (doneThoughts as any[]) : [],
-                });
-              }
-
-              if (answer.trim()) {
-                setChatHistory((prev) => [
-                  ...prev,
-                  {
-                    id: nextLocalMessageId(),
-                    role: "assistant",
-                    content: answer,
-                    created_at: new Date().toISOString(),
-                  },
-                ]);
-              }
-
-              const visualizationResult = pickVisualizationResultFromDoneRecord(record);
-              if (visualizationResult) {
-                setLatestVisualizationResult(visualizationResult);
-              }
-
-              const preprocessResult = record.preprocess_result;
-              if (preprocessResult && typeof preprocessResult === "object") {
-                const preprocess = preprocessResult as Record<string, unknown>;
-                if (
-                  preprocess.status === "applied" &&
-                  typeof preprocess.output_source_id === "string" &&
-                  preprocess.output_source_id
-                ) {
-                  upsertUploadedDataset({
-                    datasetId: 0,
-                    sourceId: preprocess.output_source_id,
-                    fileName:
-                      typeof preprocess.output_filename === "string" && preprocess.output_filename
-                        ? preprocess.output_filename
-                        : `processed_${preprocess.output_source_id}`,
-                  });
-                }
-              }
-
-              setState("success");
-              return;
-            }
-
-            if (eventName === "error") {
-              const message = typeof record.message === "string"
-                ? record.message
-                : "스트리밍 처리 중 오류가 발생했습니다.";
-              throw new Error(message);
-            }
-          };
-
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) {
-              break;
-            }
-            buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
-            while (true) {
-              const separatorIndex = buffer.indexOf("\n\n");
-              if (separatorIndex < 0) {
-                break;
-              }
-              const rawEvent = buffer.slice(0, separatorIndex).trim();
-              buffer = buffer.slice(separatorIndex + 2);
-              if (!rawEvent) {
-                continue;
-              }
-              handleEvent(rawEvent);
-            }
-          }
-
-          const tail = decoder.decode();
-          if (tail) {
-            buffer += tail.replace(/\r\n/g, "\n");
-          }
-          if (buffer.trim()) {
-            handleEvent(buffer.trim());
-          }
-
-          const finalText = (finalAnswer || streamText).trim();
-          if (!doneReceived && finalText) {
-            setStreamingAnswer(finalText);
-            if (sessionId !== null) {
-              setChatResponse({ answer: finalText, session_id: sessionId, thought_steps: [] });
-            }
-            setChatHistory((prev) => [
-              ...prev,
-              {
-                id: nextLocalMessageId(),
-                role: "assistant",
-                content: finalText,
-                created_at: new Date().toISOString(),
-              },
-            ]);
-            setState("success");
-          }
-
-          updateToolCall(tc.id, completeToolCall(tc, finalText.slice(0, 80) || "stream done", startMs));
-          addMilestone({
-            status: "completed",
-            title: "Follow-up",
-            subtext: question.slice(0, 40),
-            timestamp: now(),
+          await consumeSseResponse({
+            response,
+            tc,
+            startMs,
+            question,
+            successMilestoneTitle: "Follow-up",
+            successMilestoneSubtext: question.slice(0, 40),
           });
-          addLog(makeRawLog("tool_result: chat_stream", { answer_length: finalText.length }));
         } catch (error: unknown) {
           if (error instanceof DOMException && error.name === "AbortError") {
             return;
@@ -816,11 +1089,10 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
       selectedSourceId,
       addToolCall,
       addLog,
-      updateToolCall,
-      addMilestone,
-      appendThoughtStep,
+      consumeSseResponse,
       transitionToError,
-      upsertUploadedDataset,
+      updateToolCall,
+      pendingApproval,
       nextLocalMessageId,
     ],
   );
@@ -839,6 +1111,8 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
     setUploadProgress(0);
     setStreamingAnswer("");
     setThoughtSteps([]);
+    setPendingApproval(null);
+    setRunId(null);
     setState(uploadedDatasets.length > 0 ? "ready" : "empty");
   }, [uploadedDatasets.length]);
 
@@ -850,6 +1124,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
     setElapsedSeconds(0);
     setFileName("");
     setSessionId(null);
+    setRunId(null);
     setChatResponse(null);
     setStreamingAnswer("");
     setThoughtSteps([]);
@@ -861,7 +1136,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
     setRawLogs([]);
     setErrorMessage(null);
     setErrorStep(null);
-    setHitlProposal(null);
+    setPendingApproval(null);
     setLatestVisualizationResult(null);
     setChatHistory([]);
     lastQuestionRef.current = "";
@@ -878,11 +1153,13 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
     let stateHint: PipelineSessionStateHint = "empty";
     if (state === "error") {
       stateHint = "error";
+    } else if (state === "needs-user" && pendingApproval) {
+      stateHint = "needs-user";
     } else if (state === "success") {
       stateHint = "success";
     } else if (state === "ready") {
       stateHint = "ready";
-    } else if (state === "running" || state === "uploading" || state === "needs-user") {
+    } else if (state === "running" || state === "uploading") {
       if (latestAssistantAnswer) {
         stateHint = "success";
       } else if (uploadedDatasets.length > 0) {
@@ -894,20 +1171,24 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
 
     return {
       backendSessionId: sessionId,
+      runId,
       fileName,
       uploadedDatasets: [...uploadedDatasets],
       selectedSourceId,
       chatHistory,
       latestAssistantAnswer,
       latestVisualizationResult,
+      pendingApproval,
       stateHint,
       errorMessage: stateHint === "error" ? errorMessage : null,
     };
   }, [
     chatResponse,
     state,
+    pendingApproval,
     uploadedDatasets,
     sessionId,
+    runId,
     fileName,
     selectedSourceId,
     chatHistory,
@@ -920,16 +1201,19 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
     abortRef.current = null;
 
     const nextSessionId = context.backendSessionId ?? null;
+    const nextRunId = context.runId ?? null;
     const nextUploadedDatasets = Array.isArray(context.uploadedDatasets)
       ? context.uploadedDatasets
       : [];
     const nextStateHint: PipelineSessionStateHint = context.stateHint ?? "empty";
+    const nextPendingApproval = context.pendingApproval ?? null;
     const latestAnswer =
       typeof context.latestAssistantAnswer === "string" && context.latestAssistantAnswer.trim()
         ? context.latestAssistantAnswer
         : null;
 
     setSessionId(nextSessionId);
+    setRunId(nextRunId);
     setFileName(context.fileName || "");
     setUploadedDatasets(nextUploadedDatasets);
     setSelectedSourceId(context.selectedSourceId ?? null);
@@ -945,7 +1229,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
     setMilestones([]);
     setHistory([]);
     setRawLogs([]);
-    setHitlProposal(null);
+    setPendingApproval(nextPendingApproval);
     setErrorStep(null);
 
     if (nextStateHint === "error") {
@@ -966,6 +1250,9 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
 
     if (nextStateHint === "success") {
       setState("success");
+    } else if (nextStateHint === "needs-user" && nextPendingApproval) {
+      setState("needs-user");
+      setRunningSubPhase("preprocessing");
     } else if (nextStateHint === "ready") {
       setState("ready");
     } else if (nextStateHint === "error") {
@@ -1013,19 +1300,40 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
       return [{ type: "paragraph" as const, content: chatResponse.answer }];
     }
 
-    if (state === "needs-user" && hitlProposal) {
-      const p = hitlProposal;
+    if (state === "needs-user" && pendingApproval) {
+      const operationItems = pendingApproval.plan.operations.length > 0
+        ? pendingApproval.plan.operations.map((operation) => formatPendingOperation(operation))
+        : ["No preprocessing operations were proposed."];
+      const topMissingItems = (pendingApproval.plan.top_missing_columns ?? []).map(
+        (item) => `${item.column}: ${(item.missing_rate * 100).toFixed(1)}% missing`,
+      );
       return [
-        { type: "paragraph" as const, content: "Missing values found that need your attention before proceeding." },
-        { type: "heading" as const, content: "Finding" },
+        { type: "paragraph" as const, content: pendingApproval.summary },
+        { type: "heading" as const, content: "Planned Operations" },
         {
           type: "numbered-list" as const,
-          items: [
-            `${p.missingCount} rows in '${p.column}' column have null values (${p.missingPercent.toFixed(2)}%)`,
-            `Recommended strategy: ${p.strategy} imputation -> '${p.fillValue}'`,
-            "Downstream steps are blocked until this is resolved",
-          ],
+          items: operationItems,
         },
+        ...(topMissingItems.length > 0
+          ? [
+              { type: "heading" as const, content: "Top Missing Columns" },
+              { type: "numbered-list" as const, items: topMissingItems },
+            ]
+          : []),
+        ...(pendingApproval.plan.affected_columns && pendingApproval.plan.affected_columns.length > 0
+          ? [
+              { type: "heading" as const, content: "Affected Columns" },
+              { type: "paragraph" as const, content: pendingApproval.plan.affected_columns.join(", ") },
+            ]
+          : []),
+        ...(typeof pendingApproval.plan.row_count === "number"
+          ? [
+              {
+                type: "paragraph" as const,
+                content: `Estimated rows in profile sample: ${pendingApproval.plan.row_count.toLocaleString()}`,
+              },
+            ]
+          : []),
       ];
     }
 
@@ -1046,7 +1354,12 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
     const lastTool = toolCalls[toolCalls.length - 1]?.name ?? "";
 
     if (state === "needs-user") {
-      return { phase: "Awaiting approval", progress, lastTool, elapsedTime: formatElapsed(elapsedSeconds) };
+      return {
+        phase: "Preprocess plan review",
+        progress,
+        lastTool,
+        elapsedTime: formatElapsed(elapsedSeconds),
+      };
     }
     if (state === "error") {
       return { phase: `Failed — ${errorStep ?? "unknown"}`, progress, lastTool, elapsedTime: formatElapsed(elapsedSeconds) };
@@ -1083,6 +1396,9 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
       if (state === "error" && i === currentIdx) {
         status = "failed";
         sublabel = `Failed — ${errorMessage?.slice(0, 40)}`;
+      } else if (state === "needs-user" && stageId === "preprocess") {
+        status = "needs-user";
+        sublabel = pendingApproval?.summary ?? "Awaiting approval";
       } else if (state === "running" && i === currentIdx) {
         status = "running";
         const lastStageThought = [...thoughtSteps]
@@ -1131,6 +1447,8 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
       let value: ChipValue = "ON";
       if (state === "error" && stageIdx === currentIdx) {
         value = "FAILED";
+      } else if (state === "needs-user" && key === "preprocess") {
+        value = "BLOCKED";
       } else if (state === "running" && stageIdx === currentIdx) {
         value = "RUNNING";
       } else if (completed.has(key) || (state === "success" && stageIdx <= currentIdx)) {
@@ -1168,7 +1486,8 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
     chatHistory,
     milestones,
     history,
-    hitlProposal,
+    runId,
+    pendingApproval,
     rawLogs,
     latestVisualizationResult,
 
@@ -1179,6 +1498,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
 
     startUpload,
     startWithSample,
+    resumeRun,
     handleApprove,
     handleReject,
     handleEditInstruction,
