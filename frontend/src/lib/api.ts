@@ -101,7 +101,7 @@ export interface PendingApprovalColumnSummary {
   missing_rate: number;
 }
 
-export interface PendingApprovalPlan {
+export interface PreprocessPendingApprovalPlan {
   operations: Record<string, unknown>[];
   planner_comment?: string;
   top_missing_columns?: PendingApprovalColumnSummary[];
@@ -109,18 +109,41 @@ export interface PendingApprovalPlan {
   row_count?: number | null;
 }
 
-export interface PendingApprovalPayload {
-  stage: "preprocess";
-  kind: "plan_review";
-  title: string;
-  summary: string;
-  source_id: string;
-  plan: PendingApprovalPlan;
+export interface VisualizationPreviewRow {
+  [key: string]: string | number | boolean | null;
 }
+
+export interface VisualizationPendingApprovalPlan {
+  chart_type: string;
+  x_key: string;
+  y_key?: string;
+  mode?: string;
+  reason?: string;
+  x_is_datetime?: boolean;
+  preview_rows?: VisualizationPreviewRow[];
+}
+
+export type PendingApprovalPayload =
+  | {
+      stage: "preprocess";
+      kind: "plan_review";
+      title: string;
+      summary: string;
+      source_id: string;
+      plan: PreprocessPendingApprovalPlan;
+    }
+  | {
+      stage: "visualization";
+      kind: "plan_review";
+      title: string;
+      summary: string;
+      source_id: string;
+      plan: VisualizationPendingApprovalPlan;
+    };
 
 export interface ResumeRunRequest {
   decision: "approve" | "revise" | "cancel";
-  stage: "preprocess";
+  stage: "preprocess" | "visualization";
   instruction?: string;
 }
 

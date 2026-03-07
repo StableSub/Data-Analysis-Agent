@@ -6,10 +6,17 @@ interface GateBarProps {
   onApprove: () => void;
   onCancel: () => void;
   onSubmitChange: (text: string) => void;
+  changePlaceholder?: string;
   className?: string;
 }
 
-export function GateBar({ onApprove, onCancel, onSubmitChange, className }: GateBarProps) {
+export function GateBar({
+  onApprove,
+  onCancel,
+  onSubmitChange,
+  changePlaceholder,
+  className,
+}: GateBarProps) {
   const [value, setValue] = useState("");
   const [isEditing, setIsEditing] = useState(false);
 
@@ -72,7 +79,7 @@ export function GateBar({ onApprove, onCancel, onSubmitChange, className }: Gate
                 onChange={(e) => setValue(e.target.value)}
                 onKeyDown={handleKeyDown}
                 onBlur={() => !value.trim() && setIsEditing(false)}
-                placeholder="What should change? (e.g., 'Use median imputation')"
+                placeholder={changePlaceholder ?? "What should change? (e.g., 'Use median imputation')"}
                 className="w-full bg-transparent border-none outline-none resize-none text-sm p-2 min-h-[60px] text-[var(--genui-text)] placeholder:text-[var(--genui-muted)]/70"
                 rows={2}
               />

@@ -110,6 +110,7 @@ class VisualizationGraphState(AgentState, total=False):
     visualization_plan: Dict[str, Any]
     # visualization_result: {"status","source_id","summary","chart?":{"chart_type","x_key","y_key"},"artifact?":{"mime_type","image_base64","code"}}
     visualization_result: VisualizationResultPayload
+    output: OutputPayload
 
 
 class ReportGraphState(AgentState, total=False):

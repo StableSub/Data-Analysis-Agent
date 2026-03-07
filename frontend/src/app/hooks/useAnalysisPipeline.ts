@@ -309,10 +309,54 @@ function parsePendingApproval(payload: unknown): PendingApprovalPayload | null {
   }
 
   const data = payload as Record<string, unknown>;
+  const stage = data.stage === "visualization" ? "visualization" : "preprocess";
   const planRaw = data.plan;
   const plan = planRaw && typeof planRaw === "object"
     ? (planRaw as Record<string, unknown>)
     : {};
+
+  if (stage === "visualization") {
+    const previewRows = Array.isArray(plan.preview_rows)
+      ? plan.preview_rows
+          .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
+          .map((item) =>
+            Object.fromEntries(
+              Object.entries(item).map(([key, value]) => [
+                key,
+                typeof value === "string" ||
+                typeof value === "number" ||
+                typeof value === "boolean" ||
+                value === null
+                  ? value
+                  : String(value),
+              ]),
+            ),
+          )
+      : [];
+
+    return {
+      stage: "visualization",
+      kind: "plan_review",
+      title:
+        typeof data.title === "string" && data.title.trim()
+          ? data.title
+          : "Visualization plan review",
+      summary:
+        typeof data.summary === "string" && data.summary.trim()
+          ? data.summary
+          : "시각화 계획을 검토한 뒤 승인 여부를 결정해 주세요.",
+      source_id: typeof data.source_id === "string" ? data.source_id : "",
+      plan: {
+        chart_type: typeof plan.chart_type === "string" ? plan.chart_type : "",
+        x_key: typeof plan.x_key === "string" ? plan.x_key : "",
+        y_key: typeof plan.y_key === "string" ? plan.y_key : "",
+        mode: typeof plan.mode === "string" ? plan.mode : undefined,
+        reason: typeof plan.reason === "string" ? plan.reason : undefined,
+        x_is_datetime: typeof plan.x_is_datetime === "boolean" ? plan.x_is_datetime : undefined,
+        preview_rows: previewRows,
+      },
+    };
+  }
 
   const topMissingColumns = Array.isArray(plan.top_missing_columns)
     ? plan.top_missing_columns
@@ -354,6 +398,25 @@ function parsePendingApproval(payload: unknown): PendingApprovalPayload | null {
       row_count: typeof plan.row_count === "number" ? plan.row_count : null,
     },
   };
+}
+
+function approvalStageToSubPhase(
+  stage: PendingApprovalPayload["stage"],
+): RunningSubPhase {
+  return stage === "visualization" ? "visualization" : "preprocessing";
+}
+
+function approvalStageCompletedStages(
+  stage: PendingApprovalPayload["stage"],
+): Set<string> {
+  if (stage === "visualization") {
+    return new Set(["intake", "preprocess", "rag"]);
+  }
+  return new Set(["intake"]);
+}
+
+function approvalStageLabel(stage: PendingApprovalPayload["stage"]): string {
+  return stage === "visualization" ? "Visualization" : "Preprocess";
 }
 
 function formatPendingValue(value: unknown): string {
@@ -633,7 +696,8 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
           setStreamingAnswer("");
           setChatResponse(null);
           setState("needs-user");
-          setRunningSubPhase("preprocessing");
+          setRunningSubPhase(approvalStageToSubPhase(pending.stage));
+          completedStagesRef.current = approvalStageCompletedStages(pending.stage);
 
           updateToolCall(tc.id, {
             status: "needs-user",
@@ -913,14 +977,14 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
       setErrorMessage(null);
       setErrorStep(null);
       setState("running");
-      setRunningSubPhase("preprocessing");
+      setRunningSubPhase(approvalStageToSubPhase(pendingApproval.stage));
       setStreamingAnswer("");
       setThoughtSteps([]);
-      completedStagesRef.current = new Set(["intake"]);
+      completedStagesRef.current = approvalStageCompletedStages(pendingApproval.stage);
 
       const request = {
         decision,
-        stage: "preprocess" as const,
+        stage: pendingApproval.stage,
         instruction: instruction?.trim() || undefined,
       };
 
@@ -947,7 +1011,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
             startMs,
             successMilestoneTitle:
               decision === "approve"
-                ? "Preprocess approved"
+                ? `${approvalStageLabel(pendingApproval.stage)} approved`
                 : decision === "revise"
                   ? "Plan revision requested"
                   : "Run cancelled",
@@ -1252,7 +1316,8 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
       setState("success");
     } else if (nextStateHint === "needs-user" && nextPendingApproval) {
       setState("needs-user");
-      setRunningSubPhase("preprocessing");
+      setRunningSubPhase(approvalStageToSubPhase(nextPendingApproval.stage));
+      completedStagesRef.current = approvalStageCompletedStages(nextPendingApproval.stage);
     } else if (nextStateHint === "ready") {
       setState("ready");
     } else if (nextStateHint === "error") {
@@ -1262,7 +1327,9 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
     }
 
     lastQuestionRef.current = "";
-    completedStagesRef.current = new Set();
+    if (!(nextStateHint === "needs-user" && nextPendingApproval)) {
+      completedStagesRef.current = new Set();
+    }
   }, []);
 
   const clearForNewDraft = useCallback(() => {
@@ -1301,6 +1368,32 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
     }
 
     if (state === "needs-user" && pendingApproval) {
+      if (pendingApproval.stage === "visualization") {
+        const plan = pendingApproval.plan;
+        const planItems = [
+          `Chart type: ${plan.chart_type || "-"}`,
+          `X axis: ${plan.x_key || "-"}`,
+          `Y axis: ${plan.y_key || "-"}`,
+          `Mode: ${plan.mode || "-"}`,
+          `Reason: ${plan.reason || pendingApproval.summary}`,
+        ];
+        return [
+          { type: "paragraph" as const, content: pendingApproval.summary },
+          { type: "heading" as const, content: "Planned Chart" },
+          { type: "numbered-list" as const, items: planItems },
+          ...((plan.preview_rows ?? []).length > 0
+            ? [
+                { type: "heading" as const, content: "Preview Rows" },
+                {
+                  type: "code" as const,
+                  content: JSON.stringify(plan.preview_rows ?? [], null, 2),
+                  language: "json",
+                },
+              ]
+            : []),
+        ];
+      }
+
       const operationItems = pendingApproval.plan.operations.length > 0
         ? pendingApproval.plan.operations.map((operation) => formatPendingOperation(operation))
         : ["No preprocessing operations were proposed."];
@@ -1355,7 +1448,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
 
     if (state === "needs-user") {
       return {
-        phase: "Preprocess plan review",
+        phase: pendingApproval ? `${approvalStageLabel(pendingApproval.stage)} plan review` : "Plan review",
         progress,
         lastTool,
         elapsedTime: formatElapsed(elapsedSeconds),
@@ -1396,7 +1489,11 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
       if (state === "error" && i === currentIdx) {
         status = "failed";
         sublabel = `Failed — ${errorMessage?.slice(0, 40)}`;
-      } else if (state === "needs-user" && stageId === "preprocess") {
+      } else if (
+        state === "needs-user"
+        && pendingApproval
+        && stageId === (pendingApproval.stage === "visualization" ? "viz" : "preprocess")
+      ) {
         status = "needs-user";
         sublabel = pendingApproval?.summary ?? "Awaiting approval";
       } else if (state === "running" && i === currentIdx) {
@@ -1447,7 +1544,11 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
       let value: ChipValue = "ON";
       if (state === "error" && stageIdx === currentIdx) {
         value = "FAILED";
-      } else if (state === "needs-user" && key === "preprocess") {
+      } else if (
+        state === "needs-user"
+        && pendingApproval
+        && key === (pendingApproval.stage === "visualization" ? "viz" : "preprocess")
+      ) {
         value = "BLOCKED";
       } else if (state === "running" && stageIdx === currentIdx) {
         value = "RUNNING";

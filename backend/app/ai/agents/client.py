@@ -141,9 +141,15 @@ class AgentClient:
             final_state = snapshot
             pending_approval = self._extract_interrupt_payload(snapshot)
             if pending_approval is not None:
+                pending_stage = str(pending_approval.get("stage") or "")
+                approval_phase = "preprocess_approval"
+                approval_message = "전처리 계획 승인을 기다리는 중입니다."
+                if pending_stage == "visualization":
+                    approval_phase = "visualization_approval"
+                    approval_message = "시각화 계획 승인을 기다리는 중입니다."
                 approval_step = self._make_step(
-                    phase="preprocess_approval",
-                    message="전처리 계획 승인을 기다리는 중입니다.",
+                    phase=approval_phase,
+                    message=approval_message,
                     status="active",
                 )
                 key = (approval_step["phase"], approval_step["message"])

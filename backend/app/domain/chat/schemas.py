@@ -46,7 +46,7 @@ class ChatResponse(BaseModel):
 
 class ResumeRunRequest(BaseModel):
     decision: Literal["approve", "revise", "cancel"]
-    stage: Literal["preprocess"]
+    stage: Literal["preprocess", "visualization"]
     instruction: Optional[str] = None
 
 

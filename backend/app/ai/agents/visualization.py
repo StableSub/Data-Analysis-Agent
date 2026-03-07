@@ -18,7 +18,8 @@ from typing import Any, Dict, Literal
 
 import pandas as pd
 from langgraph.graph import END, START, StateGraph
-from pydantic import BaseModel, Field
+from langgraph.types import interrupt
+from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy.orm import Session
 
 from backend.app.ai.agents.state import VisualizationGraphState
@@ -44,6 +45,19 @@ class ChartSelection(BaseModel):
     x_column: str = Field(...)
     y_column: str = Field(default="")
     reason: str = Field(default="")
+
+
+class VisualizationPlan(BaseModel):
+    status: str = Field(default="unavailable")
+    source_id: str = Field(default="")
+    mode: str = Field(default="")
+    chart_type: str = Field(default="")
+    x_key: str = Field(default="")
+    y_key: str = Field(default="")
+    reason: str = Field(default="")
+    python_code: str = Field(default="")
+    output_filename: str = Field(default="")
+    x_is_datetime: bool = Field(default=False)
 
 
 def _detect_requested_chart_type(query: str) -> str | None:
@@ -289,6 +303,64 @@ def _select_chart_with_llm(
     }
 
 
+def _serialize_preview_value(value: Any) -> Any:
+    if pd.isna(value):
+        return None
+    if isinstance(value, pd.Timestamp):
+        return value.isoformat()
+    if hasattr(value, "item"):
+        return value.item()
+    return value
+
+
+def _build_preview_rows(
+    *,
+    df: pd.DataFrame,
+    x_key: str,
+    y_key: str,
+    limit: int = 5,
+) -> list[Dict[str, Any]]:
+    preview_columns = [column for column in [x_key, y_key] if column]
+    if not preview_columns:
+        return []
+    sample = df[preview_columns].head(limit).copy()
+    return [
+        {
+            str(column): _serialize_preview_value(value)
+            for column, value in row.items()
+        }
+        for row in sample.to_dict(orient="records")
+    ]
+
+
+def _build_visualization_review_payload(
+    *,
+    state: VisualizationGraphState,
+    plan: VisualizationPlan,
+    preview_rows: list[Dict[str, Any]],
+) -> Dict[str, Any]:
+    summary = (
+        plan.reason.strip()
+        or "시각화 계획을 검토한 뒤 승인 여부를 결정해 주세요."
+    )
+    return {
+        "stage": "visualization",
+        "kind": "plan_review",
+        "title": "Visualization plan review",
+        "summary": summary,
+        "source_id": str(plan.source_id or state.get("source_id") or ""),
+        "plan": {
+            "chart_type": plan.chart_type,
+            "x_key": plan.x_key,
+            "y_key": plan.y_key,
+            "mode": plan.mode,
+            "reason": plan.reason,
+            "x_is_datetime": plan.x_is_datetime,
+            "preview_rows": preview_rows,
+        },
+    }
+
+
 def _build_python_code(
     *,
     dataset_path: str,
@@ -489,7 +561,13 @@ def build_visualization_workflow(*, db: Session, default_model: str = "gpt-5-nan
         """
         source_id = resolve_target_source_id(state)
         query = str(state.get("user_input", "")).strip()
-        requested_chart_type = _detect_requested_chart_type(query)
+        revision_request = str(state.get("revision_request") or "").strip()
+        planner_query = (
+            f"{query}\n수정 요청: {revision_request}"
+            if revision_request
+            else query
+        )
+        requested_chart_type = _detect_requested_chart_type(planner_query)
         mode = "specified" if requested_chart_type else "auto"
 
         empty_plan = {
@@ -530,6 +608,15 @@ def build_visualization_workflow(*, db: Session, default_model: str = "gpt-5-nan
                 }
             }
 
+        df = pd.read_csv(file_path, nrows=MAX_SAMPLE_ROWS)
+        if df.empty:
+            return {
+                "visualization_plan": {
+                    **empty_plan,
+                    "reason": "데이터가 비어 있어 시각화 계획을 생성하지 못했습니다.",
+                }
+            }
+
         numeric_columns: list[str] = []
         datetime_columns: list[str] = []
         categorical_columns: list[str] = []
@@ -546,14 +633,6 @@ def build_visualization_workflow(*, db: Session, default_model: str = "gpt-5-nan
             datetime_columns = [str(col) for col in profile_dict.get("datetime_columns", [])]
             categorical_columns = [str(col) for col in profile_dict.get("categorical_columns", [])]
         else:
-            df = pd.read_csv(file_path, nrows=MAX_SAMPLE_ROWS)
-            if df.empty:
-                return {
-                    "visualization_plan": {
-                        **empty_plan,
-                        "reason": "데이터가 비어 있어 시각화 계획을 생성하지 못했습니다.",
-                    }
-                }
             numeric_columns = [
                 str(col) for col in df.select_dtypes(include="number").columns.tolist()
             ]
@@ -567,7 +646,7 @@ def build_visualization_workflow(*, db: Session, default_model: str = "gpt-5-nan
             ]
 
         selection = _select_chart_with_llm(
-            query=query,
+            query=planner_query,
             numeric_columns=numeric_columns,
             datetime_columns=datetime_columns,
             categorical_columns=categorical_columns,
@@ -618,6 +697,90 @@ def build_visualization_workflow(*, db: Session, default_model: str = "gpt-5-nan
         }
         return {"visualization_plan": plan}
 
+    def route_after_planner(state: VisualizationGraphState) -> str:
+        plan_dict = state.get("visualization_plan") or {}
+        if plan_dict.get("status") == "planned":
+            return "approval"
+        return "execute"
+
+    def approval_gate_node(state: VisualizationGraphState) -> Dict[str, Any]:
+        """
+        역할: 생성된 시각화 계획을 사용자 승인 대기로 중단하고, 승인/수정/취소 결정을 반영한다.
+        입력: 현재 `visualization_plan`, `revision_request`를 포함한 상태를 받는다.
+        출력: 승인 시 `approved_plan`, 수정 시 `revision_request`, 취소 시 `visualization_result/output`을 반환한다.
+        데코레이터: 없음.
+        호출 맥락: planner 다음 단계에서 `interrupt()`를 통해 HITL 승인 게이트로 동작한다.
+        """
+        plan = VisualizationPlan.model_validate(state.get("visualization_plan") or {})
+        source_id = str(plan.source_id or state.get("source_id") or "")
+        dataset = data_source_repository.get_by_source_id(source_id) if source_id else None
+        preview_rows: list[Dict[str, Any]] = []
+        if dataset is not None and dataset.storage_path:
+            file_path = Path(dataset.storage_path)
+            if file_path.exists() and file_path.is_file():
+                df = pd.read_csv(file_path, nrows=5)
+                preview_rows = _build_preview_rows(
+                    df=df,
+                    x_key=plan.x_key,
+                    y_key=plan.y_key,
+                )
+        payload = _build_visualization_review_payload(
+            state=state,
+            plan=plan,
+            preview_rows=preview_rows,
+        )
+        decision_raw = interrupt(payload)
+
+        decision = ""
+        instruction = ""
+        if isinstance(decision_raw, dict):
+            decision_value = decision_raw.get("decision")
+            instruction_value = decision_raw.get("instruction")
+            if isinstance(decision_value, str):
+                decision = decision_value
+            if isinstance(instruction_value, str):
+                instruction = instruction_value.strip()
+        elif isinstance(decision_raw, str):
+            decision = decision_raw
+
+        if decision == "approve":
+            return {
+                "approved_plan": plan.model_dump(),
+                "pending_approval": {},
+                "revision_request": "",
+            }
+
+        if decision == "revise":
+            return {
+                "approved_plan": {},
+                "pending_approval": payload,
+                "revision_request": instruction,
+            }
+
+        return {
+            "approved_plan": {},
+            "pending_approval": {},
+            "revision_request": "",
+            "visualization_result": {
+                "status": "cancelled",
+                "source_id": source_id,
+                "summary": "시각화 계획 검토 단계에서 실행을 취소했습니다.",
+            },
+            "output": {
+                "type": "cancelled",
+                "content": "시각화 계획 검토 단계에서 실행을 취소했습니다.",
+            },
+        }
+
+    def route_after_approval(state: VisualizationGraphState) -> str:
+        result = state.get("visualization_result") or {}
+        if result.get("status") == "cancelled":
+            return "cancel"
+        revision_request = str(state.get("revision_request") or "").strip()
+        if revision_request:
+            return "revise"
+        return "approve"
+
     def visualization_executor_node(state: VisualizationGraphState) -> Dict[str, Any]:
         """
         역할: planner가 만든 코드를 샌드박스 프로세스로 실행해 PNG 아티팩트를 생성하고 결과를 상태에 기록한다.
@@ -626,17 +789,30 @@ def build_visualization_workflow(*, db: Session, default_model: str = "gpt-5-nan
         데코레이터: 없음.
         호출 맥락: planner 다음 노드로 연결되며 시각화 경로의 최종 산출물을 만드는 실행 단계다.
         """
-        plan = state.get("visualization_plan")
-        plan_dict = plan if isinstance(plan, dict) else {}
-        status = plan_dict.get("status")
-        source_id = str(plan_dict.get("source_id") or "")
-        chart_type = str(plan_dict.get("chart_type") or "")
-        x_key = str(plan_dict.get("x_key") or "")
-        y_key = str(plan_dict.get("y_key") or "")
-        reason = str(plan_dict.get("reason") or "")
-        python_code = str(plan_dict.get("python_code") or "")
-        output_filename = str(plan_dict.get("output_filename") or "")
-        x_is_datetime = bool(plan_dict.get("x_is_datetime", False))
+        plan_raw = state.get("approved_plan") or state.get("visualization_plan") or {}
+        try:
+            plan = VisualizationPlan.model_validate(plan_raw)
+        except ValidationError as exc:
+            return {
+                "visualization_result": {
+                    "status": "unavailable",
+                    "source_id": "",
+                    "summary": f"시각화 계획 형식이 올바르지 않습니다: {exc}",
+                },
+                "revision_request": "",
+                "approved_plan": {},
+                "pending_approval": {},
+            }
+
+        status = plan.status
+        source_id = str(plan.source_id or "")
+        chart_type = plan.chart_type
+        x_key = plan.x_key
+        y_key = plan.y_key
+        reason = plan.reason
+        python_code = plan.python_code
+        output_filename = plan.output_filename
+        x_is_datetime = plan.x_is_datetime
 
         if status != "planned":
             return {
@@ -644,7 +820,10 @@ def build_visualization_workflow(*, db: Session, default_model: str = "gpt-5-nan
                     "status": "unavailable",
                     "source_id": source_id,
                     "summary": reason or "시각화 계획이 없어 실행을 생략했습니다.",
-                }
+                },
+                "revision_request": "",
+                "approved_plan": {},
+                "pending_approval": {},
             }
 
         if not python_code or not output_filename or not chart_type:
@@ -653,7 +832,10 @@ def build_visualization_workflow(*, db: Session, default_model: str = "gpt-5-nan
                     "status": "unavailable",
                     "source_id": source_id,
                     "summary": "시각화 실행 코드가 없어 차트를 생성하지 못했습니다.",
-                }
+                },
+                "revision_request": "",
+                "approved_plan": {},
+                "pending_approval": {},
             }
 
         dataset = data_source_repository.get_by_source_id(source_id) if source_id else None
@@ -663,7 +845,10 @@ def build_visualization_workflow(*, db: Session, default_model: str = "gpt-5-nan
                     "status": "unavailable",
                     "source_id": source_id,
                     "summary": "시각화 대상 데이터셋을 찾지 못했습니다.",
-                }
+                },
+                "revision_request": "",
+                "approved_plan": {},
+                "pending_approval": {},
             }
         file_path = Path(dataset.storage_path)
         if not file_path.exists() or not file_path.is_file():
@@ -672,7 +857,10 @@ def build_visualization_workflow(*, db: Session, default_model: str = "gpt-5-nan
                     "status": "unavailable",
                     "source_id": source_id,
                     "summary": "데이터 파일이 없어 차트를 생성하지 못했습니다.",
-                }
+                },
+                "revision_request": "",
+                "approved_plan": {},
+                "pending_approval": {},
             }
         df = pd.read_csv(file_path, nrows=MAX_SAMPLE_ROWS)
         if df.empty or not _chart_has_data(
@@ -687,7 +875,10 @@ def build_visualization_workflow(*, db: Session, default_model: str = "gpt-5-nan
                     "status": "unavailable",
                     "source_id": source_id,
                     "summary": "선택된 컬럼에서 유효한 시각화 데이터가 없습니다.",
-                }
+                },
+                "revision_request": "",
+                "approved_plan": {},
+                "pending_approval": {},
             }
 
         temp_dir = Path(tempfile.mkdtemp(prefix="viz_exec_"))
@@ -702,7 +893,10 @@ def build_visualization_workflow(*, db: Session, default_model: str = "gpt-5-nan
                     "status": "unavailable",
                     "source_id": source_id,
                     "summary": "시각화 코드 실행 시간이 초과되어 차트를 생성하지 못했습니다.",
-                }
+                },
+                "revision_request": "",
+                "approved_plan": {},
+                "pending_approval": {},
             }
 
         if int(run_result.get("returncode", 1)) != 0 or not output_path.exists():
@@ -713,7 +907,10 @@ def build_visualization_workflow(*, db: Session, default_model: str = "gpt-5-nan
                     "status": "unavailable",
                     "source_id": source_id,
                     "summary": f"시각화 코드 실행 실패: {error_message}",
-                }
+                },
+                "revision_request": "",
+                "approved_plan": {},
+                "pending_approval": {},
             }
 
         image_base64 = base64.b64encode(output_path.read_bytes()).decode("ascii")
@@ -734,14 +931,39 @@ def build_visualization_workflow(*, db: Session, default_model: str = "gpt-5-nan
                     "image_base64": image_base64,
                     "code": python_code,
                 },
-            }
+            },
+            "revision_request": "",
+            "approved_plan": {},
+            "pending_approval": {},
         }
+
+    def cancel_node(_: VisualizationGraphState) -> Dict[str, Any]:
+        return {}
 
     graph = StateGraph(VisualizationGraphState)
     graph.add_node("visualization_planner", visualization_planner_node)
+    graph.add_node("approval_gate", approval_gate_node)
     graph.add_node("visualization_executor", visualization_executor_node)
+    graph.add_node("cancel", cancel_node)
     graph.add_edge(START, "visualization_planner")
-    graph.add_edge("visualization_planner", "visualization_executor")
+    graph.add_conditional_edges(
+        "visualization_planner",
+        route_after_planner,
+        {
+            "approval": "approval_gate",
+            "execute": "visualization_executor",
+        },
+    )
+    graph.add_conditional_edges(
+        "approval_gate",
+        route_after_approval,
+        {
+            "approve": "visualization_executor",
+            "revise": "visualization_planner",
+            "cancel": "cancel",
+        },
+    )
     graph.add_edge("visualization_executor", END)
+    graph.add_edge("cancel", END)
 
     return graph.compile()

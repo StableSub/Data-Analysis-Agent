@@ -243,15 +243,30 @@ export function DetailsPanel({ state, selectedItem, onAction, className }: Detai
   // 3. HITL STATE: Full Approval Card
   if (state === "needs-user") {
     const changeList = pendingApproval
-      ? [
-          ...pendingApproval.plan.operations.map((operation) => formatPendingOperation(operation)),
-          ...(pendingApproval.plan.top_missing_columns ?? []).map(
-            (item) => `missing: ${item.column} (${(item.missing_rate * 100).toFixed(1)}%)`,
-          ),
-          ...((pendingApproval.plan.affected_columns ?? []).length > 0
-            ? [`affected columns: ${(pendingApproval.plan.affected_columns ?? []).join(", ")}`]
-            : []),
-        ]
+      ? pendingApproval.stage === "visualization"
+        ? [
+            `chart type: ${pendingApproval.plan.chart_type || "-"}`,
+            `x axis: ${pendingApproval.plan.x_key || "-"}`,
+            `y axis: ${pendingApproval.plan.y_key || "-"}`,
+            ...(pendingApproval.plan.mode
+              ? [`mode: ${pendingApproval.plan.mode}`]
+              : []),
+            ...(pendingApproval.plan.reason
+              ? [`reason: ${pendingApproval.plan.reason}`]
+              : []),
+            ...((pendingApproval.plan.preview_rows ?? []).length > 0
+              ? [`preview rows: ${(pendingApproval.plan.preview_rows ?? []).length}`]
+              : []),
+          ]
+        : [
+            ...pendingApproval.plan.operations.map((operation) => formatPendingOperation(operation)),
+            ...(pendingApproval.plan.top_missing_columns ?? []).map(
+              (item) => `missing: ${item.column} (${(item.missing_rate * 100).toFixed(1)}%)`,
+            ),
+            ...((pendingApproval.plan.affected_columns ?? []).length > 0
+              ? [`affected columns: ${(pendingApproval.plan.affected_columns ?? []).join(", ")}`]
+              : []),
+          ]
       : [];
     return (
       <div className={cn("h-full flex flex-col p-4", className)}>
@@ -261,13 +276,23 @@ export function DetailsPanel({ state, selectedItem, onAction, className }: Detai
          </div>
          
          <ApprovalCard 
-            title={pendingApproval?.title ?? "Preprocess plan review"}
-            description={pendingApproval?.summary ?? "전처리 계획을 검토한 뒤 승인 여부를 결정해 주세요."}
-            changes={changeList.length > 0 ? changeList : ["Approve to continue with the proposed preprocessing plan."]}
+            title={pendingApproval?.title ?? "Plan review"}
+            description={pendingApproval?.summary ?? "계획을 검토한 뒤 승인 여부를 결정해 주세요."}
+            changes={changeList.length > 0 ? changeList : ["Approve to continue with the proposed plan."]}
             status="pending"
             hideActions={true}
             className="w-full flex-1 flex flex-col shadow-none border-none bg-transparent"
          />
+         {pendingApproval?.stage === "visualization" && (pendingApproval.plan.preview_rows ?? []).length > 0 ? (
+           <div className="mt-4 rounded-xl border border-[var(--genui-border)] bg-[var(--genui-panel)] p-3">
+             <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--genui-muted)]">
+               Preview Rows
+             </p>
+             <pre className="mt-2 overflow-x-auto text-[11px] leading-relaxed text-[var(--genui-text)]">
+               {JSON.stringify(pendingApproval.plan.preview_rows ?? [], null, 2)}
+             </pre>
+           </div>
+         ) : null}
       </div>
     );
   }

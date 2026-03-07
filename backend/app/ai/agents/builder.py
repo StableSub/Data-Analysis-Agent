@@ -101,6 +101,16 @@ def build_main_workflow(
             return "report"
         return "data_qa"
 
+    def route_after_visualization(state: MainWorkflowState) -> str:
+        visualization_result = state.get("visualization_result") or {}
+        output = state.get("output") or {}
+        if (
+            visualization_result.get("status") == "cancelled"
+            or output.get("type") == "cancelled"
+        ):
+            return "cancelled"
+        return "merge_context"
+
     def general_question_terminal(state: MainWorkflowState) -> Dict[str, Any]:
         """
         역할: 데이터셋이 없는 일반 질문 경로에서 LLM 단일 응답을 생성해 워크플로우를 종료한다.
@@ -249,7 +259,14 @@ def build_main_workflow(
             "merge_context": "merge_context",
         },
     )
-    graph.add_edge("visualization_flow", "merge_context")
+    graph.add_conditional_edges(
+        "visualization_flow",
+        route_after_visualization,
+        {
+            "merge_context": "merge_context",
+            "cancelled": END,
+        },
+    )
     graph.add_conditional_edges(
         "merge_context",
         route_after_merge_context,
