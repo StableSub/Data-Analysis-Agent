@@ -28,12 +28,14 @@ class ChatThoughtStep(BaseModel):
 
 
 class PendingApproval(BaseModel):
-    stage: str
-    kind: str
+    stage: Literal["preprocess", "visualization", "report"]
+    kind: Literal["plan_review", "draft_review"]
     title: str
     summary: str
     source_id: str
-    plan: dict[str, Any]
+    plan: dict[str, Any] = Field(default_factory=dict)
+    draft: str = ""
+    review: dict[str, Any] = Field(default_factory=dict)
 
 
 class ChatResponse(BaseModel):
@@ -46,7 +48,7 @@ class ChatResponse(BaseModel):
 
 class ResumeRunRequest(BaseModel):
     decision: Literal["approve", "revise", "cancel"]
-    stage: Literal["preprocess", "visualization"]
+    stage: Literal["preprocess", "visualization", "report"]
     instruction: Optional[str] = None
 
 

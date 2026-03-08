@@ -147,6 +147,9 @@ class AgentClient:
                 if pending_stage == "visualization":
                     approval_phase = "visualization_approval"
                     approval_message = "시각화 계획 승인을 기다리는 중입니다."
+                elif pending_stage == "report":
+                    approval_phase = "report_approval"
+                    approval_message = "리포트 초안 검토를 기다리는 중입니다."
                 approval_step = self._make_step(
                     phase=approval_phase,
                     message=approval_message,
@@ -524,6 +527,22 @@ class AgentClient:
                     )
                 )
 
+        report_draft = state.get("report_draft")
+        if isinstance(report_draft, dict):
+            report_summary = report_draft.get("summary")
+            if isinstance(report_summary, str) and report_summary.strip():
+                revision_count = int(report_draft.get("revision_count", 0) or 0)
+                steps.append(
+                    cls._make_step(
+                        phase="report_draft",
+                        message=(
+                            "수정 요청을 반영해 리포트 초안을 다시 작성했습니다."
+                            if revision_count > 0
+                            else "리포트 초안을 작성했습니다."
+                        ),
+                    )
+                )
+
         report_result = state.get("report_result")
         if isinstance(report_result, dict):
             report_summary = report_result.get("summary")
@@ -532,6 +551,17 @@ class AgentClient:
                     cls._make_step(
                         phase="report",
                         message="리포트 응답을 구성했습니다.",
+                    )
+                )
+
+        revision_request = state.get("revision_request")
+        if isinstance(revision_request, dict) and revision_request.get("stage") == "report":
+            instruction = revision_request.get("instruction")
+            if isinstance(instruction, str) and instruction.strip():
+                steps.append(
+                    cls._make_step(
+                        phase="report_revision",
+                        message=f"리포트 수정 요청을 반영합니다: {instruction.strip()}",
                     )
                 )
 

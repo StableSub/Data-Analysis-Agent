@@ -7,6 +7,9 @@ interface GateBarProps {
   onCancel: () => void;
   onSubmitChange: (text: string) => void;
   changePlaceholder?: string;
+  approveLabel?: string;
+  cancelLabel?: string;
+  changeLabel?: string;
   className?: string;
 }
 
@@ -15,6 +18,9 @@ export function GateBar({
   onCancel,
   onSubmitChange,
   changePlaceholder,
+  approveLabel,
+  cancelLabel,
+  changeLabel,
   className,
 }: GateBarProps) {
   const [value, setValue] = useState("");
@@ -49,7 +55,7 @@ export function GateBar({
         <div className="p-1 rounded-full bg-white/20 group-hover:bg-white/30 transition-colors">
           <Check className="w-4 h-4" />
         </div>
-        <span>Approve & Continue</span>
+        <span>{approveLabel ?? "Approve & Continue"}</span>
       </button>
 
       {/* 2. Cancel (Secondary Action) */}
@@ -58,7 +64,7 @@ export function GateBar({
         className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-[var(--genui-surface)] border border-[var(--genui-border)] text-[var(--genui-error)] font-medium rounded-xl hover:bg-[var(--genui-error)]/5 hover:border-[var(--genui-error)]/30 transition-all active:scale-[0.99]"
       >
         <X className="w-4 h-4" />
-        <span>Cancel Run</span>
+        <span>{cancelLabel ?? "Cancel Run"}</span>
       </button>
 
       {/* 3. Edit / Input (Tertiary Action) */}
@@ -69,7 +75,7 @@ export function GateBar({
              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 text-[var(--genui-muted)] hover:text-[var(--genui-text)] hover:bg-[var(--genui-panel)] rounded-xl transition-colors text-sm"
            >
              <MessageSquarePlus className="w-4 h-4" />
-             <span>Request Changes...</span>
+             <span>{changeLabel ?? "Request Changes..."}</span>
            </button>
         ) : (
            <div className="animate-in fade-in zoom-in-95 duration-200 bg-[var(--genui-panel)] rounded-xl border border-[var(--genui-focus-ring)]/50 p-1">

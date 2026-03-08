@@ -60,6 +60,17 @@ class VisualizationPlan(BaseModel):
     x_is_datetime: bool = Field(default=False)
 
 
+def _get_visualization_revision_instruction(state: VisualizationGraphState) -> str:
+    revision_request = state.get("revision_request")
+    if isinstance(revision_request, dict):
+        if revision_request.get("stage") == "visualization":
+            instruction = revision_request.get("instruction")
+            if isinstance(instruction, str):
+                return instruction.strip()
+        return ""
+    return str(revision_request or "").strip()
+
+
 def _detect_requested_chart_type(query: str) -> str | None:
     """
     역할: 사용자 질의 텍스트에서 차트 타입 키워드를 탐지해 요청 유형을 추정한다.
@@ -561,7 +572,7 @@ def build_visualization_workflow(*, db: Session, default_model: str = "gpt-5-nan
         """
         source_id = resolve_target_source_id(state)
         query = str(state.get("user_input", "")).strip()
-        revision_request = str(state.get("revision_request") or "").strip()
+        revision_request = _get_visualization_revision_instruction(state)
         planner_query = (
             f"{query}\n수정 요청: {revision_request}"
             if revision_request
@@ -747,20 +758,23 @@ def build_visualization_workflow(*, db: Session, default_model: str = "gpt-5-nan
             return {
                 "approved_plan": plan.model_dump(),
                 "pending_approval": {},
-                "revision_request": "",
+                "revision_request": {},
             }
 
         if decision == "revise":
             return {
                 "approved_plan": {},
                 "pending_approval": payload,
-                "revision_request": instruction,
+                "revision_request": {
+                    "stage": "visualization",
+                    "instruction": instruction,
+                },
             }
 
         return {
             "approved_plan": {},
             "pending_approval": {},
-            "revision_request": "",
+            "revision_request": {},
             "visualization_result": {
                 "status": "cancelled",
                 "source_id": source_id,
@@ -776,7 +790,7 @@ def build_visualization_workflow(*, db: Session, default_model: str = "gpt-5-nan
         result = state.get("visualization_result") or {}
         if result.get("status") == "cancelled":
             return "cancel"
-        revision_request = str(state.get("revision_request") or "").strip()
+        revision_request = _get_visualization_revision_instruction(state)
         if revision_request:
             return "revise"
         return "approve"
@@ -799,7 +813,7 @@ def build_visualization_workflow(*, db: Session, default_model: str = "gpt-5-nan
                     "source_id": "",
                     "summary": f"시각화 계획 형식이 올바르지 않습니다: {exc}",
                 },
-                "revision_request": "",
+                "revision_request": {},
                 "approved_plan": {},
                 "pending_approval": {},
             }
@@ -821,7 +835,7 @@ def build_visualization_workflow(*, db: Session, default_model: str = "gpt-5-nan
                     "source_id": source_id,
                     "summary": reason or "시각화 계획이 없어 실행을 생략했습니다.",
                 },
-                "revision_request": "",
+                "revision_request": {},
                 "approved_plan": {},
                 "pending_approval": {},
             }
@@ -833,7 +847,7 @@ def build_visualization_workflow(*, db: Session, default_model: str = "gpt-5-nan
                     "source_id": source_id,
                     "summary": "시각화 실행 코드가 없어 차트를 생성하지 못했습니다.",
                 },
-                "revision_request": "",
+                "revision_request": {},
                 "approved_plan": {},
                 "pending_approval": {},
             }
@@ -846,7 +860,7 @@ def build_visualization_workflow(*, db: Session, default_model: str = "gpt-5-nan
                     "source_id": source_id,
                     "summary": "시각화 대상 데이터셋을 찾지 못했습니다.",
                 },
-                "revision_request": "",
+                "revision_request": {},
                 "approved_plan": {},
                 "pending_approval": {},
             }
@@ -858,7 +872,7 @@ def build_visualization_workflow(*, db: Session, default_model: str = "gpt-5-nan
                     "source_id": source_id,
                     "summary": "데이터 파일이 없어 차트를 생성하지 못했습니다.",
                 },
-                "revision_request": "",
+                "revision_request": {},
                 "approved_plan": {},
                 "pending_approval": {},
             }
@@ -876,7 +890,7 @@ def build_visualization_workflow(*, db: Session, default_model: str = "gpt-5-nan
                     "source_id": source_id,
                     "summary": "선택된 컬럼에서 유효한 시각화 데이터가 없습니다.",
                 },
-                "revision_request": "",
+                "revision_request": {},
                 "approved_plan": {},
                 "pending_approval": {},
             }
@@ -894,7 +908,7 @@ def build_visualization_workflow(*, db: Session, default_model: str = "gpt-5-nan
                     "source_id": source_id,
                     "summary": "시각화 코드 실행 시간이 초과되어 차트를 생성하지 못했습니다.",
                 },
-                "revision_request": "",
+                "revision_request": {},
                 "approved_plan": {},
                 "pending_approval": {},
             }
@@ -908,7 +922,7 @@ def build_visualization_workflow(*, db: Session, default_model: str = "gpt-5-nan
                     "source_id": source_id,
                     "summary": f"시각화 코드 실행 실패: {error_message}",
                 },
-                "revision_request": "",
+                "revision_request": {},
                 "approved_plan": {},
                 "pending_approval": {},
             }
@@ -932,7 +946,7 @@ def build_visualization_workflow(*, db: Session, default_model: str = "gpt-5-nan
                     "code": python_code,
                 },
             },
-            "revision_request": "",
+            "revision_request": {},
             "approved_plan": {},
             "pending_approval": {},
         }

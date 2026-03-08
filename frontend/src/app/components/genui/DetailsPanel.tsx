@@ -242,6 +242,34 @@ export function DetailsPanel({ state, selectedItem, onAction, className }: Detai
 
   // 3. HITL STATE: Full Approval Card
   if (state === "needs-user") {
+    if (pendingApproval?.stage === "report") {
+      return (
+        <div className={cn("h-full flex flex-col p-4", className)}>
+          <div className="mb-4 flex items-center gap-2 text-[var(--genui-needs-user)]">
+            <ShieldCheck className="w-5 h-5" />
+            <span className="text-sm font-bold uppercase tracking-wide">Decision Required</span>
+          </div>
+
+          <div className="flex-1 rounded-2xl border border-[var(--genui-needs-user)]/30 bg-[var(--genui-surface)] p-4 shadow-sm overflow-y-auto">
+            <div className="space-y-2 pb-3 border-b border-[var(--genui-border)]">
+              <p className="text-xs font-bold uppercase tracking-widest text-[var(--genui-needs-user)]">
+                Report Draft
+              </p>
+              <h3 className="text-sm font-semibold text-[var(--genui-text)]">
+                {pendingApproval.title}
+              </h3>
+              <p className="text-xs leading-relaxed text-[var(--genui-muted)]">
+                {pendingApproval.summary}
+              </p>
+            </div>
+            <div className="mt-4 whitespace-pre-wrap text-sm leading-6 text-[var(--genui-text)]">
+              {pendingApproval.draft.trim() || "리포트 초안을 불러오지 못했습니다."}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     const changeList = pendingApproval
       ? pendingApproval.stage === "visualization"
         ? [

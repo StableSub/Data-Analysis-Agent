@@ -309,11 +309,36 @@ function parsePendingApproval(payload: unknown): PendingApprovalPayload | null {
   }
 
   const data = payload as Record<string, unknown>;
-  const stage = data.stage === "visualization" ? "visualization" : "preprocess";
+  const stageRaw = data.stage;
+  if (stageRaw !== "preprocess" && stageRaw !== "visualization" && stageRaw !== "report") {
+    return null;
+  }
+  const stage = stageRaw;
   const planRaw = data.plan;
   const plan = planRaw && typeof planRaw === "object"
     ? (planRaw as Record<string, unknown>)
     : {};
+
+  if (stage === "report") {
+    return {
+      stage: "report",
+      kind: "draft_review",
+      title:
+        typeof data.title === "string" && data.title.trim()
+          ? data.title
+          : "Report draft review",
+      summary:
+        typeof data.summary === "string" && data.summary.trim()
+          ? data.summary
+          : "리포트 초안을 검토한 뒤 승인 여부를 결정해 주세요.",
+      source_id: typeof data.source_id === "string" ? data.source_id : "",
+      draft: typeof data.draft === "string" ? data.draft : "",
+      review: data.review && typeof data.review === "object"
+        ? (data.review as { revision_count?: number })
+        : undefined,
+      plan: {},
+    };
+  }
 
   if (stage === "visualization") {
     const previewRows = Array.isArray(plan.preview_rows)
@@ -403,7 +428,13 @@ function parsePendingApproval(payload: unknown): PendingApprovalPayload | null {
 function approvalStageToSubPhase(
   stage: PendingApprovalPayload["stage"],
 ): RunningSubPhase {
-  return stage === "visualization" ? "visualization" : "preprocessing";
+  if (stage === "visualization") {
+    return "visualization";
+  }
+  if (stage === "report") {
+    return "report";
+  }
+  return "preprocessing";
 }
 
 function approvalStageCompletedStages(
@@ -412,11 +443,44 @@ function approvalStageCompletedStages(
   if (stage === "visualization") {
     return new Set(["intake", "preprocess", "rag"]);
   }
+  if (stage === "report") {
+    return new Set(["intake", "preprocess", "rag", "merge"]);
+  }
   return new Set(["intake"]);
 }
 
 function approvalStageLabel(stage: PendingApprovalPayload["stage"]): string {
-  return stage === "visualization" ? "Visualization" : "Preprocess";
+  if (stage === "visualization") {
+    return "Visualization";
+  }
+  if (stage === "report") {
+    return "Report";
+  }
+  return "Preprocess";
+}
+
+function approvalStageNeedsUserTitle(stage: PendingApprovalPayload["stage"]): string {
+  if (stage === "report") {
+    return "Report draft ready";
+  }
+  return "Approval required";
+}
+
+function approvalStageRevisionTitle(stage: PendingApprovalPayload["stage"]): string {
+  if (stage === "report") {
+    return "Report revision requested";
+  }
+  if (stage === "visualization") {
+    return "Visualization revision requested";
+  }
+  return "Revision requested";
+}
+
+function approvalStageCancelTitle(stage: PendingApprovalPayload["stage"]): string {
+  if (stage === "report") {
+    return "Report cancelled";
+  }
+  return "Run cancelled";
 }
 
 function formatPendingValue(value: unknown): string {
@@ -697,7 +761,13 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
           setChatResponse(null);
           setState("needs-user");
           setRunningSubPhase(approvalStageToSubPhase(pending.stage));
-          completedStagesRef.current = approvalStageCompletedStages(pending.stage);
+          if (pending.stage === "report") {
+            const nextCompletedStages = new Set(completedStagesRef.current);
+            nextCompletedStages.add("merge");
+            completedStagesRef.current = nextCompletedStages;
+          } else {
+            completedStagesRef.current = approvalStageCompletedStages(pending.stage);
+          }
 
           updateToolCall(tc.id, {
             status: "needs-user",
@@ -706,7 +776,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
           });
           addMilestone({
             status: "needs-user",
-            title: "Approval required",
+            title: approvalStageNeedsUserTitle(pending.stage),
             subtext: pending.title,
             timestamp: now(),
             selected: true,
@@ -1013,8 +1083,8 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
               decision === "approve"
                 ? `${approvalStageLabel(pendingApproval.stage)} approved`
                 : decision === "revise"
-                  ? "Plan revision requested"
-                  : "Run cancelled",
+                  ? approvalStageRevisionTitle(pendingApproval.stage)
+                  : approvalStageCancelTitle(pendingApproval.stage),
             successMilestoneSubtext:
               decision === "approve"
                 ? pendingApproval.title
@@ -1056,7 +1126,12 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
   const handleReject = useCallback(() => {
     setHistory((prev) => [
       ...prev,
-      { status: "failed" as TimelineItemStatus, title: "Run cancelled", subtext: pendingApproval?.title, timestamp: now() },
+      {
+        status: "failed" as TimelineItemStatus,
+        title: approvalStageCancelTitle(pendingApproval?.stage ?? "preprocess"),
+        subtext: pendingApproval?.title,
+        timestamp: now(),
+      },
     ]);
     resumeRun("cancel");
   }, [pendingApproval, resumeRun]);
@@ -1068,10 +1143,15 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
     }
     setHistory((prev) => [
       ...prev,
-      { status: "completed" as TimelineItemStatus, title: "Revision requested", subtext: nextText, timestamp: now() },
+      {
+        status: "completed" as TimelineItemStatus,
+        title: approvalStageRevisionTitle(pendingApproval?.stage ?? "preprocess"),
+        subtext: nextText,
+        timestamp: now(),
+      },
     ]);
     resumeRun("revise", nextText);
-  }, [resumeRun]);
+  }, [pendingApproval, resumeRun]);
 
   const handleSend = useCallback(
     (message: string) => {
@@ -1368,6 +1448,20 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
     }
 
     if (state === "needs-user" && pendingApproval) {
+      if (pendingApproval.stage === "report") {
+        const paragraphs = pendingApproval.draft
+          .split(/\n{2,}/)
+          .map((item) => item.trim())
+          .filter(Boolean);
+        return [
+          { type: "paragraph" as const, content: pendingApproval.summary },
+          { type: "heading" as const, content: "Report Draft" },
+          ...(paragraphs.length > 0
+            ? paragraphs.map((item) => ({ type: "paragraph" as const, content: item }))
+            : [{ type: "paragraph" as const, content: "리포트 초안을 불러오지 못했습니다." }]),
+        ];
+      }
+
       if (pendingApproval.stage === "visualization") {
         const plan = pendingApproval.plan;
         const planItems = [
@@ -1448,7 +1542,9 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
 
     if (state === "needs-user") {
       return {
-        phase: pendingApproval ? `${approvalStageLabel(pendingApproval.stage)} plan review` : "Plan review",
+        phase: pendingApproval
+          ? `${approvalStageLabel(pendingApproval.stage)} ${pendingApproval.stage === "report" ? "draft review" : "plan review"}`
+          : "Plan review",
         progress,
         lastTool,
         elapsedTime: formatElapsed(elapsedSeconds),
@@ -1492,7 +1588,13 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
       } else if (
         state === "needs-user"
         && pendingApproval
-        && stageId === (pendingApproval.stage === "visualization" ? "viz" : "preprocess")
+        && stageId === (
+          pendingApproval.stage === "visualization"
+            ? "viz"
+            : pendingApproval.stage === "report"
+              ? "report"
+              : "preprocess"
+        )
       ) {
         status = "needs-user";
         sublabel = pendingApproval?.summary ?? "Awaiting approval";
@@ -1547,7 +1649,13 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
       } else if (
         state === "needs-user"
         && pendingApproval
-        && key === (pendingApproval.stage === "visualization" ? "viz" : "preprocess")
+        && key === (
+          pendingApproval.stage === "visualization"
+            ? "viz"
+            : pendingApproval.stage === "report"
+              ? "report"
+              : "preprocess"
+        )
       ) {
         value = "BLOCKED";
       } else if (state === "running" && stageIdx === currentIdx) {

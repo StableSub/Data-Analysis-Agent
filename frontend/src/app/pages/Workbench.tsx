@@ -673,7 +673,11 @@ export default function Workbench() {
             variant="final"
             accentVariant="needs-user"
             title={pendingApproval?.title ?? "Plan review"}
-            subtitle="Waiting for approval"
+            subtitle={
+              pendingApproval?.stage === "report"
+                ? "Waiting for report review"
+                : "Waiting for approval"
+            }
             timestamp="Now"
             sections={reportSections}
             maxBodyHeight={300}
@@ -683,7 +687,13 @@ export default function Workbench() {
             <div className="inline-flex items-center gap-3 px-4 py-2 bg-[var(--genui-panel)] border border-[var(--genui-needs-user)]/30 rounded-full shadow-sm">
               <ToolCallIndicator
                 status="needs-user"
-                label={pendingApproval?.stage === "visualization" ? "visualization_plan_review" : "preprocess_plan_review"}
+                label={
+                  pendingApproval?.stage === "report"
+                    ? "report_draft_review"
+                    : pendingApproval?.stage === "visualization"
+                      ? "visualization_plan_review"
+                      : "preprocess_plan_review"
+                }
                 sublabel={pendingApproval?.summary ?? "Awaiting user decision"}
               />
             </div>
@@ -731,7 +741,11 @@ export default function Workbench() {
       placeholder={
         state === "empty" ? "Upload a dataset or ask a question..." :
           state === "ready" ? "파일을 선택하거나, 바로 질문을 입력하세요..." :
-            state === "needs-user" ? "Review the current plan below to continue..." :
+            state === "needs-user"
+              ? pendingApproval?.stage === "report"
+                ? "Review the report draft below to continue..."
+                : "Review the current plan below to continue..."
+              :
               state === "error" ? "Type to discuss the error..." :
                 "Ask Gen-UI to analyze, visualize, or transform..."
       }
@@ -748,8 +762,13 @@ export default function Workbench() {
       onApprove={pipeline.handleApprove}
       onCancel={pipeline.handleReject}
       onSubmitChange={pipeline.handleEditInstruction}
+      approveLabel={pendingApproval?.stage === "report" ? "Approve Report" : undefined}
+      cancelLabel={pendingApproval?.stage === "report" ? "Cancel Report" : undefined}
+      changeLabel={pendingApproval?.stage === "report" ? "Request Report Revision..." : undefined}
       changePlaceholder={
-        pendingApproval?.stage === "visualization"
+        pendingApproval?.stage === "report"
+          ? "What should change in the report draft?"
+          : pendingApproval?.stage === "visualization"
           ? "What should change? (e.g., 'Use bar chart by region')"
           : "What should change? (e.g., 'Use median imputation')"
       }
@@ -835,7 +854,9 @@ export default function Workbench() {
           : "Validating dataset…"
       : state === "running" ? `${subPhaseLabel[runningSubPhase] ?? runningSubPhase} 진행 중…`
         : state === "needs-user"
-          ? pendingApproval?.stage === "visualization"
+          ? pendingApproval?.stage === "report"
+            ? "Report draft review"
+            : pendingApproval?.stage === "visualization"
             ? "Visualization plan review"
             : "Preprocess plan review"
           : state === "error" ? "Failed — see details"
@@ -851,7 +872,9 @@ export default function Workbench() {
         state === "uploading" ? "Ingest" :
           state === "running" ? (subPhaseLabel[runningSubPhase] ?? runningSubPhase) :
             state === "needs-user"
-              ? pendingApproval?.stage === "visualization"
+              ? pendingApproval?.stage === "report"
+                ? "Report"
+                : pendingApproval?.stage === "visualization"
                 ? "Visualization"
                 : "Preprocess"
             :

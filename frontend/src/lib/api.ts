@@ -123,6 +123,10 @@ export interface VisualizationPendingApprovalPlan {
   preview_rows?: VisualizationPreviewRow[];
 }
 
+export interface ReportPendingApprovalReview {
+  revision_count?: number;
+}
+
 export type PendingApprovalPayload =
   | {
       stage: "preprocess";
@@ -139,11 +143,21 @@ export type PendingApprovalPayload =
       summary: string;
       source_id: string;
       plan: VisualizationPendingApprovalPlan;
+    }
+  | {
+      stage: "report";
+      kind: "draft_review";
+      title: string;
+      summary: string;
+      source_id: string;
+      draft: string;
+      review?: ReportPendingApprovalReview;
+      plan?: Record<string, never>;
     };
 
 export interface ResumeRunRequest {
   decision: "approve" | "revise" | "cancel";
-  stage: "preprocess" | "visualization";
+  stage: "preprocess" | "visualization" | "report";
   instruction?: string;
 }
 

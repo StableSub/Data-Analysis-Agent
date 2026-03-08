@@ -27,6 +27,17 @@ class PreprocessDecision(BaseModel):
     reason_summary: str = ""
 
 
+def _get_revision_instruction(state: PreprocessGraphState) -> str:
+    revision_request = state.get("revision_request")
+    if isinstance(revision_request, dict):
+        if revision_request.get("stage") == "preprocess":
+            instruction = revision_request.get("instruction")
+            if isinstance(instruction, str):
+                return instruction.strip()
+        return ""
+    return str(revision_request or "").strip()
+
+
 def _collect_affected_columns(operations: list[PreprocessOperation]) -> list[str]:
     columns: list[str] = []
     for operation in operations:
@@ -104,7 +115,7 @@ def build_preprocess_plan(
     호출 맥락: 전처리 서브그래프에서 planner 노드가 실제 실행 직전에 호출하는 계획 생성 함수다.
     """
     profile_json = json.dumps(state.get("dataset_profile", {}), ensure_ascii=False)
-    revision_request = str(state.get("revision_request") or "").strip()
+    revision_request = _get_revision_instruction(state)
     revision_text = f"\nrevision_request={revision_request}" if revision_request else ""
     plan = call_structured_llm(
         schema=PreprocessPlan,
@@ -185,7 +196,7 @@ def run_preprocess_executor(
             "output_source_id": apply_response.output_source_id,
             "output_filename": apply_response.output_filename,
         },
-        "revision_request": "",
+        "revision_request": {},
         "approved_plan": {},
         "pending_approval": {},
     }
@@ -350,20 +361,23 @@ def build_preprocess_workflow(
             return {
                 "approved_plan": plan.model_dump(),
                 "pending_approval": {},
-                "revision_request": "",
+                "revision_request": {},
             }
 
         if decision == "revise":
             return {
                 "approved_plan": {},
                 "pending_approval": payload,
-                "revision_request": instruction,
+                "revision_request": {
+                    "stage": "preprocess",
+                    "instruction": instruction,
+                },
             }
 
         return {
             "approved_plan": {},
             "pending_approval": {},
-            "revision_request": "",
+            "revision_request": {},
             "preprocess_result": {
                 "status": "cancelled",
                 "applied_ops_count": 0,
@@ -378,7 +392,7 @@ def build_preprocess_workflow(
         result = state.get("preprocess_result") or {}
         if result.get("status") == "cancelled":
             return "cancel"
-        revision_request = str(state.get("revision_request") or "").strip()
+        revision_request = _get_revision_instruction(state)
         if revision_request:
             return "revise"
         return "approve"
