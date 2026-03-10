@@ -12,58 +12,6 @@ from ...core.db import SessionLocal
 from .builder import build_main_workflow
 
 
-def _load_pdf(file_path: Path, max_chars: int) -> str:
-    """
-    역할: PDF 파일에서 페이지별 텍스트를 읽어 지정 길이까지 누적 추출한다.
-    입력: PDF 경로(`file_path`)와 최대 문자 수(`max_chars`)를 받는다.
-    출력: 추출된 텍스트를 줄바꿈으로 합친 문자열을 반환하며, `pypdf` 미설치 시 예외를 발생시킨다.
-    데코레이터: 없음.
-    호출 맥락: `_load_text_from_file`에서 PDF 확장자를 처리할 때 내부 유틸로 호출된다.
-    """
-    try:
-        from pypdf import PdfReader
-    except ImportError as exc:
-        raise RuntimeError(
-            "PDF 파일을 처리하려면 'pypdf' 패키지가 필요합니다. pip install pypdf 로 설치하세요."
-        ) from exc
-
-    reader = PdfReader(str(file_path))
-    chunks: list[str] = []
-    total_len = 0
-    for page in reader.pages:
-        text = page.extract_text() or ""
-        if text.strip():
-            available = max_chars - total_len
-            if available <= 0:
-                break
-            snippet = text[:available]
-            chunks.append(snippet)
-            total_len += len(snippet)
-        if total_len >= max_chars:
-            break
-    return "\n".join(chunks)
-
-
-def _load_text_from_file(path: str, max_chars: int = 4000) -> str:
-    """
-    역할: 파일 확장자에 따라 텍스트 파일 또는 PDF를 읽고 안전한 미리보기 문자열을 만든다.
-    입력: 파일 경로 문자열(`path`)과 최대 문자 수(`max_chars`)를 받는다.
-    출력: 최대 길이로 잘린 텍스트를 반환하며, 파일이 없으면 `FileNotFoundError`를 발생시킨다.
-    데코레이터: 없음.
-    호출 맥락: 현재는 데이터셋/문서 미리보기 생성 시 재사용 가능한 공용 파일 로더로 유지된다.
-    """
-    file_path = Path(path)
-    if not file_path.exists():
-        raise FileNotFoundError(f"파일을 찾을 수 없습니다: {file_path}")
-
-    suffix = file_path.suffix.lower()
-    if suffix == ".pdf":
-        return _load_pdf(file_path, max_chars)
-
-    data = file_path.read_text(encoding="utf-8", errors="ignore")
-    return data[:max_chars]
-
-
 class AgentClient:
     def __init__(
         self,
