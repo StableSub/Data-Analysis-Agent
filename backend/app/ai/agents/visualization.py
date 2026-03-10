@@ -10,7 +10,9 @@ V1 시각화 서브그래프.
 from __future__ import annotations
 
 import base64
+import os
 import subprocess
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -25,7 +27,7 @@ from backend.app.ai.agents.state import VisualizationGraphState
 from backend.app.ai.agents.utils import call_structured_llm, resolve_target_source_id
 from backend.app.domain.data_source.repository import DataSourceRepository
 
-PYTHON_EXECUTABLE = "/Users/anjeongseob/.virtualenvs/ai_agent/bin/python"
+PYTHON_EXECUTABLE = os.getenv("VIS_PYTHON_EXECUTABLE") or sys.executable
 SCRIPT_TIMEOUT_SECONDS = 15
 MAX_SAMPLE_ROWS = 2000
 MAX_POINTS = 120
