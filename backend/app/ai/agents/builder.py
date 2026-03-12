@@ -142,8 +142,8 @@ def build_main_workflow(
 
     def merge_context_node(state: MainWorkflowState) -> Dict[str, Any]:
         """
-        역할: 전처리, RAG, 인사이트, 시각화 결과를 하나의 `merged_context` 구조로 정리한다.
-        입력: `preprocess_result`, `rag_result`, `insight`, `visualization_result`, `handoff`를 포함한 상태를 받는다.
+        역할: 전처리, RAG, guideline, 인사이트, 시각화 결과를 하나의 `merged_context` 구조로 정리한다.
+        입력: `preprocess_result`, `rag_result`, `guideline_result`, `insight`, `visualization_result`, `handoff`를 포함한 상태를 받는다.
         출력: `applied_steps`와 세부 결과를 포함한 `merged_context` 딕셔너리를 반환한다.
         데코레이터: 없음.
         호출 맥락: 데이터 파이프라인 공통 합류 지점으로, report/data_qa 분기 직전에 실행된다.
@@ -171,9 +171,22 @@ def build_main_workflow(
             if int(rag_result.get("retrieved_count", 0) or 0) > 0:
                 merged_context["applied_steps"].append("rag")
 
+        guideline_index_status = state.get("guideline_index_status")
+        if isinstance(guideline_index_status, dict):
+            merged_context["guideline_index_status"] = guideline_index_status
+
         guideline_result = state.get("guideline_result")
         if isinstance(guideline_result, dict):
             merged_context["guideline_result"] = guideline_result
+            merged_context["guideline_context"] = {
+                "active_source_id": state.get("active_guideline_source_id", ""),
+                "status": guideline_result.get("status", ""),
+                "retrieved_count": int(guideline_result.get("retrieved_count", 0) or 0),
+                "has_evidence": int(guideline_result.get("retrieved_count", 0) or 0) > 0,
+                "filename": guideline_result.get("filename", ""),
+                "guideline_id": guideline_result.get("guideline_id", ""),
+                "evidence_summary": guideline_result.get("evidence_summary", ""),
+            }
             if int(guideline_result.get("retrieved_count", 0) or 0) > 0:
                 merged_context["applied_steps"].append("guideline")
 
@@ -189,6 +202,8 @@ def build_main_workflow(
             merged_context["visualization_result"] = visualization_result
             if visualization_result.get("status") == "generated":
                 merged_context["applied_steps"].append("visualization")
+
+        merged_context["applied_steps"] = list(dict.fromkeys(merged_context["applied_steps"]))
 
         return {"merged_context": merged_context}
 
