@@ -10,6 +10,7 @@ from .rag import router as rag_router
 from .api import export as export_api
 from .api import preprocess as preprocess_api
 from .api import reports as reports_api
+from .domain.guideline import models as guideline_models
 from .domain.report import models as report_models
 
 
