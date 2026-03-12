@@ -5,6 +5,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from ...ai.agents.client import AgentClient
+from ...ai.prompts.loader import load_prompt_by_key
 from .models import Report
 
 
@@ -32,7 +33,7 @@ class ReportService:
             "visualizations": visualizations,
             "insights": insights,
         }
-        question = "다음 분석 결과를 간결하게 요약해 리포트를 작성해줘."
+        question = load_prompt_by_key("service.report_create_seed", "user")
         context = json.dumps(payload, ensure_ascii=False)
 
         try:

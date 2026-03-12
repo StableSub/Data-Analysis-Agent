@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 
 from backend.app.ai.agents.state import IntakeRouterState
 from backend.app.ai.agents.utils import call_structured_llm
+from backend.app.ai.prompts.builder import build_structured_prompt
 
 
 class IntentDecision(BaseModel):
@@ -62,14 +63,14 @@ def build_intake_router_workflow(default_model: str = "gpt-5-nano"):
         데코레이터: 없음.
         호출 맥락: `data_selected` 분기에서 호출되며 이후 데이터 파이프라인 handoff 생성을 위한 전 단계다.
         """
+        system_prompt, human_prompt = build_structured_prompt(
+            "intake.intent_classifier",
+            user_input=str(state.get("user_input", "")),
+        )
         decision = call_structured_llm(
             schema=IntentDecision,
-            system_prompt=(
-                "데이터셋이 이미 선택된 상황이다. "
-                "step은 data_pipeline으로 반환하라. "
-                "질문을 보고 ask_preprocess, ask_visualization, ask_report를 true/false로 판단하라."
-            ),
-            human_prompt=state.get("user_input", ""),
+            system_prompt=system_prompt,
+            human_prompt=human_prompt,
             model_id=state.get("model_id"),
             default_model=default_model,
         )

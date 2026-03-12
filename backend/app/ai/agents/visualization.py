@@ -10,7 +10,9 @@ V1 시각화 서브그래프.
 from __future__ import annotations
 
 import base64
+import os
 import subprocess
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -23,9 +25,10 @@ from sqlalchemy.orm import Session
 
 from backend.app.ai.agents.state import VisualizationGraphState
 from backend.app.ai.agents.utils import call_structured_llm, resolve_target_source_id
+from backend.app.ai.prompts.builder import build_structured_prompt
 from backend.app.domain.data_source.repository import DataSourceRepository
 
-PYTHON_EXECUTABLE = "/Users/anjeongseob/.virtualenvs/ai_agent/bin/python"
+PYTHON_EXECUTABLE = os.getenv("VIS_PYTHON_EXECUTABLE") or sys.executable
 SCRIPT_TIMEOUT_SECONDS = 15
 MAX_SAMPLE_ROWS = 2000
 MAX_POINTS = 120
@@ -253,19 +256,17 @@ def _select_chart_with_llm(
     데코레이터: 없음.
     호출 맥락: visualization planner의 1차 선택기로 사용되고 실패 시 `_select_chart`로 폴백된다.
     """
-    columns_info = (
-        f"numeric: {numeric_columns}\n"
-        f"datetime: {datetime_columns}\n"
-        f"categorical: {categorical_columns}"
+    system_prompt, human_prompt = build_structured_prompt(
+        "visualization.chart_selection",
+        query=query,
+        numeric_columns=numeric_columns,
+        datetime_columns=datetime_columns,
+        categorical_columns=categorical_columns,
     )
     result = call_structured_llm(
         schema=ChartSelection,
-        system_prompt=(
-            "사용자 질문과 컬럼 목록을 보고 가장 적합한 차트를 선택하라. "
-            "x_column, y_column은 반드시 주어진 컬럼 목록에서 선택하라. "
-            "hist는 y_column이 빈 문자열이다."
-        ),
-        human_prompt=f"query: {query}\n\n{columns_info}",
+        system_prompt=system_prompt,
+        human_prompt=human_prompt,
         model_id=model_id,
         default_model=default_model,
     )
