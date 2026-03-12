@@ -229,7 +229,13 @@ def build_main_workflow(
         result = llm.invoke(
             [
                 SystemMessage(
-                    content="주어진 merged_context를 근거로 사용자 데이터 질문에 간결하게 답하라."
+                    content=(
+                        "주어진 merged_context를 근거로 사용자 데이터 질문에 한국어로 답하라. "
+                        "guideline_context.has_evidence가 true이면 지침 근거를 우선 반영하고, "
+                        "가능하면 지침서 파일명과 핵심 근거를 함께 언급하라. "
+                        "guideline_context가 있지만 has_evidence가 false이면 지침 근거를 찾지 못했다고 분명히 밝혀라. "
+                        "근거가 없는 내용을 지침처럼 단정하지 말고, 답변은 간결하게 유지하라."
+                    )
                 ),
                 HumanMessage(
                     content=(
