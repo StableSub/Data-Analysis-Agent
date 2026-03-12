@@ -168,6 +168,20 @@ def build_report_workflow(*, db: Session, default_model: str = "gpt-5-nano"):
         if isinstance(insight, dict) and isinstance(insight.get("summary"), str):
             insight_summary = str(insight.get("summary")).strip()
 
+        guideline_result = state.get("guideline_result")
+        guideline_context = ""
+        if isinstance(guideline_result, dict):
+            guideline_filename = str(guideline_result.get("filename", "")).strip()
+            guideline_summary = str(guideline_result.get("evidence_summary", "")).strip()
+            guideline_count = int(guideline_result.get("retrieved_count", 0) or 0)
+            if guideline_count > 0:
+                guideline_context = (
+                    f"지침서 파일명: {guideline_filename or '알 수 없음'}\n"
+                    f"지침 근거 요약: {guideline_summary or '요약 없음'}"
+                )
+            else:
+                guideline_context = "관련 지침 근거를 찾지 못함"
+
         visualization_result = state.get("visualization_result")
         visualization_summary = ""
         if isinstance(visualization_result, dict):
@@ -194,7 +208,9 @@ def build_report_workflow(*, db: Session, default_model: str = "gpt-5-nano"):
                         "반드시 아래 3개 섹션 제목으로만 한국어 리포트를 작성하라.\n"
                         "요약\n핵심 인사이트\n권고사항\n"
                         "각 섹션은 2~5문장으로 작성하고, 가능한 한 수치를 인용하라. "
-                        "단계 로그 설명은 금지한다."
+                        "단계 로그 설명은 금지한다. "
+                        "지침 근거가 있으면 요약 또는 권고사항에 반드시 반영하고, "
+                        "지침 근거가 없으면 그 사실을 분명히 적어라."
                     )
                 ),
                 HumanMessage(
@@ -202,6 +218,7 @@ def build_report_workflow(*, db: Session, default_model: str = "gpt-5-nano"):
                         f"사용자 질문:\n{question}\n\n"
                         f"정량 지표(metrics):\n{json.dumps(metrics, ensure_ascii=False)}\n\n"
                         f"RAG 인사이트 요약:\n{insight_summary}\n\n"
+                        f"지침서 근거:\n{guideline_context}\n\n"
                         f"시각화 요약:\n{visualization_summary}\n"
                     )
                 ),

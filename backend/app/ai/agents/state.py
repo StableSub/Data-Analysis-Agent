@@ -12,6 +12,7 @@ class HandoffPayload(TypedDict, total=False):
     ask_preprocess: bool
     ask_visualization: bool
     ask_report: bool
+    ask_guideline: bool
 
 
 class PreprocessResultPayload(TypedDict, total=False):
@@ -30,6 +31,18 @@ class RagResultPayload(TypedDict, total=False):
     context: str
     retrieved_count: int
     evidence_summary: str
+
+
+class GuidelineResultPayload(TypedDict, total=False):
+    query: str
+    source_id: str
+    guideline_id: str
+    filename: str
+    retrieved_chunks: list
+    context: str
+    retrieved_count: int
+    evidence_summary: str
+    status: str
 
 
 class VisualizationResultPayload(TypedDict, total=False):
@@ -55,6 +68,7 @@ class AgentState(TypedDict, total=False):
     model_id: str
     dataset_id: int
     source_id: str
+    active_guideline_source_id: str
     dataset_profile: Dict[str, Any]
 
 
@@ -85,12 +99,22 @@ class RagGraphState(AgentState, total=False):
     insight: Dict[str, Any]
 
 
+class GuidelineGraphState(AgentState, total=False):
+    """Guideline 서브그래프 전용 상태."""
+
+    handoff: HandoffPayload
+    guideline_index_status: Dict[str, Any]
+    guideline_data_exists: bool
+    guideline_result: GuidelineResultPayload
+
+
 class VisualizationGraphState(AgentState, total=False):
     """시각화 서브그래프 전용 상태."""
 
     handoff: HandoffPayload
     preprocess_result: PreprocessResultPayload
     rag_result: RagResultPayload
+    guideline_result: GuidelineResultPayload
     insight: Dict[str, Any]
     # visualization_plan: {"status","source_id","mode","chart_type","x_key","y_key","reason","python_code","output_filename"}
     visualization_plan: Dict[str, Any]
@@ -104,6 +128,7 @@ class ReportGraphState(AgentState, total=False):
     handoff: HandoffPayload
     preprocess_result: PreprocessResultPayload
     rag_result: RagResultPayload
+    guideline_result: GuidelineResultPayload
     insight: Dict[str, Any]
     # visualization_result.chart/artifact를 리포트 본문/메타에 반영
     visualization_result: VisualizationResultPayload
@@ -129,6 +154,9 @@ class MainWorkflowState(AgentState, total=False):
     rag_index_status: Dict[str, Any]
     rag_data_exists: bool
     rag_result: RagResultPayload
+    guideline_index_status: Dict[str, Any]
+    guideline_data_exists: bool
+    guideline_result: GuidelineResultPayload
     insight: Dict[str, Any]
 
     # visualization/report/data qa (내부 처리용 상태, SSE done에서는 직접 노출하지 않음)
