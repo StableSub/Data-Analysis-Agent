@@ -119,13 +119,14 @@ class AgentClient:
         데코레이터: 없음.
         호출 맥락: `astream_with_trace` 시작 시 가장 먼저 호출되어 실행 전 유효 상태를 만든다.
         """
-        _ = context
         question_text = (question or "").strip()
+        context_text = (context or "").strip()
         if not question_text:
             return {}, "질문을 입력해 주세요."
 
         state: Dict[str, Any] = {
             "user_input": question_text,
+            "request_context": context_text,
             "session_id": str(session_id or ""),
             "model_id": model_id or self.default_model,
             "dataset_id": getattr(dataset, "id", None) if dataset is not None else None,
