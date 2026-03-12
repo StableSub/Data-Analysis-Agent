@@ -5,6 +5,7 @@ from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from ..core.db import get_db
+from ..dependencies import get_guideline_rag_service
 from ..domain.guideline.repository import GuidelineRepository
 from ..domain.guideline.schemas import (
     GuidelineActivateResponse,
@@ -12,6 +13,8 @@ from ..domain.guideline.schemas import (
     GuidelineListResponse,
 )
 from ..domain.guideline.service import GuidelineService
+from ..rag.service import GuidelineRagService
+from ..rag.types.errors import RagEmbeddingError
 
 router = APIRouter(
     prefix="/guidelines",
@@ -54,6 +57,7 @@ def _validate_guideline_pdf(file: UploadFile) -> None:
 async def upload_guideline(
     file: UploadFile = File(...),
     service: GuidelineService = Depends(get_guideline_service),
+    guideline_rag_service: GuidelineRagService = Depends(get_guideline_rag_service),
 ):
     """지침서 PDF를 업로드하고 메타데이터를 저장한다."""
     _validate_guideline_pdf(file)
@@ -64,6 +68,9 @@ async def upload_guideline(
             original_filename=file.filename or "guideline.pdf",
             display_name=file.filename,
         )
+        guideline_rag_service.index_guideline(guideline)
+    except RagEmbeddingError:
+        raise HTTPException(status_code=500, detail="EMBEDDING_ERROR")
     except Exception:
         raise HTTPException(status_code=500, detail="지침서 업로드 중 오류가 발생했습니다.")
 
@@ -108,10 +115,16 @@ async def activate_guideline(
 async def delete_guideline(
     source_id: str,
     service: GuidelineService = Depends(get_guideline_service),
+    guideline_rag_service: GuidelineRagService = Depends(get_guideline_rag_service),
 ):
     """지침서를 삭제한다."""
     result = service.delete_guideline(source_id)
     if not result["success"]:
         raise HTTPException(status_code=404, detail=result["message"])
+
+    try:
+        guideline_rag_service.delete_source(source_id)
+    except Exception:
+        pass
 
     return Response(status_code=status.HTTP_204_NO_CONTENT)

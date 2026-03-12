@@ -1,4 +1,3 @@
-import os
 from functools import lru_cache
 from pathlib import Path
 
@@ -8,10 +7,12 @@ from .core.db import get_db
 from .domain.chat.repository import ChatRepository
 from .domain.chat.service import ChatService
 from .domain.data_source.repository import DataSourceRepository
+from .domain.guideline.repository import GuidelineRepository
 from .ai.agents.client import AgentClient
 from .rag.core.embedding import E5Embedder
+from .rag.guideline_repository import GuidelineRagRepository
 from .rag.repository import RagRepository
-from .rag.service import RagService
+from .rag.service import GuidelineRagService, RagService
 
 
 def get_chat_repository(db=Depends(get_db)) -> ChatRepository:
@@ -36,6 +37,22 @@ def get_rag_service(
 ) -> RagService:
     storage: Path = Path("storage") / "vectors"
     return RagService(
+        repository=repository,
+        storage_dir=storage,
+        embedder=get_embedder(),
+    )
+
+def get_guideline_repository(db=Depends(get_db)) -> GuidelineRepository:
+    return GuidelineRepository(db)
+
+def get_guideline_rag_repository(db=Depends(get_db)) -> GuidelineRagRepository:
+    return GuidelineRagRepository(db)
+
+def get_guideline_rag_service(
+    repository: GuidelineRagRepository = Depends(get_guideline_rag_repository),
+) -> GuidelineRagService:
+    storage: Path = Path("storage") / "guideline_vectors"
+    return GuidelineRagService(
         repository=repository,
         storage_dir=storage,
         embedder=get_embedder(),
