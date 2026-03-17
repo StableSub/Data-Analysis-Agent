@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.ai.agents.state import PreprocessGraphState
 from backend.app.ai.agents.utils import call_structured_llm
+from backend.app.ai.prompts.builder import build_structured_prompt
 from backend.app.domain.data_source.repository import DataSourceRepository
 from backend.app.domain.preprocess.schemas import PreprocessOperation
 from backend.app.domain.preprocess.service import PreprocessService
@@ -38,21 +39,16 @@ def build_preprocess_plan(
     호출 맥락: 전처리 서브그래프에서 planner 노드가 실제 실행 직전에 호출하는 계획 생성 함수다.
     """
     profile_json = json.dumps(state.get("dataset_profile", {}), ensure_ascii=False)
+    system_prompt, human_prompt = build_structured_prompt(
+        "preprocess.plan",
+        user_input=str(state.get("user_input", "")),
+        source_id=str(state.get("source_id")),
+        dataset_profile_json=profile_json,
+    )
     plan = call_structured_llm(
         schema=PreprocessPlan,
-        system_prompt=(
-            "너는 전처리 플래너다. "
-            "PreprocessPlan 스키마 형식으로만 반환하고 "
-            "지원 연산은 drop_missing, impute, drop_columns, rename_columns, scale, derived_column다. "
-            "전처리가 불필요하면 operations는 빈 배열로 반환하라. "
-            "operations는 op+파라미터로 구성하며 "
-            "planner_comment에는 판단 근거를 1~2문장으로 남겨라."
-        ),
-        human_prompt=(
-            f"user_input={state.get('user_input', '')}\n"
-            f"source_id={state.get('source_id')}\n"
-            f"dataset_profile={profile_json}"
-        ),
+        system_prompt=system_prompt,
+        human_prompt=human_prompt,
         model_id=state.get("model_id"),
         default_model=default_model,
     )
@@ -213,13 +209,15 @@ def build_preprocess_workflow(
             }
 
         profile_json = json.dumps(state.get("dataset_profile", {}), ensure_ascii=False)
+        system_prompt, human_prompt = build_structured_prompt(
+            "preprocess.decision",
+            user_input=str(state.get("user_input", "")),
+            dataset_profile_json=profile_json,
+        )
         decision = call_structured_llm(
             schema=PreprocessDecision,
-            system_prompt=(
-                "데이터 프로파일을 보고 run_preprocess 또는 skip_preprocess를 반환하라. "
-                "reason_summary에는 판단 근거를 1문장으로 남겨라."
-            ),
-            human_prompt=f"user_input={state.get('user_input', '')}\n{profile_json}",
+            system_prompt=system_prompt,
+            human_prompt=human_prompt,
             model_id=state.get("model_id"),
             default_model=default_model,
         )

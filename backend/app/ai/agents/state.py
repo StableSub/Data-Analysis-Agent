@@ -51,6 +51,7 @@ class AgentState(TypedDict, total=False):
     """
 
     user_input: str
+    request_context: str
     session_id: str
     model_id: str
     dataset_id: int
