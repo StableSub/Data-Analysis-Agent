@@ -13,13 +13,13 @@ from pathlib import Path
 from typing import Any, Dict
 
 from langchain.chat_models import init_chat_model
-from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from backend.app.ai.agents.state import RagGraphState
 from backend.app.ai.agents.utils import resolve_target_source_id
+from backend.app.ai.prompts.builder import build_messages
 from backend.app.domain.data_source.repository import DataSourceRepository
 from backend.app.rag.core.embedding import E5Embedder
 from backend.app.rag.repository import RagRepository
@@ -188,20 +188,11 @@ def build_rag_workflow(*, db: Session, default_model: str = "gpt-5-nano"):
             method="function_calling",
         )
         llm_result = llm.invoke(
-            [
-                SystemMessage(
-                    content=(
-                        "질문과 검색 컨텍스트를 읽고 핵심 인사이트를 간단히 합성하라. "
-                        "insight_summary와 evidence_summary를 함께 반환하라."
-                    )
-                ),
-                HumanMessage(
-                    content=(
-                        f"question:\n{query}\n\n"
-                        f"context:\n{context}"
-                    )
-                ),
-            ]
+            build_messages(
+                "rag.insight_synthesis",
+                question=query,
+                context=context,
+            )
         )
         insight_summary = llm_result.insight_summary
         evidence_summary = llm_result.evidence_summary.strip() or insight_summary

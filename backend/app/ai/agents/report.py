@@ -13,13 +13,14 @@ from typing import Any, Dict
 
 import pandas as pd
 from langchain.chat_models import init_chat_model
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 from sqlalchemy.orm import Session
 
 from backend.app.ai.agents.state import ReportGraphState
 from backend.app.ai.agents.utils import resolve_target_source_id
+from backend.app.ai.prompts.builder import build_messages
 from backend.app.domain.data_source.repository import DataSourceRepository
 
 
@@ -205,28 +206,16 @@ def build_report_workflow(*, db: Session, default_model: str = "gpt-5-nano"):
             revision_count += 1
         model_name = state.get("model_id") or default_model
         llm = init_chat_model(model_name)
-        result = llm.invoke(
-            [
-                SystemMessage(
-                    content=(
-                        "당신은 데이터 분석 리포트 작성자다. "
-                        "반드시 아래 3개 섹션 제목으로만 한국어 리포트를 작성하라.\n"
-                        "요약\n핵심 인사이트\n권고사항\n"
-                        "각 섹션은 2~5문장으로 작성하고, 가능한 한 수치를 인용하라. "
-                        "단계 로그 설명은 금지한다."
-                    )
-                ),
-                HumanMessage(
-                    content=(
-                        f"사용자 질문:\n{question}\n\n"
-                        f"정량 지표(metrics):\n{json.dumps(metrics, ensure_ascii=False)}\n\n"
-                        f"RAG 인사이트 요약:\n{insight_summary}\n\n"
-                        f"시각화 요약:\n{visualization_summary}\n"
-                        + (f"\n수정 요청:\n{revision_instruction}\n" if revision_instruction else "")
-                    )
-                ),
-            ]
+        messages = build_messages(
+            "report.default",
+            user_question=question,
+            metrics_json=json.dumps(metrics, ensure_ascii=False),
+            insight_summary=insight_summary,
+            visualization_summary=visualization_summary,
         )
+        if revision_instruction:
+            messages.append(HumanMessage(content=f"수정 요청:\n{revision_instruction}"))
+        result = llm.invoke(messages)
         report_text = result.content if isinstance(result.content, str) else str(result.content)
 
         return {
