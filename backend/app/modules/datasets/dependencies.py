@@ -1,0 +1,41 @@
+from pathlib import Path
+
+from fastapi import Depends
+from sqlalchemy.orm import Session
+
+from ...core.db import get_db
+from ..rag.dependencies import get_rag_service
+from .reader import DatasetReader
+from .repository import DataSourceRepository
+from .service import DataSourceService
+from .storage import DatasetStorage
+
+
+def _datasets_storage_dir() -> Path:
+    return Path(__file__).resolve().parents[4] / "storage" / "datasets"
+
+
+def get_data_source_repository(db: Session = Depends(get_db)) -> DataSourceRepository:
+    return DataSourceRepository(db)
+
+
+def get_dataset_storage() -> DatasetStorage:
+    return DatasetStorage(_datasets_storage_dir())
+
+
+def get_dataset_reader() -> DatasetReader:
+    return DatasetReader()
+
+
+def get_data_source_service(
+    repository: DataSourceRepository = Depends(get_data_source_repository),
+    storage: DatasetStorage = Depends(get_dataset_storage),
+    reader: DatasetReader = Depends(get_dataset_reader),
+    rag_service=Depends(get_rag_service),
+) -> DataSourceService:
+    return DataSourceService(
+        repository=repository,
+        storage=storage,
+        reader=reader,
+        rag_service=rag_service,
+    )
