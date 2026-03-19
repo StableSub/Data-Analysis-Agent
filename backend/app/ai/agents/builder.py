@@ -6,7 +6,6 @@ from typing import Any, Dict
 
 from dotenv import load_dotenv
 from langchain.chat_models import init_chat_model
-from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
 from sqlalchemy.orm import Session
 
@@ -22,6 +21,7 @@ from backend.app.ai.agents.rag import build_rag_workflow
 from backend.app.ai.agents.report import build_report_workflow
 from backend.app.ai.agents.state import MainWorkflowState
 from backend.app.ai.agents.visualization import build_visualization_workflow
+from backend.app.ai.prompts.builder import build_messages
 from backend.app.core.db import SessionLocal
 
 load_dotenv()
@@ -124,12 +124,11 @@ def build_main_workflow(
         model_name = state.get("model_id") or default_model
         llm = init_chat_model(model_name)
         result = llm.invoke(
-            [
-                SystemMessage(
-                    content="사용자 질문에 간결하고 정확하게 답하라."
-                ),
-                HumanMessage(content=state.get("user_input", "")),
-            ]
+            build_messages(
+                "answer.general_question",
+                user_input=str(state.get("user_input", "")),
+                request_context=str(state.get("request_context", "")),
+            )
         )
         answer = result.content if isinstance(result.content, str) else str(result.content)
 
@@ -149,6 +148,10 @@ def build_main_workflow(
         호출 맥락: 데이터 파이프라인 공통 합류 지점으로, report/data_qa 분기 직전에 실행된다.
         """
         merged_context: Dict[str, Any] = {"applied_steps": []}
+
+        request_context = state.get("request_context")
+        if isinstance(request_context, str) and request_context.strip():
+            merged_context["request_context"] = request_context.strip()
 
         handoff = state.get("handoff")
         if isinstance(handoff, dict):
@@ -227,23 +230,11 @@ def build_main_workflow(
         )
 
         result = llm.invoke(
-            [
-                SystemMessage(
-                    content=(
-                        "주어진 merged_context를 근거로 사용자 데이터 질문에 한국어로 답하라. "
-                        "guideline_context.has_evidence가 true이면 지침 근거를 우선 반영하고, "
-                        "가능하면 지침서 파일명과 핵심 근거를 함께 언급하라. "
-                        "guideline_context가 있지만 has_evidence가 false이면 지침 근거를 찾지 못했다고 분명히 밝혀라. "
-                        "근거가 없는 내용을 지침처럼 단정하지 말고, 답변은 간결하게 유지하라."
-                    )
-                ),
-                HumanMessage(
-                    content=(
-                        f"question:\n{question}\n\n"
-                        f"merged_context:\n{context_json}"
-                    )
-                ),
-            ]
+            build_messages(
+                "answer.data_qa",
+                question=question,
+                merged_context_json=context_json,
+            )
         )
         answer = result.content if isinstance(result.content, str) else str(result.content)
         return {
