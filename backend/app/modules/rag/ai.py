@@ -3,7 +3,7 @@ from __future__ import annotations
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
-from ...core.ai import LLMGateway, PromptRegistry, StructuredOutputRunner
+from ...core.ai import LLMGateway, PromptRegistry
 
 PROMPTS = PromptRegistry(
     {
@@ -28,8 +28,8 @@ def synthesize_insight(
     model_id: str | None,
     default_model: str,
 ) -> InsightSynthesisPayload:
-    runner = StructuredOutputRunner(default_model=default_model)
-    return runner.invoke(
+    llm = LLMGateway(default_model=default_model)
+    return llm.invoke_structured(
         schema=InsightSynthesisPayload,
         model_id=model_id,
         messages=[

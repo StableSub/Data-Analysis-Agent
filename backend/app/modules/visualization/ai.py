@@ -5,7 +5,7 @@ from typing import Any, Literal
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
-from ...core.ai import PromptRegistry, StructuredOutputRunner
+from ...core.ai import LLMGateway, PromptRegistry
 
 PROMPTS = PromptRegistry(
     {
@@ -34,13 +34,13 @@ def recommend_chart(
     model_id: str | None,
     default_model: str,
 ) -> dict[str, Any] | None:
-    runner = StructuredOutputRunner(default_model=default_model)
+    llm = LLMGateway(default_model=default_model)
     columns_info = (
         f"numeric: {numeric_columns}\n"
         f"datetime: {datetime_columns}\n"
         f"categorical: {categorical_columns}"
     )
-    result = runner.invoke(
+    result = llm.invoke_structured(
         schema=ChartSelection,
         model_id=model_id,
         messages=[

@@ -6,7 +6,7 @@ from typing import Literal
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
-from ..core.ai import LLMGateway, PromptRegistry, StructuredOutputRunner
+from ..core.ai import LLMGateway, PromptRegistry
 
 PROMPTS = PromptRegistry(
     {
@@ -34,8 +34,8 @@ def analyze_intent(
     model_id: str | None,
     default_model: str,
 ) -> IntentDecision:
-    runner = StructuredOutputRunner(default_model=default_model)
-    return runner.invoke(
+    llm = LLMGateway(default_model=default_model)
+    return llm.invoke_structured(
         schema=IntentDecision,
         model_id=model_id,
         messages=[

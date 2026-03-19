@@ -6,7 +6,7 @@ from typing import Literal
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
-from ...core.ai import PromptRegistry, StructuredOutputRunner
+from ...core.ai import LLMGateway, PromptRegistry
 from .schemas import PreprocessOperation
 
 PROMPTS = PromptRegistry(
@@ -46,10 +46,10 @@ def build_preprocess_plan(
     model_id: str | None,
     default_model: str,
 ) -> PreprocessPlan:
-    runner = StructuredOutputRunner(default_model=default_model)
+    llm = LLMGateway(default_model=default_model)
     profile_json = json.dumps(dataset_profile, ensure_ascii=False)
     revision_text = f"\nrevision_request={revision_request}" if revision_request else ""
-    return runner.invoke(
+    return llm.invoke_structured(
         schema=PreprocessPlan,
         model_id=model_id,
         messages=[
@@ -73,9 +73,9 @@ def decide_preprocess(
     model_id: str | None,
     default_model: str,
 ) -> PreprocessDecision:
-    runner = StructuredOutputRunner(default_model=default_model)
+    llm = LLMGateway(default_model=default_model)
     profile_json = json.dumps(dataset_profile, ensure_ascii=False)
-    return runner.invoke(
+    return llm.invoke_structured(
         schema=PreprocessDecision,
         model_id=model_id,
         messages=[

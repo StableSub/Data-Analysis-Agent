@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from dotenv import load_dotenv
 
 from .core.db import Base, engine
 from .modules.chat import models as chat_models
@@ -15,6 +16,8 @@ from .modules.reports import router as reports_api
 from .modules.results import models as result_models
 from .modules.visualization import router as visualization_api
 
+
+load_dotenv()
 
 app = FastAPI()
 
