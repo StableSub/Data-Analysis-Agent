@@ -7,12 +7,11 @@ V1 리포트 서브그래프.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 
-from backend.app.modules.reports.ai import draft_report
 from backend.app.modules.reports.service import ReportService
 from backend.app.orchestration.state import ReportGraphState
 from backend.app.orchestration.utils import resolve_target_source_id
@@ -47,8 +46,6 @@ def build_report_workflow(*, report_service: ReportService, default_model: str =
         """
         target_source_id = resolve_target_source_id(state)
 
-        metrics = report_service.build_metrics_for_source(str(target_source_id or ""))
-
         report_visualizations: list[Dict[str, Any]] = []
 
         insight = state.get("insight")
@@ -79,23 +76,20 @@ def build_report_workflow(*, report_service: ReportService, default_model: str =
             revision_count = int(previous_draft.get("revision_count", 0) or 0)
         if revision_instruction:
             revision_count += 1
-        report_text = draft_report(
+
+        draft = report_service.build_report_draft(
             question=question,
-            metrics=metrics,
+            source_id=str(target_source_id or ""),
             insight_summary=insight_summary,
             visualization_summary=visualization_summary,
             revision_instruction=revision_instruction,
             model_id=state.get("model_id"),
+            visualizations=report_visualizations,
             default_model=default_model,
         )
 
         return {
-            "report_draft": {
-                "summary": report_text,
-                "metrics": metrics,
-                "visualizations": report_visualizations,
-                "revision_count": revision_count,
-            },
+            "report_draft": {**draft, "revision_count": revision_count},
             "revision_request": {},
         }
 
@@ -202,17 +196,3 @@ def build_report_workflow(*, report_service: ReportService, default_model: str =
     graph.add_edge("cancel", END)
 
     return graph.compile()
-
-
-async def generate_report_summary(
-    *,
-    analysis_results: List[Dict[str, Any]],
-    visualizations: List[Dict[str, Any]],
-    insights: List[Any],
-    service: ReportService,
-) -> str:
-    return await service.generate_summary(
-        analysis_results=analysis_results,
-        visualizations=visualizations,
-        insights=insights,
-    )

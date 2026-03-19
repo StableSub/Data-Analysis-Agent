@@ -66,6 +66,5 @@ def build_workflow_services(*, db: Session, agent: Any) -> WorkflowServices:
             ReportRepository(db),
             dataset_repository=dataset_repository,
             reader=dataset_reader,
-            agent=agent,
         ),
     )
