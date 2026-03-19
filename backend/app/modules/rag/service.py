@@ -8,6 +8,7 @@ from typing import Any, Iterable, List, Optional
 
 from ..datasets.models import Dataset
 from ..datasets.repository import DataSourceRepository
+from .ai import answer_with_context
 from .errors import RagEmbeddingError, RagNotIndexedError, RagSearchError
 from .repository import RagRepository
 
@@ -32,6 +33,7 @@ class RagService:
         answer_agent: Any | None = None,
         chunk_size: int = 800,
         chunk_overlap: int = 100,
+        default_model: str = "gpt-5-nano",
     ) -> None:
         self.repository = repository
         self.storage_dir = storage_dir
@@ -40,6 +42,7 @@ class RagService:
         self.answer_agent = answer_agent
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
+        self.default_model = default_model
         self.storage_dir.mkdir(parents=True, exist_ok=True)
 
     def ensure_index_for_source(self, source_id: str) -> dict[str, str]:
@@ -172,28 +175,33 @@ class RagService:
         top_k: int = 3,
         source_filter: Optional[List[str]] = None,
     ) -> tuple[str, List[RetrievedChunk]] | None:
-        if self.answer_agent is None:
-            raise RuntimeError("RAG_ANSWER_AGENT_NOT_CONFIGURED")
-
         retrieved = self.query(query=query, top_k=top_k, source_filter=source_filter)
         if not retrieved:
             return None
 
         context = self.build_context(retrieved)
-        answer_parts: list[str] = []
-        final_answer: str | None = None
-        async for event in self.answer_agent.astream_with_trace(question=query, context=context):
-            event_type = event.get("type")
-            if event_type == "chunk":
-                delta = event.get("delta")
-                if isinstance(delta, str) and delta:
-                    answer_parts.append(delta)
-            elif event_type == "done":
-                done_answer = event.get("answer")
-                if isinstance(done_answer, str):
-                    final_answer = done_answer
+        if self.answer_agent is not None:
+            answer_parts: list[str] = []
+            final_answer: str | None = None
+            async for event in self.answer_agent.astream_with_trace(question=query, context=context):
+                event_type = event.get("type")
+                if event_type == "chunk":
+                    delta = event.get("delta")
+                    if isinstance(delta, str) and delta:
+                        answer_parts.append(delta)
+                elif event_type == "done":
+                    done_answer = event.get("answer")
+                    if isinstance(done_answer, str):
+                        final_answer = done_answer
 
-        answer = final_answer if final_answer is not None else "".join(answer_parts)
+            answer = final_answer if final_answer is not None else "".join(answer_parts)
+        else:
+            answer = answer_with_context(
+                query=query,
+                context=context,
+                model_id=None,
+                default_model=self.default_model,
+            )
         return answer, retrieved
 
     def add_context_links(self, *, session_id: int, retrieved: Iterable[RetrievedChunk]) -> None:

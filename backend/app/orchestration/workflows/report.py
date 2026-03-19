@@ -7,14 +7,12 @@ V1 리포트 서브그래프.
 
 from __future__ import annotations
 
-import json
 from typing import Any, Dict, List
 
-from langchain.chat_models import init_chat_model
-from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 
+from backend.app.modules.reports.ai import draft_report
 from backend.app.modules.reports.service import ReportService
 from backend.app.orchestration.state import ReportGraphState
 from backend.app.orchestration.utils import resolve_target_source_id
@@ -81,31 +79,15 @@ def build_report_workflow(*, report_service: ReportService, default_model: str =
             revision_count = int(previous_draft.get("revision_count", 0) or 0)
         if revision_instruction:
             revision_count += 1
-        model_name = state.get("model_id") or default_model
-        llm = init_chat_model(model_name)
-        result = llm.invoke(
-            [
-                SystemMessage(
-                    content=(
-                        "당신은 데이터 분석 리포트 작성자다. "
-                        "반드시 아래 3개 섹션 제목으로만 한국어 리포트를 작성하라.\n"
-                        "요약\n핵심 인사이트\n권고사항\n"
-                        "각 섹션은 2~5문장으로 작성하고, 가능한 한 수치를 인용하라. "
-                        "단계 로그 설명은 금지한다."
-                    )
-                ),
-                HumanMessage(
-                    content=(
-                        f"사용자 질문:\n{question}\n\n"
-                        f"정량 지표(metrics):\n{json.dumps(metrics, ensure_ascii=False)}\n\n"
-                        f"RAG 인사이트 요약:\n{insight_summary}\n\n"
-                        f"시각화 요약:\n{visualization_summary}\n"
-                        + (f"\n수정 요청:\n{revision_instruction}\n" if revision_instruction else "")
-                    )
-                ),
-            ]
+        report_text = draft_report(
+            question=question,
+            metrics=metrics,
+            insight_summary=insight_summary,
+            visualization_summary=visualization_summary,
+            revision_instruction=revision_instruction,
+            model_id=state.get("model_id"),
+            default_model=default_model,
         )
-        report_text = result.content if isinstance(result.content, str) else str(result.content)
 
         return {
             "report_draft": {

@@ -9,9 +9,7 @@ from pathlib import Path
 import pandas as pd
 
 from backend.app.modules.chat.models import ChatMessage, ChatSession
-from backend.app.modules.chat.run_service import ChatRunService
 from backend.app.modules.chat.service import ChatService
-from backend.app.modules.chat.session_service import ChatSessionService
 from backend.app.modules.datasets.models import Dataset
 from backend.app.modules.datasets.service import DataSourceService
 from backend.app.modules.export.service import ExportService
@@ -231,16 +229,10 @@ class ChatServiceTest(unittest.IsolatedAsyncioTestCase):
             storage_path="/tmp/sales.csv",
             filesize=10,
         )
-        session_service = ChatSessionService(chat_repository)
-        run_service = ChatRunService(
+        service = ChatService(
             agent=FakeAiOrchestrator(),
             repository=chat_repository,
-            session_service=session_service,
             data_source_repository=dataset_repository,
-        )
-        service = ChatService(
-            session_service=session_service,
-            run_service=run_service,
         )
 
         result = await service.ask(
@@ -264,16 +256,10 @@ class ChatServiceTest(unittest.IsolatedAsyncioTestCase):
             storage_path="/tmp/sales.csv",
             filesize=10,
         )
-        session_service = ChatSessionService(chat_repository)
-        run_service = ChatRunService(
+        service = ChatService(
             agent=FakeApprovalAiOrchestrator(),
             repository=chat_repository,
-            session_service=session_service,
             data_source_repository=dataset_repository,
-        )
-        service = ChatService(
-            session_service=session_service,
-            run_service=run_service,
         )
 
         result = await service.ask(
@@ -291,16 +277,14 @@ class ChatServiceTest(unittest.IsolatedAsyncioTestCase):
 
     def test_get_pending_approval_maps_schema(self):
         chat_repository = FakeChatRepository()
-        session_service = ChatSessionService(chat_repository)
-        session = session_service.get_or_create_session(session_id=None, title="approval")
-        run_service = ChatRunService(
+        service = ChatService(
             agent=FakeApprovalAiOrchestrator(),
             repository=chat_repository,
-            session_service=session_service,
             data_source_repository=FakeDatasetRepository(),
         )
+        session = service._get_or_create_session(session_id=None, title="approval")
 
-        pending = run_service.get_pending_approval(
+        pending = service.get_pending_approval(
             session_id=session.id,
             run_id="run-1",
         )

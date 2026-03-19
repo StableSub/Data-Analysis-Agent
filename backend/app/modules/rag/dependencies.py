@@ -5,7 +5,6 @@ from fastapi import Depends
 from sqlalchemy.orm import Session
 
 from ...core.db import get_db
-from ...orchestration.dependencies import get_agent
 from ..datasets.repository import DataSourceRepository
 from .repository import RagRepository
 from .service import RagService
@@ -29,7 +28,6 @@ def get_rag_repository(db: Session = Depends(get_db)) -> RagRepository:
 def get_rag_service(
     db: Session = Depends(get_db),
     repository: RagRepository = Depends(get_rag_repository),
-    agent=Depends(get_agent),
 ) -> RagService:
     dataset_repository = DataSourceRepository(db)
     return RagService(
@@ -37,5 +35,4 @@ def get_rag_service(
         storage_dir=_vector_storage_dir(),
         embedder=get_embedder(),
         dataset_repository=dataset_repository,
-        answer_agent=agent,
     )

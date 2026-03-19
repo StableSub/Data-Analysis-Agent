@@ -4,6 +4,7 @@ from typing import Any, Dict, List
 
 from ..datasets.reader import DatasetReader
 from ..datasets.repository import DataSourceRepository
+from .ai import generate_summary_from_payload
 from .metrics import build_dataset_metrics, build_report_payload
 from .models import Report
 from .repository import ReportRepository
@@ -19,11 +20,13 @@ class ReportService:
         dataset_repository: DataSourceRepository | None = None,
         reader: DatasetReader | None = None,
         agent: Any | None = None,
+        default_model: str = "gpt-5-nano",
     ) -> None:
         self.repository = repository
         self.dataset_repository = dataset_repository
         self.reader = reader
         self.agent = agent
+        self.default_model = default_model
 
     async def create_report(self, *, session_id: int, summary_text: str) -> Report:
         return self.repository.create(
@@ -89,23 +92,33 @@ class ReportService:
             visualizations=visualizations,
             insights=insights,
         )
-        question = "다음 분석 결과를 간결하게 요약해 리포트를 작성해줘."
-        context = json.dumps(payload, ensure_ascii=False)
+
+        if self.agent is not None:
+            question = "다음 분석 결과를 간결하게 요약해 리포트를 작성해줘."
+            context = json.dumps(payload, ensure_ascii=False)
+            try:
+                answer_parts: list[str] = []
+                final_answer: str | None = None
+                async for event in self.agent.astream_with_trace(question=question, context=context):
+                    event_type = event.get("type")
+                    if event_type == "chunk":
+                        delta = event.get("delta")
+                        if isinstance(delta, str) and delta:
+                            answer_parts.append(delta)
+                    elif event_type == "done":
+                        done_answer = event.get("answer")
+                        if isinstance(done_answer, str):
+                            final_answer = done_answer
+                return final_answer if final_answer is not None else "".join(answer_parts)
+            except Exception as exc:
+                raise RuntimeError("GENERATION_ERROR") from exc
 
         try:
-            answer_parts: list[str] = []
-            final_answer: str | None = None
-            async for event in self.agent.astream_with_trace(question=question, context=context):
-                event_type = event.get("type")
-                if event_type == "chunk":
-                    delta = event.get("delta")
-                    if isinstance(delta, str) and delta:
-                        answer_parts.append(delta)
-                elif event_type == "done":
-                    done_answer = event.get("answer")
-                    if isinstance(done_answer, str):
-                        final_answer = done_answer
-            return final_answer if final_answer is not None else "".join(answer_parts)
+            return generate_summary_from_payload(
+                payload=payload,
+                model_id=None,
+                default_model=self.default_model,
+            )
         except Exception as exc:
             raise RuntimeError("GENERATION_ERROR") from exc
 

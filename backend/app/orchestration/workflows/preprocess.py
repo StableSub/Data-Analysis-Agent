@@ -2,27 +2,21 @@
 
 from __future__ import annotations
 
-import json
-from typing import Any, Dict, Literal
+from typing import Any, Dict
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import ValidationError
 
+from backend.app.modules.preprocess.ai import (
+    PreprocessDecision,
+    PreprocessPlan,
+    build_preprocess_plan as build_preprocess_plan_with_ai,
+    decide_preprocess,
+)
 from backend.app.modules.preprocess.schemas import PreprocessOperation
 from backend.app.modules.preprocess.service import PreprocessService
 from backend.app.orchestration.state import PreprocessGraphState
-from backend.app.orchestration.utils import call_structured_llm
-
-
-class PreprocessPlan(BaseModel):
-    operations: list[PreprocessOperation] = Field(default_factory=list)
-    planner_comment: str = ""
-
-
-class PreprocessDecision(BaseModel):
-    step: Literal["run_preprocess", "skip_preprocess"] = Field(...)
-    reason_summary: str = ""
 
 
 def _get_revision_instruction(state: PreprocessGraphState) -> str:
@@ -115,23 +109,11 @@ def build_preprocess_plan(
     """
     profile_json = json.dumps(state.get("dataset_profile", {}), ensure_ascii=False)
     revision_request = _get_revision_instruction(state)
-    revision_text = f"\nrevision_request={revision_request}" if revision_request else ""
-    plan = call_structured_llm(
-        schema=PreprocessPlan,
-        system_prompt=(
-            "너는 전처리 플래너다. "
-            "PreprocessPlan 스키마 형식으로만 반환하고 "
-            "지원 연산은 drop_missing, impute, drop_columns, rename_columns, scale, derived_column다. "
-            "전처리가 불필요하면 operations는 빈 배열로 반환하라. "
-            "operations는 op+파라미터로 구성하며 "
-            "planner_comment에는 판단 근거를 1~2문장으로 남겨라."
-        ),
-        human_prompt=(
-            f"user_input={state.get('user_input', '')}\n"
-            f"source_id={state.get('source_id')}\n"
-            f"dataset_profile={profile_json}"
-            f"{revision_text}"
-        ),
+    plan = build_preprocess_plan_with_ai(
+        user_input=str(state.get("user_input", "")),
+        source_id=str(state.get("source_id") or ""),
+        dataset_profile=state.get("dataset_profile", {}),
+        revision_request=revision_request,
         model_id=state.get("model_id"),
         default_model=default_model,
     )
@@ -254,14 +236,9 @@ def build_preprocess_workflow(
                 }
             }
 
-        profile_json = json.dumps(state.get("dataset_profile", {}), ensure_ascii=False)
-        decision = call_structured_llm(
-            schema=PreprocessDecision,
-            system_prompt=(
-                "데이터 프로파일을 보고 run_preprocess 또는 skip_preprocess를 반환하라. "
-                "reason_summary에는 판단 근거를 1문장으로 남겨라."
-            ),
-            human_prompt=f"user_input={state.get('user_input', '')}\n{profile_json}",
+        decision = decide_preprocess(
+            user_input=str(state.get("user_input", "")),
+            dataset_profile=state.get("dataset_profile", {}),
             model_id=state.get("model_id"),
             default_model=default_model,
         )

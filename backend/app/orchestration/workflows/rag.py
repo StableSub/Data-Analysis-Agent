@@ -10,19 +10,12 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from langchain.chat_models import init_chat_model
-from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
-from pydantic import BaseModel, Field
 
+from backend.app.modules.rag.ai import synthesize_insight
 from backend.app.modules.rag.service import RagService, RetrievedChunk
 from backend.app.orchestration.state import RagGraphState
 from backend.app.orchestration.utils import resolve_target_source_id
-
-
-class InsightSynthesisPayload(BaseModel):
-    insight_summary: str = Field(...)
-    evidence_summary: str = Field(default="")
 
 
 def build_rag_workflow(*, rag_service: RagService, default_model: str = "gpt-5-nano"):
@@ -121,27 +114,11 @@ def build_rag_workflow(*, rag_service: RagService, default_model: str = "gpt-5-n
         query = query_raw if isinstance(query_raw, str) else ""
         context = context_raw if isinstance(context_raw, str) else ""
 
-        model_id = state.get("model_id")
-        model_name = model_id if isinstance(model_id, str) and model_id.strip() else default_model
-        llm = init_chat_model(model_name).with_structured_output(
-            InsightSynthesisPayload,
-            method="function_calling",
-        )
-        llm_result = llm.invoke(
-            [
-                SystemMessage(
-                    content=(
-                        "질문과 검색 컨텍스트를 읽고 핵심 인사이트를 간단히 합성하라. "
-                        "insight_summary와 evidence_summary를 함께 반환하라."
-                    )
-                ),
-                HumanMessage(
-                    content=(
-                        f"question:\n{query}\n\n"
-                        f"context:\n{context}"
-                    )
-                ),
-            ]
+        llm_result = synthesize_insight(
+            query=query,
+            context=context,
+            model_id=state.get("model_id"),
+            default_model=default_model,
         )
         insight_summary = llm_result.insight_summary
         evidence_summary = llm_result.evidence_summary.strip() or insight_summary

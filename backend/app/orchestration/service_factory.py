@@ -14,6 +14,7 @@ from ..modules.rag.service import RagService
 from ..modules.reports.repository import ReportRepository
 from ..modules.reports.service import ReportService
 from ..modules.visualization.service import VisualizationService
+
 if TYPE_CHECKING:
     from .client import AgentClient
 

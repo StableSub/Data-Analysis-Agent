@@ -9,16 +9,17 @@ V1 시각화 서브그래프.
 
 from __future__ import annotations
 
-from typing import Any, Dict, Literal
+from typing import Any, Dict
 
 import pandas as pd
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 from pydantic import BaseModel, Field, ValidationError
 
+from backend.app.modules.visualization.ai import recommend_chart
 from backend.app.modules.visualization.service import VisualizationService
 from backend.app.orchestration.state import VisualizationGraphState
-from backend.app.orchestration.utils import call_structured_llm, resolve_target_source_id
+from backend.app.orchestration.utils import resolve_target_source_id
 MAX_SAMPLE_ROWS = 2000
 MAX_POINTS = 120
 
@@ -29,13 +30,6 @@ CHART_KEYWORDS: dict[str, tuple[str, ...]] = {
     "hist": ("hist", "histogram", "히스토그램"),
     "box": ("box", "boxplot", "박스플롯"),
 }
-
-
-class ChartSelection(BaseModel):
-    chart_type: Literal["scatter", "line", "bar", "hist", "box"] = Field(...)
-    x_column: str = Field(...)
-    y_column: str = Field(default="")
-    reason: str = Field(default="")
 
 
 class VisualizationPlan(BaseModel):
@@ -269,40 +263,14 @@ def _select_chart_with_llm(
     데코레이터: 없음.
     호출 맥락: visualization planner의 1차 선택기로 사용되고 실패 시 `_select_chart`로 폴백된다.
     """
-    columns_info = (
-        f"numeric: {numeric_columns}\n"
-        f"datetime: {datetime_columns}\n"
-        f"categorical: {categorical_columns}"
-    )
-    result = call_structured_llm(
-        schema=ChartSelection,
-        system_prompt=(
-            "사용자 질문과 컬럼 목록을 보고 가장 적합한 차트를 선택하라. "
-            "x_column, y_column은 반드시 주어진 컬럼 목록에서 선택하라. "
-            "hist는 y_column이 빈 문자열이다."
-        ),
-        human_prompt=f"query: {query}\n\n{columns_info}",
+    return recommend_chart(
+        query=query,
+        numeric_columns=numeric_columns,
+        datetime_columns=datetime_columns,
+        categorical_columns=categorical_columns,
         model_id=model_id,
         default_model=default_model,
     )
-    dump = result.model_dump()
-    all_columns = numeric_columns + datetime_columns + categorical_columns
-    x_column = str(dump.get("x_column") or "")
-    y_column = str(dump.get("y_column") or "")
-    if x_column not in all_columns:
-        return None
-    if y_column and y_column not in all_columns:
-        return None
-    chart_type = str(dump.get("chart_type") or "")
-    return {
-        "status": "planned",
-        "mode": "llm",
-        "chart_type": chart_type,
-        "x_key": x_column,
-        "y_key": y_column,
-        "reason": str(dump.get("reason") or ""),
-        "x_is_datetime": x_column in datetime_columns,
-    }
 
 
 def _build_visualization_review_payload(

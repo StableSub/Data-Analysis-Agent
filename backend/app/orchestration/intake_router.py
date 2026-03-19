@@ -4,20 +4,11 @@ V1 Intake Router (Intent only).
 
 from __future__ import annotations
 
-from typing import Any, Dict, Literal
+from typing import Any, Dict
 
 from langgraph.graph import END, START, StateGraph
-from pydantic import BaseModel, Field
-
+from .ai import analyze_intent
 from .state import IntakeRouterState
-from .utils import call_structured_llm
-
-
-class IntentDecision(BaseModel):
-    step: Literal["general_question", "data_pipeline"] = Field(...)
-    ask_preprocess: bool = Field(False)
-    ask_visualization: bool = Field(False)
-    ask_report: bool = Field(False)
 
 
 def build_intake_router_workflow(default_model: str = "gpt-5-nano"):
@@ -29,14 +20,8 @@ def build_intake_router_workflow(default_model: str = "gpt-5-nano"):
         return {"handoff": {"next_step": "general_question"}}
 
     def analyze_intent_node(state: IntakeRouterState) -> Dict[str, Any]:
-        decision = call_structured_llm(
-            schema=IntentDecision,
-            system_prompt=(
-                "데이터셋이 이미 선택된 상황이다. "
-                "step은 data_pipeline으로 반환하라. "
-                "질문을 보고 ask_preprocess, ask_visualization, ask_report를 true/false로 판단하라."
-            ),
-            human_prompt=state.get("user_input", ""),
+        decision = analyze_intent(
+            user_input=str(state.get("user_input", "")),
             model_id=state.get("model_id"),
             default_model=default_model,
         )

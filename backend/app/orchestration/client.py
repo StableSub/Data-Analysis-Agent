@@ -5,6 +5,7 @@ LLMClient는 선택된 프리셋으로 LangChain 체인을 구성해 간단한 �
 from __future__ import annotations
 
 import asyncio
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, AsyncIterator, Dict
 
@@ -12,7 +13,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 
 from ..core.db import SessionLocal
-from .dependencies import build_workflow_services
+from .service_factory import build_workflow_services
 
 
 def _load_pdf(file_path: Path, max_chars: int) -> str:
@@ -54,9 +55,14 @@ def _load_text_from_file(path: str, max_chars: int = 4000) -> str:
 
 
 class AgentClient:
-    def __init__(self, model: str = "gpt-5-nano") -> None:
+    def __init__(
+        self,
+        model: str = "gpt-5-nano",
+        workflow_runtime_factory: Any | None = None,
+    ) -> None:
         self.default_model = model
         self._checkpointer = InMemorySaver()
+        self._workflow_runtime_factory = workflow_runtime_factory or self._default_runtime_factory
 
     async def astream_with_trace(
         self,
@@ -68,9 +74,8 @@ class AgentClient:
         model_id: str | None = None,
         resume: Dict[str, Any] | None = None,
     ) -> AsyncIterator[Dict[str, Any]]:
-        db = SessionLocal()
-        try:
-            workflow = self._build_workflow(db=db)
+        with self._runtime() as runtime:
+            workflow = getattr(runtime, "workflow", runtime)
             config = self._build_config(run_id=run_id, session_id=session_id)
             if resume is None:
                 state, early_answer = self._build_state(
@@ -161,8 +166,6 @@ class AgentClient:
             ):
                 done_event["visualization_result"] = visualization_result
             yield done_event
-        finally:
-            db.close()
 
     def _build_workflow(self, *, db):
         from .builder import build_main_workflow
@@ -177,13 +180,22 @@ class AgentClient:
             checkpointer=self._checkpointer,
         )
 
-    def get_pending_approval(self, *, run_id: str) -> Dict[str, Any] | None:
+    @contextmanager
+    def _default_runtime_factory(self, **_: Any):
         db = SessionLocal()
         try:
             workflow = self._build_workflow(db=db)
-            snapshot = workflow.get_state(self._build_config(run_id=run_id, session_id=None))
+            yield workflow
         finally:
             db.close()
+
+    def _runtime(self):
+        return self._workflow_runtime_factory(agent=self, default_model=self.default_model)
+
+    def get_pending_approval(self, *, run_id: str) -> Dict[str, Any] | None:
+        with self._runtime() as runtime:
+            workflow = getattr(runtime, "workflow", runtime)
+            snapshot = workflow.get_state(self._build_config(run_id=run_id, session_id=None))
 
         interrupts = getattr(snapshot, "interrupts", ())
         if not interrupts:

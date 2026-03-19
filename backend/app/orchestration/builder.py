@@ -4,21 +4,17 @@ import json
 from pathlib import Path
 from typing import Any, Dict
 
-from dotenv import load_dotenv
-from langchain.chat_models import init_chat_model
-from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
 
 from ..core.db import SessionLocal
-from .dependencies import build_workflow_services
+from .ai import answer_data_question, answer_general_question
 from .intake_router import build_intake_router_workflow
+from .service_factory import build_workflow_services
 from .state import MainWorkflowState
 from .workflows.preprocess import build_preprocess_workflow
 from .workflows.rag import build_rag_workflow
 from .workflows.report import build_report_workflow
 from .workflows.visualization import build_visualization_workflow
-
-load_dotenv()
 
 
 def build_main_workflow(
@@ -79,15 +75,11 @@ def build_main_workflow(
         return "merge_context"
 
     def general_question_terminal(state: MainWorkflowState) -> Dict[str, Any]:
-        model_name = state.get("model_id") or default_model
-        llm = init_chat_model(model_name)
-        result = llm.invoke(
-            [
-                SystemMessage(content="사용자 질문에 간결하고 정확하게 답하라."),
-                HumanMessage(content=state.get("user_input", "")),
-            ]
+        answer = answer_general_question(
+            user_input=str(state.get("user_input", "")),
+            model_id=state.get("model_id"),
+            default_model=default_model,
         )
-        answer = result.content if isinstance(result.content, str) else str(result.content)
 
         return {
             "output": {
@@ -135,31 +127,13 @@ def build_main_workflow(
         return {"merged_context": merged_context}
 
     def data_qa_terminal(state: MainWorkflowState) -> Dict[str, Any]:
-        model_name = state.get("model_id") or default_model
-        llm = init_chat_model(model_name)
-
-        question = str(state.get("user_input", ""))
         merged_context = state.get("merged_context")
-        context_json = (
-            json.dumps(merged_context, ensure_ascii=False)
-            if isinstance(merged_context, dict)
-            else "{}"
+        answer = answer_data_question(
+            user_input=str(state.get("user_input", "")),
+            merged_context=merged_context if isinstance(merged_context, dict) else {},
+            model_id=state.get("model_id"),
+            default_model=default_model,
         )
-
-        result = llm.invoke(
-            [
-                SystemMessage(
-                    content="주어진 merged_context를 근거로 사용자 데이터 질문에 간결하게 답하라."
-                ),
-                HumanMessage(
-                    content=(
-                        f"question:\n{question}\n\n"
-                        f"merged_context:\n{context_json}"
-                    )
-                ),
-            ]
-        )
-        answer = result.content if isinstance(result.content, str) else str(result.content)
         return {
             "data_qa_result": {"content": answer},
             "output": {
