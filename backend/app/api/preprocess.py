@@ -17,8 +17,6 @@ def apply(req: PreprocessApplyRequest, db: Session = Depends(get_db), state: Pre
             source_id=req.source_id,
             operations=req.operations,
         )
-        state.record(resp)
-        return resp
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except ValueError as e:
