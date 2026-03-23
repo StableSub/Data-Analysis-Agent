@@ -48,15 +48,19 @@ def analyze_intent(
 def answer_general_question(
     *,
     user_input: str,
+    request_context: str | None = None,
     model_id: str | None,
     default_model: str,
 ) -> str:
     llm = LLMGateway(default_model=default_model)
+    content = user_input
+    if isinstance(request_context, str) and request_context.strip():
+        content = f"question:\n{user_input}\n\nrequest_context:\n{request_context.strip()}"
     result = llm.invoke(
         model_id=model_id,
         messages=[
             SystemMessage(content=PROMPTS.load_prompt("general.system")),
-            HumanMessage(content=user_input),
+            HumanMessage(content=content),
         ],
     )
     return result.content if isinstance(result.content, str) else str(result.content)

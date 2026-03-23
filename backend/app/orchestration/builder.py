@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any, Dict
 
@@ -77,6 +76,7 @@ def build_main_workflow(
     def general_question_terminal(state: MainWorkflowState) -> Dict[str, Any]:
         answer = answer_general_question(
             user_input=str(state.get("user_input", "")),
+            request_context=str(state.get("request_context", "")),
             model_id=state.get("model_id"),
             default_model=default_model,
         )
@@ -90,6 +90,10 @@ def build_main_workflow(
 
     def merge_context_node(state: MainWorkflowState) -> Dict[str, Any]:
         merged_context: Dict[str, Any] = {"applied_steps": []}
+
+        request_context = state.get("request_context")
+        if isinstance(request_context, str) and request_context.strip():
+            merged_context["request_context"] = request_context.strip()
 
         handoff = state.get("handoff")
         if isinstance(handoff, dict):

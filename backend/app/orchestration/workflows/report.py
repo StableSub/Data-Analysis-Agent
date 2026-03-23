@@ -29,21 +29,7 @@ def _get_report_revision_instruction(state: ReportGraphState) -> str:
 
 
 def build_report_workflow(*, report_service: ReportService, default_model: str = "gpt-5-nano"):
-    """
-    역할: 메트릭 계산과 LLM 리포트 작성을 담당하는 단일 노드 리포트 서브그래프를 생성한다.
-    입력: DB 세션(`db`)과 리포트 작성 기본 모델명(`default_model`)을 받는다.
-    출력: `report_result`와 `output(report_answer)`를 생성하는 컴파일된 그래프를 반환한다.
-    데코레이터: 없음.
-    호출 맥락: 메인 워크플로우에서 `ask_report`가 참일 때 최종 응답 경로로 호출된다.
-    """
     def report_draft_node(state: ReportGraphState) -> Dict[str, Any]:
-        """
-        역할: 정량 메트릭, RAG 인사이트, 시각화 요약을 합쳐 리포트 초안을 생성한다.
-        입력: `state.user_input`, `state.insight`, `state.visualization_result`, 대상 source 정보를 받는다.
-        출력: `report_draft(summary/metrics/visualizations)`를 반환한다.
-        데코레이터: 없음.
-        호출 맥락: approval gate 직전에 실행되는 리포트 초안 생성 노드다.
-        """
         target_source_id = resolve_target_source_id(state)
 
         report_visualizations: list[Dict[str, Any]] = []

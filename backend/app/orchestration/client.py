@@ -16,44 +16,6 @@ from ..core.db import SessionLocal
 from .service_factory import build_workflow_services
 
 
-def _load_pdf(file_path: Path, max_chars: int) -> str:
-    try:
-        from pypdf import PdfReader
-    except ImportError as exc:
-        raise RuntimeError(
-            "PDF 파일을 처리하려면 'pypdf' 패키지가 필요합니다. pip install pypdf 로 설치하세요."
-        ) from exc
-
-    reader = PdfReader(str(file_path))
-    chunks: list[str] = []
-    total_len = 0
-    for page in reader.pages:
-        text = page.extract_text() or ""
-        if text.strip():
-            available = max_chars - total_len
-            if available <= 0:
-                break
-            snippet = text[:available]
-            chunks.append(snippet)
-            total_len += len(snippet)
-        if total_len >= max_chars:
-            break
-    return "\n".join(chunks)
-
-
-def _load_text_from_file(path: str, max_chars: int = 4000) -> str:
-    file_path = Path(path)
-    if not file_path.exists():
-        raise FileNotFoundError(f"파일을 찾을 수 없습니다: {file_path}")
-
-    suffix = file_path.suffix.lower()
-    if suffix == ".pdf":
-        return _load_pdf(file_path, max_chars)
-
-    data = file_path.read_text(encoding="utf-8", errors="ignore")
-    return data[:max_chars]
-
-
 class AgentClient:
     def __init__(
         self,
@@ -213,13 +175,21 @@ class AgentClient:
         dataset: Any | None,
         model_id: str | None,
     ) -> tuple[Dict[str, Any], str | None]:
-        _ = context
+        """
+        역할: 사용자 요청을 LangGraph 입력 상태 포맷으로 정규화한다.
+        입력: 세션, 질문, 컨텍스트, 데이터셋 객체, 모델 ID를 받아 상태 필드를 채운다.
+        출력: `(state, early_answer)` 튜플을 반환하며, 질문이 비면 즉시 안내 문구를 반환한다.
+        데코레이터: 없음.
+        호출 맥락: `astream_with_trace` 시작 시 가장 먼저 호출되어 실행 전 유효 상태를 만든다.
+        """
         question_text = (question or "").strip()
+        context_text = (context or "").strip()
         if not question_text:
             return {}, "질문을 입력해 주세요."
 
         state: Dict[str, Any] = {
             "user_input": question_text,
+            "request_context": context_text,
             "session_id": str(session_id or ""),
             "run_id": str(run_id or ""),
             "model_id": model_id or self.default_model,
