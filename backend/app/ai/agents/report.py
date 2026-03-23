@@ -13,7 +13,9 @@ from typing import Any, Dict
 
 import pandas as pd
 from langchain.chat_models import init_chat_model
+from langchain_core.messages import HumanMessage
 from langgraph.graph import END, START, StateGraph
+from langgraph.types import interrupt
 from sqlalchemy.orm import Session
 
 from backend.app.ai.agents.state import ReportGraphState
@@ -119,6 +121,17 @@ def _build_metrics(*, df: pd.DataFrame, source_id: str) -> Dict[str, Any]:
     }
 
 
+def _get_report_revision_instruction(state: ReportGraphState) -> str:
+    revision_request = state.get("revision_request")
+    if isinstance(revision_request, dict):
+        if revision_request.get("stage") == "report":
+            instruction = revision_request.get("instruction")
+            if isinstance(instruction, str):
+                return instruction.strip()
+        return ""
+    return str(revision_request or "").strip()
+
+
 def build_report_workflow(*, db: Session, default_model: str = "gpt-5-nano"):
     """
     역할: 메트릭 계산과 LLM 리포트 작성을 담당하는 단일 노드 리포트 서브그래프를 생성한다.
@@ -129,13 +142,13 @@ def build_report_workflow(*, db: Session, default_model: str = "gpt-5-nano"):
     """
     data_source_repository = DataSourceRepository(db)
 
-    def report_composer_node(state: ReportGraphState) -> Dict[str, Any]:
+    def report_draft_node(state: ReportGraphState) -> Dict[str, Any]:
         """
-        역할: 정량 메트릭, RAG 인사이트, 시각화 요약을 합쳐 최종 리포트 본문을 생성한다.
+        역할: 정량 메트릭, RAG 인사이트, 시각화 요약을 합쳐 리포트 초안을 생성한다.
         입력: `state.user_input`, `state.insight`, `state.visualization_result`, 대상 source 정보를 받는다.
-        출력: `report_result(summary/metrics/visualizations)`와 `output.type=report_answer`를 반환한다.
+        출력: `report_draft(summary/metrics/visualizations)`를 반환한다.
         데코레이터: 없음.
-        호출 맥락: 리포트 서브그래프의 핵심이자 유일한 실행 노드로, 결과가 곧 최종 사용자 응답이 된다.
+        호출 맥락: approval gate 직전에 실행되는 리포트 초안 생성 노드다.
         """
         target_source_id = resolve_target_source_id(state)
 
@@ -184,34 +197,137 @@ def build_report_workflow(*, db: Session, default_model: str = "gpt-5-nano"):
                     report_visualizations.append(visualization_item)
 
         question = str(state.get("user_input", ""))
+        revision_instruction = _get_report_revision_instruction(state)
+        previous_draft = state.get("report_draft")
+        revision_count = 0
+        if isinstance(previous_draft, dict):
+            revision_count = int(previous_draft.get("revision_count", 0) or 0)
+        if revision_instruction:
+            revision_count += 1
         model_name = state.get("model_id") or default_model
         llm = init_chat_model(model_name)
-        result = llm.invoke(
-            build_messages(
-                "report.default",
-                user_question=question,
-                metrics_json=json.dumps(metrics, ensure_ascii=False),
-                insight_summary=insight_summary,
-                visualization_summary=visualization_summary,
-            )
+        messages = build_messages(
+            "report.default",
+            user_question=question,
+            metrics_json=json.dumps(metrics, ensure_ascii=False),
+            insight_summary=insight_summary,
+            visualization_summary=visualization_summary,
         )
+        if revision_instruction:
+            messages.append(HumanMessage(content=f"수정 요청:\n{revision_instruction}"))
+        result = llm.invoke(messages)
         report_text = result.content if isinstance(result.content, str) else str(result.content)
 
         return {
-            "report_result": {
+            "report_draft": {
                 "summary": report_text,
                 "metrics": metrics,
                 "visualizations": report_visualizations,
+                "revision_count": revision_count,
             },
+            "revision_request": {},
+        }
+
+    def approval_gate_node(state: ReportGraphState) -> Dict[str, Any]:
+        draft = state.get("report_draft")
+        if not isinstance(draft, dict):
+            draft = {}
+
+        payload = {
+            "stage": "report",
+            "kind": "draft_review",
+            "title": "Report draft review",
+            "summary": "리포트 초안을 검토한 뒤 승인, 수정 요청, 취소 중 하나를 선택해 주세요.",
+            "source_id": str(resolve_target_source_id(state) or ""),
+            "draft": str(draft.get("summary") or ""),
+            "review": {
+                "revision_count": int(draft.get("revision_count", 0) or 0),
+            },
+        }
+        decision_raw = interrupt(payload)
+
+        decision = ""
+        instruction = ""
+        if isinstance(decision_raw, dict):
+            decision_value = decision_raw.get("decision")
+            instruction_value = decision_raw.get("instruction")
+            if isinstance(decision_value, str):
+                decision = decision_value
+            if isinstance(instruction_value, str):
+                instruction = instruction_value.strip()
+        elif isinstance(decision_raw, str):
+            decision = decision_raw
+
+        if decision == "approve":
+            return {
+                "pending_approval": {},
+                "revision_request": {},
+            }
+
+        if decision == "revise":
+            return {
+                "pending_approval": payload,
+                "revision_request": {
+                    "stage": "report",
+                    "instruction": instruction or "요청을 반영해 리포트 초안을 다시 작성해 주세요.",
+                },
+            }
+
+        return {
+            "pending_approval": {},
+            "revision_request": {},
             "output": {
-                "type": "report_answer",
-                "content": report_text,
+                "type": "cancelled",
+                "content": "리포트 초안 검토 단계에서 실행을 취소했습니다.",
             },
         }
 
+    def route_after_approval(state: ReportGraphState) -> str:
+        output = state.get("output")
+        if isinstance(output, dict) and output.get("type") == "cancelled":
+            return "cancel"
+        if _get_report_revision_instruction(state):
+            return "revise"
+        return "approve"
+
+    def finalize_node(state: ReportGraphState) -> Dict[str, Any]:
+        draft = state.get("report_draft")
+        if not isinstance(draft, dict):
+            draft = {}
+        report_text = str(draft.get("summary") or "").strip()
+        return {
+            "report_result": draft,
+            "pending_approval": {},
+            "revision_request": {},
+            "output": {
+                "type": "report_answer",
+                "content": report_text or "리포트 초안을 생성하지 못했습니다.",
+            },
+        }
+
+    def cancel_node(_: ReportGraphState) -> Dict[str, Any]:
+        return {
+            "pending_approval": {},
+            "revision_request": {},
+        }
+
     graph = StateGraph(ReportGraphState)
-    graph.add_node("report_composer", report_composer_node)
-    graph.add_edge(START, "report_composer")
-    graph.add_edge("report_composer", END)
+    graph.add_node("report_draft", report_draft_node)
+    graph.add_node("approval_gate", approval_gate_node)
+    graph.add_node("finalize", finalize_node)
+    graph.add_node("cancel", cancel_node)
+    graph.add_edge(START, "report_draft")
+    graph.add_edge("report_draft", "approval_gate")
+    graph.add_conditional_edges(
+        "approval_gate",
+        route_after_approval,
+        {
+            "approve": "finalize",
+            "revise": "report_draft",
+            "cancel": "cancel",
+        },
+    )
+    graph.add_edge("finalize", END)
+    graph.add_edge("cancel", END)
 
     return graph.compile()

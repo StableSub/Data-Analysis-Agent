@@ -40,7 +40,7 @@ def _cached_embedder() -> E5Embedder:
 
 class InsightSynthesisPayload(BaseModel):
     insight_summary: str = Field(...)
-    evidence_summary: str = Field(...)
+    evidence_summary: str = Field(default="")
 
 
 def build_rag_workflow(*, db: Session, default_model: str = "gpt-5-nano"):
@@ -195,7 +195,7 @@ def build_rag_workflow(*, db: Session, default_model: str = "gpt-5-nano"):
             )
         )
         insight_summary = llm_result.insight_summary
-        evidence_summary = llm_result.evidence_summary
+        evidence_summary = llm_result.evidence_summary.strip() or insight_summary
 
         source_id_raw = rag_result_dict.get("source_id")
         source_id = source_id_raw if isinstance(source_id_raw, str) else ""

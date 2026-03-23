@@ -30,6 +30,7 @@ def build_main_workflow(
     *,
     db: Session,
     default_model: str = "gpt-5-nano",
+    checkpointer: Any | None = None,
 ):
     """
     역할: Intake, Preprocess, RAG, Visualization, Report 서브그래프를 하나의 메인 워크플로우로 조립한다.
@@ -80,6 +81,13 @@ def build_main_workflow(
             return "visualization"
         return "merge_context"
 
+    def route_after_preprocess(state: MainWorkflowState) -> str:
+        preprocess_result = state.get("preprocess_result") or {}
+        output = state.get("output") or {}
+        if preprocess_result.get("status") == "cancelled" or output.get("type") == "cancelled":
+            return "cancelled"
+        return "rag"
+
     def route_after_merge_context(state: MainWorkflowState) -> str:
         """
         역할: 병합된 컨텍스트 이후 최종 응답 유형을 리포트 또는 데이터 QA로 선택한다.
@@ -92,6 +100,16 @@ def build_main_workflow(
         if bool(handoff.get("ask_report", False)):
             return "report"
         return "data_qa"
+
+    def route_after_visualization(state: MainWorkflowState) -> str:
+        visualization_result = state.get("visualization_result") or {}
+        output = state.get("output") or {}
+        if (
+            visualization_result.get("status") == "cancelled"
+            or output.get("type") == "cancelled"
+        ):
+            return "cancelled"
+        return "merge_context"
 
     def general_question_terminal(state: MainWorkflowState) -> Dict[str, Any]:
         """
@@ -222,7 +240,14 @@ def build_main_workflow(
             "data_pipeline": "preprocess_flow",
         },
     )
-    graph.add_edge("preprocess_flow", "rag_flow")
+    graph.add_conditional_edges(
+        "preprocess_flow",
+        route_after_preprocess,
+        {
+            "rag": "rag_flow",
+            "cancelled": END,
+        },
+    )
     graph.add_conditional_edges(
         "rag_flow",
         route_after_rag,
@@ -231,7 +256,14 @@ def build_main_workflow(
             "merge_context": "merge_context",
         },
     )
-    graph.add_edge("visualization_flow", "merge_context")
+    graph.add_conditional_edges(
+        "visualization_flow",
+        route_after_visualization,
+        {
+            "merge_context": "merge_context",
+            "cancelled": END,
+        },
+    )
     graph.add_conditional_edges(
         "merge_context",
         route_after_merge_context,
@@ -244,7 +276,7 @@ def build_main_workflow(
     graph.add_edge("data_qa_terminal", END)
     graph.add_edge("general_question_terminal", END)
 
-    return graph.compile()
+    return graph.compile(checkpointer=checkpointer)
 
 
 if __name__ == "__main__":

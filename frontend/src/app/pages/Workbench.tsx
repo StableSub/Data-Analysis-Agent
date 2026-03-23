@@ -17,7 +17,7 @@ import { cn } from "../../lib/utils";
 import { PipelineBar, type PipelineBarVariant } from "../components/genui/PipelineBar";
 import { useAnalysisPipeline, type PipelineSessionContext } from "../hooks/useAnalysisPipeline";
 import { useWorkbenchSessionStore } from "../hooks/useWorkbenchSessionStore";
-import { deleteChatSession, getChatHistory } from "../../lib/api";
+import { deleteChatSession, fetchPendingApproval, getChatHistory } from "../../lib/api";
 import { toast } from "sonner";
 
 // --- INLINE COMPONENTS ---
@@ -79,7 +79,7 @@ export default function Workbench() {
     evidence,
     milestones,
     history,
-    hitlProposal,
+    pendingApproval,
     rawLogs,
     latestVisualizationResult,
     chatHistory,
@@ -172,13 +172,36 @@ export default function Workbench() {
           const latestAssistant = [...msgs]
             .reverse()
             .find((message) => message.role === "assistant");
+          let restoredPendingApproval = nextContext.pendingApproval;
+          let stateHint = nextContext.stateHint;
+
+          if (nextContext.stateHint === "needs-user" && nextContext.runId) {
+            try {
+              const pending = await fetchPendingApproval(
+                targetSession.backendSessionId,
+                nextContext.runId,
+              );
+              restoredPendingApproval = pending.pending_approval;
+              stateHint = "needs-user";
+            } catch {
+              restoredPendingApproval = null;
+              stateHint = msgs.length > 0
+                ? "success"
+                : nextContext.uploadedDatasets.length > 0
+                  ? "ready"
+                  : "empty";
+            }
+          } else if (msgs.length > 0) {
+            stateHint = "success";
+          }
 
           nextContext = {
             ...nextContext,
             backendSessionId: targetSession.backendSessionId,
             chatHistory: msgs,
             latestAssistantAnswer: latestAssistant?.content ?? nextContext.latestAssistantAnswer,
-            stateHint: msgs.length > 0 ? "success" : nextContext.stateHint,
+            pendingApproval: restoredPendingApproval,
+            stateHint,
             errorMessage: nextContext.stateHint === "error" ? nextContext.errorMessage : null,
           };
 
@@ -305,7 +328,7 @@ export default function Workbench() {
     if (!initializedRef.current || !activeSessionId) {
       return;
     }
-    if (state === "running" || state === "uploading" || state === "needs-user") {
+    if (state === "running" || state === "uploading") {
       return;
     }
     const snapshot = captureSessionContext();
@@ -649,8 +672,12 @@ export default function Workbench() {
           <AssistantReportMessage
             variant="final"
             accentVariant="needs-user"
-            title={`Approval Required${hitlProposal ? ` — Impute ${hitlProposal.column}` : ""}`}
-            subtitle="Action needed"
+            title={pendingApproval?.title ?? "Plan review"}
+            subtitle={
+              pendingApproval?.stage === "report"
+                ? "Waiting for report review"
+                : "Waiting for approval"
+            }
             timestamp="Now"
             sections={reportSections}
             maxBodyHeight={300}
@@ -658,11 +685,21 @@ export default function Workbench() {
           />
           <div className="flex justify-center">
             <div className="inline-flex items-center gap-3 px-4 py-2 bg-[var(--genui-panel)] border border-[var(--genui-needs-user)]/30 rounded-full shadow-sm">
-              <ToolCallIndicator status="needs-user" label="propose_imputation" sublabel="Awaiting user decision" />
+              <ToolCallIndicator
+                status="needs-user"
+                label={
+                  pendingApproval?.stage === "report"
+                    ? "report_draft_review"
+                    : pendingApproval?.stage === "visualization"
+                      ? "visualization_plan_review"
+                      : "preprocess_plan_review"
+                }
+                sublabel={pendingApproval?.summary ?? "Awaiting user decision"}
+              />
             </div>
           </div>
           <p className="text-center text-[11px] text-[var(--genui-muted)]">
-            Use the decision bar below ↓ to approve, reject, or modify the proposed changes.
+            Review the current plan below and approve, request changes, or cancel the run.
           </p>
         </div>
       )}
@@ -704,7 +741,11 @@ export default function Workbench() {
       placeholder={
         state === "empty" ? "Upload a dataset or ask a question..." :
           state === "ready" ? "파일을 선택하거나, 바로 질문을 입력하세요..." :
-            state === "needs-user" ? "Agent is waiting for approval..." :
+            state === "needs-user"
+              ? pendingApproval?.stage === "report"
+                ? "Review the report draft below to continue..."
+                : "Review the current plan below to continue..."
+              :
               state === "error" ? "Type to discuss the error..." :
                 "Ask Gen-UI to analyze, visualize, or transform..."
       }
@@ -719,8 +760,18 @@ export default function Workbench() {
   const GateBarComponent = state === "needs-user" ? (
     <GateBar
       onApprove={pipeline.handleApprove}
-      onReject={pipeline.handleReject}
+      onCancel={pipeline.handleReject}
       onSubmitChange={pipeline.handleEditInstruction}
+      approveLabel={pendingApproval?.stage === "report" ? "Approve Report" : undefined}
+      cancelLabel={pendingApproval?.stage === "report" ? "Cancel Report" : undefined}
+      changeLabel={pendingApproval?.stage === "report" ? "Request Report Revision..." : undefined}
+      changePlaceholder={
+        pendingApproval?.stage === "report"
+          ? "What should change in the report draft?"
+          : pendingApproval?.stage === "visualization"
+          ? "What should change? (e.g., 'Use bar chart by region')"
+          : "What should change? (e.g., 'Use median imputation')"
+      }
     />
   ) : null;
 
@@ -741,7 +792,7 @@ export default function Workbench() {
           )}
           <DetailsPanel
             state={state === "running" || state === "success" ? "streaming" : state}
-            selectedItem={{ visualization: latestVisualizationResult, hasDatasetContext }}
+            selectedItem={{ visualization: latestVisualizationResult, hasDatasetContext, pendingApproval }}
             onAction={handleDetailsAction}
           />
         </div>
@@ -752,10 +803,10 @@ export default function Workbench() {
           toolCalls={toolCalls}
           pipelineSteps={pipelineSteps}
           awaitingInfo={
-            state === "needs-user" && hitlProposal
+            state === "needs-user" && pendingApproval
               ? {
-                title: `Impute ${hitlProposal.column}`,
-                description: `${hitlProposal.column} · ${hitlProposal.missingCount} rows · ${hitlProposal.strategy}`,
+                title: pendingApproval.title,
+                description: pendingApproval.summary,
                 onViewDetails: focusDetails,
               }
               : undefined
@@ -802,7 +853,12 @@ export default function Workbench() {
         : uploadProgress < 70 ? "Parsing schema…"
           : "Validating dataset…"
       : state === "running" ? `${subPhaseLabel[runningSubPhase] ?? runningSubPhase} 진행 중…`
-        : state === "needs-user" ? "Awaiting approval"
+        : state === "needs-user"
+          ? pendingApproval?.stage === "report"
+            ? "Report draft review"
+            : pendingApproval?.stage === "visualization"
+            ? "Visualization plan review"
+            : "Preprocess plan review"
           : state === "error" ? "Failed — see details"
             : undefined;
 
@@ -815,7 +871,13 @@ export default function Workbench() {
       stage={
         state === "uploading" ? "Ingest" :
           state === "running" ? (subPhaseLabel[runningSubPhase] ?? runningSubPhase) :
-            state === "needs-user" ? "Preprocess" :
+            state === "needs-user"
+              ? pendingApproval?.stage === "report"
+                ? "Report"
+                : pendingApproval?.stage === "visualization"
+                ? "Visualization"
+                : "Preprocess"
+            :
               state === "error" ? "Error" :
                 undefined
       }
@@ -832,8 +894,10 @@ export default function Workbench() {
       }
       percent={state === "uploading" ? uploadProgress : undefined}
       onViewDetails={
-        state === "running" || state === "needs-user"
+        state === "running"
           ? () => handleTabChange("agent")
+          : state === "needs-user"
+            ? focusDetails
           : state === "error"
             ? focusDetails
             : undefined

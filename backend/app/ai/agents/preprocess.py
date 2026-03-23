@@ -8,6 +8,7 @@ from typing import Any, Dict, Literal
 
 import pandas as pd
 from langgraph.graph import END, START, StateGraph
+from langgraph.types import interrupt
 from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy.orm import Session
 
@@ -25,6 +26,82 @@ class PreprocessPlan(BaseModel):
 class PreprocessDecision(BaseModel):
     step: Literal["run_preprocess", "skip_preprocess"] = Field(...)
     reason_summary: str = ""
+
+
+def _get_revision_instruction(state: PreprocessGraphState) -> str:
+    revision_request = state.get("revision_request")
+    if isinstance(revision_request, dict):
+        if revision_request.get("stage") == "preprocess":
+            instruction = revision_request.get("instruction")
+            if isinstance(instruction, str):
+                return instruction.strip()
+        return ""
+    return str(revision_request or "").strip()
+
+
+def _collect_affected_columns(operations: list[PreprocessOperation]) -> list[str]:
+    columns: list[str] = []
+    for operation in operations:
+        if operation.op in {"drop_missing", "impute", "drop_columns", "scale"}:
+            columns.extend(operation.columns)
+        elif operation.op == "rename_columns":
+            columns.extend(operation.rename_from)
+            columns.extend(operation.rename_to)
+        elif operation.op == "derived_column":
+            columns.append(operation.name)
+    return list(dict.fromkeys(str(column) for column in columns if str(column).strip()))
+
+
+def _build_preprocess_review_payload(
+    *,
+    state: PreprocessGraphState,
+    plan: PreprocessPlan,
+) -> Dict[str, Any]:
+    profile = state.get("dataset_profile") or {}
+    missing_rates = profile.get("missing_rates")
+    top_missing_columns: list[Dict[str, Any]] = []
+    if isinstance(missing_rates, dict):
+        sorted_items = sorted(
+            (
+                (str(column), float(rate))
+                for column, rate in missing_rates.items()
+                if isinstance(rate, (int, float)) and float(rate) > 0
+            ),
+            key=lambda item: item[1],
+            reverse=True,
+        )
+        top_missing_columns = [
+            {"column": column, "missing_rate": rate}
+            for column, rate in sorted_items[:5]
+        ]
+
+    operations = [operation.model_dump() for operation in plan.operations]
+    planner_comment = plan.planner_comment.strip()
+    decision = state.get("preprocess_decision") or {}
+    reason_summary = decision.get("reason_summary")
+    summary = (
+        planner_comment
+        or (reason_summary.strip() if isinstance(reason_summary, str) and reason_summary.strip() else "")
+        or "전처리 계획을 검토한 뒤 승인 여부를 결정해 주세요."
+    )
+
+    row_count = profile.get("row_count")
+    row_count_value = int(row_count) if isinstance(row_count, int) else None
+
+    return {
+        "stage": "preprocess",
+        "kind": "plan_review",
+        "title": "Preprocess plan review",
+        "summary": summary,
+        "source_id": str(state.get("source_id") or ""),
+        "plan": {
+            "operations": operations,
+            "planner_comment": planner_comment,
+            "top_missing_columns": top_missing_columns,
+            "affected_columns": _collect_affected_columns(plan.operations),
+            "row_count": row_count_value,
+        },
+    }
 
 def build_preprocess_plan(
     *,
@@ -45,6 +122,9 @@ def build_preprocess_plan(
         source_id=str(state.get("source_id")),
         dataset_profile_json=profile_json,
     )
+    revision_request = _get_revision_instruction(state)
+    if revision_request:
+        human_prompt = f"{human_prompt}\nrevision_request={revision_request}"
     plan = call_structured_llm(
         schema=PreprocessPlan,
         system_prompt=system_prompt,
@@ -77,8 +157,9 @@ def run_preprocess_executor(
         }
 
     plan_raw = state.get("preprocess_plan") or {}
+    approved_plan = state.get("approved_plan")
     try:
-        plan = PreprocessPlan.model_validate(plan_raw)
+        plan = PreprocessPlan.model_validate(approved_plan or plan_raw)
         operations = plan.operations
         plan_comment = plan.planner_comment
     except ValidationError as exc:
@@ -111,6 +192,9 @@ def run_preprocess_executor(
             "output_source_id": apply_response.output_source_id,
             "output_filename": apply_response.output_filename,
         },
+        "revision_request": {},
+        "approved_plan": {},
+        "pending_approval": {},
     }
 
 def build_preprocess_workflow(
@@ -247,6 +331,70 @@ def build_preprocess_workflow(
             default_model=default_model,
         )
 
+    def approval_gate_node(state: PreprocessGraphState) -> Dict[str, Any]:
+        """
+        역할: 생성된 전처리 계획을 사용자 승인 대기로 중단하고, 승인/수정/취소 결정을 반영한다.
+        입력: 현재 `preprocess_plan`, `dataset_profile`, `revision_request`를 포함한 상태를 받는다.
+        출력: 승인 시 `approved_plan`, 수정 시 `revision_request`, 취소 시 `preprocess_result/output`을 반환한다.
+        데코레이터: 없음.
+        호출 맥락: planner 다음 단계에서 `interrupt()`를 통해 HITL 승인 게이트로 동작한다.
+        """
+        plan = PreprocessPlan.model_validate(state.get("preprocess_plan") or {})
+        payload = _build_preprocess_review_payload(state=state, plan=plan)
+        decision_raw = interrupt(payload)
+
+        decision = ""
+        instruction = ""
+        if isinstance(decision_raw, dict):
+            decision_value = decision_raw.get("decision")
+            instruction_value = decision_raw.get("instruction")
+            if isinstance(decision_value, str):
+                decision = decision_value
+            if isinstance(instruction_value, str):
+                instruction = instruction_value.strip()
+        elif isinstance(decision_raw, str):
+            decision = decision_raw
+
+        if decision == "approve":
+            return {
+                "approved_plan": plan.model_dump(),
+                "pending_approval": {},
+                "revision_request": {},
+            }
+
+        if decision == "revise":
+            return {
+                "approved_plan": {},
+                "pending_approval": payload,
+                "revision_request": {
+                    "stage": "preprocess",
+                    "instruction": instruction,
+                },
+            }
+
+        return {
+            "approved_plan": {},
+            "pending_approval": {},
+            "revision_request": {},
+            "preprocess_result": {
+                "status": "cancelled",
+                "applied_ops_count": 0,
+            },
+            "output": {
+                "type": "cancelled",
+                "content": "전처리 계획 검토 단계에서 실행을 취소했습니다.",
+            },
+        }
+
+    def route_after_approval(state: PreprocessGraphState) -> str:
+        result = state.get("preprocess_result") or {}
+        if result.get("status") == "cancelled":
+            return "cancel"
+        revision_request = _get_revision_instruction(state)
+        if revision_request:
+            return "revise"
+        return "approve"
+
     def executor_node(state: PreprocessGraphState) -> Dict[str, Any]:
         """
         역할: 계획된 연산을 실제 데이터셋에 적용하고 전처리 결과 메타데이터를 확정한다.
@@ -270,12 +418,17 @@ def build_preprocess_workflow(
         """
         return {"preprocess_result": {"status": "skipped", "applied_ops_count": 0}}
 
+    def cancel_node(_: PreprocessGraphState) -> Dict[str, Any]:
+        return {}
+
     graph = StateGraph(PreprocessGraphState)
     graph.add_node("ingestion_and_profile", ingestion_and_profile_node)
     graph.add_node("preprocess_decision", preprocess_decision_node)
     graph.add_node("planner", planner_node)
+    graph.add_node("approval_gate", approval_gate_node)
     graph.add_node("executor", executor_node)
     graph.add_node("skip", skip_node)
+    graph.add_node("cancel", cancel_node)
     graph.add_edge(START, "ingestion_and_profile")
     graph.add_edge("ingestion_and_profile", "preprocess_decision")
     graph.add_conditional_edges(
@@ -286,7 +439,17 @@ def build_preprocess_workflow(
             "skip_preprocess": "skip",
         },
     )
-    graph.add_edge("planner", "executor")
+    graph.add_edge("planner", "approval_gate")
+    graph.add_conditional_edges(
+        "approval_gate",
+        route_after_approval,
+        {
+            "approve": "executor",
+            "revise": "planner",
+            "cancel": "cancel",
+        },
+    )
     graph.add_edge("executor", END)
     graph.add_edge("skip", END)
+    graph.add_edge("cancel", END)
     return graph.compile()

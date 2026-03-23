@@ -16,10 +16,37 @@ import { ApprovalCard } from "./ApprovalCard";
 import { ErrorCard } from "./ErrorCard";
 import { SkeletonLine } from "./Skeletons";
 import type { VisualizationResultPayload } from "../../hooks/useAnalysisPipeline";
+import type { PendingApprovalPayload } from "../../../lib/api";
+
+function formatPendingValue(value: unknown): string {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item)).join(", ");
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "number" || typeof value === "boolean" || value === null) {
+    return String(value);
+  }
+  if (value && typeof value === "object") {
+    return JSON.stringify(value);
+  }
+  return "";
+}
+
+function formatPendingOperation(operation: Record<string, unknown>): string {
+  const op = typeof operation.op === "string" && operation.op.trim() ? operation.op : "operation";
+  const details = Object.entries(operation)
+    .filter(([key, value]) => key !== "op" && value !== undefined && value !== "")
+    .map(([key, value]) => `${key}: ${formatPendingValue(value)}`)
+    .filter((value) => value.trim());
+  return details.length > 0 ? `${op} (${details.join(" · ")})` : op;
+}
 
 interface DetailsPanelSelectedItem {
   visualization?: VisualizationResultPayload | null;
   hasDatasetContext?: boolean;
+  pendingApproval?: PendingApprovalPayload | null;
 }
 
 interface DetailsPanelProps {
@@ -35,6 +62,7 @@ export function DetailsPanel({ state, selectedItem, onAction, className }: Detai
     typeof visualization?.artifact?.image_base64 === "string" &&
     visualization.artifact.image_base64.length > 0;
   const hasDatasetContext = selectedItem?.hasDatasetContext ?? false;
+  const pendingApproval = selectedItem?.pendingApproval ?? null;
   const chartType = visualization?.chart?.chart_type ?? "chart";
   const chartTitle = hasVisualization
     ? `${visualization?.chart?.x_key || "x"} vs ${visualization?.chart?.y_key || "y"}`
@@ -214,6 +242,60 @@ export function DetailsPanel({ state, selectedItem, onAction, className }: Detai
 
   // 3. HITL STATE: Full Approval Card
   if (state === "needs-user") {
+    if (pendingApproval?.stage === "report") {
+      return (
+        <div className={cn("h-full flex flex-col p-4", className)}>
+          <div className="mb-4 flex items-center gap-2 text-[var(--genui-needs-user)]">
+            <ShieldCheck className="w-5 h-5" />
+            <span className="text-sm font-bold uppercase tracking-wide">Decision Required</span>
+          </div>
+
+          <div className="flex-1 rounded-2xl border border-[var(--genui-needs-user)]/30 bg-[var(--genui-surface)] p-4 shadow-sm overflow-y-auto">
+            <div className="space-y-2 pb-3 border-b border-[var(--genui-border)]">
+              <p className="text-xs font-bold uppercase tracking-widest text-[var(--genui-needs-user)]">
+                Report Draft
+              </p>
+              <h3 className="text-sm font-semibold text-[var(--genui-text)]">
+                {pendingApproval.title}
+              </h3>
+              <p className="text-xs leading-relaxed text-[var(--genui-muted)]">
+                {pendingApproval.summary}
+              </p>
+            </div>
+            <div className="mt-4 whitespace-pre-wrap text-sm leading-6 text-[var(--genui-text)]">
+              {pendingApproval.draft.trim() || "리포트 초안을 불러오지 못했습니다."}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    const changeList = pendingApproval
+      ? pendingApproval.stage === "visualization"
+        ? [
+            `chart type: ${pendingApproval.plan.chart_type || "-"}`,
+            `x axis: ${pendingApproval.plan.x_key || "-"}`,
+            `y axis: ${pendingApproval.plan.y_key || "-"}`,
+            ...(pendingApproval.plan.mode
+              ? [`mode: ${pendingApproval.plan.mode}`]
+              : []),
+            ...(pendingApproval.plan.reason
+              ? [`reason: ${pendingApproval.plan.reason}`]
+              : []),
+            ...((pendingApproval.plan.preview_rows ?? []).length > 0
+              ? [`preview rows: ${(pendingApproval.plan.preview_rows ?? []).length}`]
+              : []),
+          ]
+        : [
+            ...pendingApproval.plan.operations.map((operation) => formatPendingOperation(operation)),
+            ...(pendingApproval.plan.top_missing_columns ?? []).map(
+              (item) => `missing: ${item.column} (${(item.missing_rate * 100).toFixed(1)}%)`,
+            ),
+            ...((pendingApproval.plan.affected_columns ?? []).length > 0
+              ? [`affected columns: ${(pendingApproval.plan.affected_columns ?? []).join(", ")}`]
+              : []),
+          ]
+      : [];
     return (
       <div className={cn("h-full flex flex-col p-4", className)}>
          <div className="mb-4 flex items-center gap-2 text-[var(--genui-needs-user)]">
@@ -221,19 +303,24 @@ export function DetailsPanel({ state, selectedItem, onAction, className }: Detai
             <span className="text-sm font-bold uppercase tracking-wide">Decision Required</span>
          </div>
          
-         {/* Reusing ApprovalCard but ensuring it fits the panel */}
          <ApprovalCard 
-            title="Impute Missing Values"
-            description="The column 'Region' has 142 missing values (2.1%). I recommend filling them with the mode value 'North'."
-            changes={[
-              "Fill NaN in 'Region' with 'North'",
-              "Log imputation event in metadata",
-              "Recalculate distribution stats"
-            ]}
+            title={pendingApproval?.title ?? "Plan review"}
+            description={pendingApproval?.summary ?? "계획을 검토한 뒤 승인 여부를 결정해 주세요."}
+            changes={changeList.length > 0 ? changeList : ["Approve to continue with the proposed plan."]}
             status="pending"
             hideActions={true}
             className="w-full flex-1 flex flex-col shadow-none border-none bg-transparent"
          />
+         {pendingApproval?.stage === "visualization" && (pendingApproval.plan.preview_rows ?? []).length > 0 ? (
+           <div className="mt-4 rounded-xl border border-[var(--genui-border)] bg-[var(--genui-panel)] p-3">
+             <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--genui-muted)]">
+               Preview Rows
+             </p>
+             <pre className="mt-2 overflow-x-auto text-[11px] leading-relaxed text-[var(--genui-text)]">
+               {JSON.stringify(pendingApproval.plan.preview_rows ?? [], null, 2)}
+             </pre>
+           </div>
+         ) : null}
       </div>
     );
   }
