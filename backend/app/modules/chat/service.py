@@ -1,7 +1,7 @@
 import uuid
 from typing import Any, AsyncIterator, Dict, Optional
 
-from ...core.agent_protocols import ApprovalAwareTraceStreamingAgent
+from ...orchestration.client import AgentClient
 from ..datasets.repository import DataSourceRepository
 from .models import ChatSession
 from .repository import ChatRepository
@@ -14,7 +14,7 @@ class ChatService:
     def __init__(
         self,
         *,
-        agent: ApprovalAwareTraceStreamingAgent,
+        agent: AgentClient,
         repository: ChatRepository,
         data_source_repository: DataSourceRepository,
     ) -> None:
