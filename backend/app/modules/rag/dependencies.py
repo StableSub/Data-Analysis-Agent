@@ -21,8 +21,27 @@ def get_embedder():
     return E5Embedder()
 
 
-def get_rag_repository(db: Session = Depends(get_db)) -> RagRepository:
+def build_rag_repository(db: Session) -> RagRepository:
     return RagRepository(db)
+
+
+def get_rag_repository(db: Session = Depends(get_db)) -> RagRepository:
+    return build_rag_repository(db)
+
+
+def build_rag_service(
+    *,
+    repository: RagRepository,
+    dataset_repository: DataSourceRepository,
+    answer_agent=None,
+) -> RagService:
+    return RagService(
+        repository=repository,
+        storage_dir=_vector_storage_dir(),
+        embedder=get_embedder(),
+        dataset_repository=dataset_repository,
+        answer_agent=answer_agent,
+    )
 
 
 def get_rag_service(
@@ -30,9 +49,7 @@ def get_rag_service(
     repository: RagRepository = Depends(get_rag_repository),
 ) -> RagService:
     dataset_repository = DataSourceRepository(db)
-    return RagService(
+    return build_rag_service(
         repository=repository,
-        storage_dir=_vector_storage_dir(),
-        embedder=get_embedder(),
         dataset_repository=dataset_repository,
     )

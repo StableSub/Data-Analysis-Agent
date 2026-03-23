@@ -15,16 +15,43 @@ def _datasets_storage_dir() -> Path:
     return Path(__file__).resolve().parents[4] / "storage" / "datasets"
 
 
-def get_data_source_repository(db: Session = Depends(get_db)) -> DataSourceRepository:
+def build_data_source_repository(db: Session) -> DataSourceRepository:
     return DataSourceRepository(db)
 
 
-def get_dataset_storage() -> DatasetStorage:
+def get_data_source_repository(db: Session = Depends(get_db)) -> DataSourceRepository:
+    return build_data_source_repository(db)
+
+
+def build_dataset_storage() -> DatasetStorage:
     return DatasetStorage(_datasets_storage_dir())
 
 
-def get_dataset_reader() -> DatasetReader:
+def get_dataset_storage() -> DatasetStorage:
+    return build_dataset_storage()
+
+
+def build_dataset_reader() -> DatasetReader:
     return DatasetReader()
+
+
+def get_dataset_reader() -> DatasetReader:
+    return build_dataset_reader()
+
+
+def build_data_source_service(
+    *,
+    repository: DataSourceRepository,
+    storage: DatasetStorage,
+    reader: DatasetReader,
+    rag_service,
+) -> DataSourceService:
+    return DataSourceService(
+        repository=repository,
+        storage=storage,
+        reader=reader,
+        rag_service=rag_service,
+    )
 
 
 def get_data_source_service(
@@ -33,7 +60,7 @@ def get_data_source_service(
     reader: DatasetReader = Depends(get_dataset_reader),
     rag_service=Depends(get_rag_service),
 ) -> DataSourceService:
-    return DataSourceService(
+    return build_data_source_service(
         repository=repository,
         storage=storage,
         reader=reader,

@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 
 from ...core.agent_protocols import ApprovalAwareTraceStreamingAgent
 from ...core.db import get_db
-from ...orchestration.service_factory import get_agent
+from ...orchestration.dependencies import get_agent
 from ..datasets.dependencies import get_data_source_repository
 from ..datasets.repository import DataSourceRepository
 from .repository import ChatRepository

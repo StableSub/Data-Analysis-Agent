@@ -7,8 +7,21 @@ from .processor import PreprocessProcessor
 from .service import PreprocessService
 
 
-def get_preprocess_processor() -> PreprocessProcessor:
+def build_preprocess_processor() -> PreprocessProcessor:
     return PreprocessProcessor()
+
+
+def get_preprocess_processor() -> PreprocessProcessor:
+    return build_preprocess_processor()
+
+
+def build_preprocess_service(
+    *,
+    repository: DataSourceRepository,
+    reader: DatasetReader,
+    processor: PreprocessProcessor,
+) -> PreprocessService:
+    return PreprocessService(repository=repository, reader=reader, processor=processor)
 
 
 def get_preprocess_service(
@@ -16,4 +29,8 @@ def get_preprocess_service(
     reader: DatasetReader = Depends(get_dataset_reader),
     processor: PreprocessProcessor = Depends(get_preprocess_processor),
 ) -> PreprocessService:
-    return PreprocessService(repository=repository, reader=reader, processor=processor)
+    return build_preprocess_service(
+        repository=repository,
+        reader=reader,
+        processor=processor,
+    )

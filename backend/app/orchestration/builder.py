@@ -1,14 +1,11 @@
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any, Dict
 
 from langgraph.graph import END, START, StateGraph
 
-from ..core.db import SessionLocal
 from .ai import answer_data_question, answer_general_question
 from .intake_router import build_intake_router_workflow
-from .service_factory import build_workflow_services
 from .state import MainWorkflowState
 from .workflows.preprocess import build_preprocess_workflow
 from .workflows.rag import build_rag_workflow
@@ -80,7 +77,6 @@ def build_main_workflow(
             model_id=state.get("model_id"),
             default_model=default_model,
         )
-
         return {
             "output": {
                 "type": "general_question",
@@ -202,87 +198,3 @@ def build_main_workflow(
     graph.add_edge("general_question_terminal", END)
 
     return graph.compile(checkpointer=checkpointer)
-
-
-if __name__ == "__main__":
-    def _save_main_workflow_png(
-        *,
-        output_path: str = "builder_workflow.png",
-        model_name: str = "gpt-5-nano",
-    ) -> Path:
-        db = SessionLocal()
-        try:
-            services = build_workflow_services(db=db, agent=None)
-            main_workflow = build_main_workflow(
-                preprocess_service=services.preprocess_service,
-                rag_service=services.rag_service,
-                visualization_service=services.visualization_service,
-                report_service=services.report_service,
-                default_model=model_name,
-            )
-            png_bytes = main_workflow.get_graph().draw_mermaid_png()
-        finally:
-            db.close()
-
-        path = Path(output_path)
-        path.write_bytes(png_bytes)
-        return path.resolve()
-
-    def _save_all_workflow_pngs(
-        *,
-        output_dir: str = "graph_outputs",
-        model_name: str = "gpt-5-nano",
-    ) -> Dict[str, Path]:
-        out_dir = Path(output_dir)
-        out_dir.mkdir(parents=True, exist_ok=True)
-
-        intake_graph = build_intake_router_workflow(default_model=model_name)
-        db = SessionLocal()
-        try:
-            services = build_workflow_services(db=db, agent=None)
-            visualization_graph = build_visualization_workflow(
-                visualization_service=services.visualization_service,
-                default_model=model_name,
-            )
-            report_graph = build_report_workflow(
-                report_service=services.report_service,
-                default_model=model_name,
-            )
-            preprocess_graph = build_preprocess_workflow(
-                preprocess_service=services.preprocess_service,
-                default_model=model_name,
-            )
-            rag_graph = build_rag_workflow(
-                rag_service=services.rag_service,
-                default_model=model_name,
-            )
-            main_graph = build_main_workflow(
-                preprocess_service=services.preprocess_service,
-                rag_service=services.rag_service,
-                visualization_service=services.visualization_service,
-                report_service=services.report_service,
-                default_model=model_name,
-            )
-        finally:
-            db.close()
-
-        targets: Dict[str, tuple[Path, Any]] = {
-            "main": (out_dir / "main_workflow.png", main_graph),
-            "intake": (out_dir / "intake_workflow.png", intake_graph),
-            "preprocess": (out_dir / "preprocess_workflow.png", preprocess_graph),
-            "rag": (out_dir / "rag_workflow.png", rag_graph),
-            "visualization": (out_dir / "visualization_workflow.png", visualization_graph),
-            "report": (out_dir / "report_workflow.png", report_graph),
-        }
-
-        saved_paths: Dict[str, Path] = {}
-        for key, (path, graph_obj) in targets.items():
-            png_bytes = graph_obj.get_graph().draw_mermaid_png()
-            path.write_bytes(png_bytes)
-            saved_paths[key] = path.resolve()
-
-        return saved_paths
-
-    saved = _save_all_workflow_pngs()
-    for name, path in saved.items():
-        print(f"{name}: {path}")

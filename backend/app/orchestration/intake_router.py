@@ -1,20 +1,20 @@
-"""
-V1 Intake Router (Intent only).
-"""
-
 from __future__ import annotations
 
 from typing import Any, Dict
 
 from langgraph.graph import END, START, StateGraph
+
 from .ai import analyze_intent
 from .state import IntakeRouterState
 
 
-def build_intake_router_workflow(default_model: str = "gpt-5-nano"):
+def build_intake_router_workflow(
+    *,
+    default_model: str = "gpt-5-nano",
+):
     def route_dataset_selected(state: IntakeRouterState) -> str:
-        source_id = state.get("source_id")
-        return "data_selected" if source_id else "no_dataset"
+        has_source_id = bool(str(state.get("source_id") or "").strip())
+        return "data_selected" if has_source_id else "no_dataset"
 
     def general_question_node(_: IntakeRouterState) -> Dict[str, Any]:
         return {"handoff": {"next_step": "general_question"}}
@@ -56,6 +56,3 @@ def build_intake_router_workflow(default_model: str = "gpt-5-nano"):
     graph.add_edge("data_pipeline_handoff", END)
 
     return graph.compile()
-
-
-build_preprocess_intake_workflow = build_intake_router_workflow

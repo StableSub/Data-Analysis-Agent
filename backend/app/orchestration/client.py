@@ -6,14 +6,13 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import contextmanager
-from pathlib import Path
 from typing import Any, AsyncIterator, Dict
 
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 
 from ..core.db import SessionLocal
-from .service_factory import build_workflow_services
+from .dependencies import build_orchestration_services
 
 
 class AgentClient:
@@ -131,8 +130,8 @@ class AgentClient:
 
     def _build_workflow(self, *, db):
         from .builder import build_main_workflow
-        services = build_workflow_services(db=db, agent=self)
 
+        services = build_orchestration_services(db=db, agent=self)
         return build_main_workflow(
             preprocess_service=services.preprocess_service,
             rag_service=services.rag_service,
@@ -175,13 +174,6 @@ class AgentClient:
         dataset: Any | None,
         model_id: str | None,
     ) -> tuple[Dict[str, Any], str | None]:
-        """
-        역할: 사용자 요청을 LangGraph 입력 상태 포맷으로 정규화한다.
-        입력: 세션, 질문, 컨텍스트, 데이터셋 객체, 모델 ID를 받아 상태 필드를 채운다.
-        출력: `(state, early_answer)` 튜플을 반환하며, 질문이 비면 즉시 안내 문구를 반환한다.
-        데코레이터: 없음.
-        호출 맥락: `astream_with_trace` 시작 시 가장 먼저 호출되어 실행 전 유효 상태를 만든다.
-        """
         question_text = (question or "").strip()
         context_text = (context or "").strip()
         if not question_text:
