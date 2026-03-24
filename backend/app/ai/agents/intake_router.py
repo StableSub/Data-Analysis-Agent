@@ -23,6 +23,7 @@ class IntentDecision(BaseModel):
     ask_preprocess: bool = Field(False)
     ask_visualization: bool = Field(False)
     ask_report: bool = Field(False)
+    ask_guideline: bool = Field(False)
 
 
 def build_intake_router_workflow(default_model: str = "gpt-5-nano"):
@@ -57,7 +58,7 @@ def build_intake_router_workflow(default_model: str = "gpt-5-nano"):
 
     def analyze_intent_node(state: IntakeRouterState) -> Dict[str, Any]:
         """
-        역할: 데이터셋이 이미 선택된 요청에서 전처리/시각화/리포트 의도를 구조화 출력으로 분류한다.
+        역할: 데이터셋이 이미 선택된 요청에서 전처리/시각화/리포트/지침서 의도를 구조화 출력으로 분류한다.
         입력: `state.user_input`, `state.model_id`를 포함한 intake 상태를 받는다.
         출력: `IntentDecision` 결과를 `intent` 키로 담은 상태 업데이트를 반환한다.
         데코레이터: 없음.
@@ -79,7 +80,7 @@ def build_intake_router_workflow(default_model: str = "gpt-5-nano"):
     def data_pipeline_node(state: IntakeRouterState) -> Dict[str, Any]:
         """
         역할: intent 결과를 메인 그래프가 이해하는 `handoff` 플래그 묶음으로 변환한다.
-        입력: `state.intent` 내 ask_preprocess/ask_visualization/ask_report 값을 읽는다.
+        입력: `state.intent` 내 ask_preprocess/ask_visualization/ask_report/ask_guideline 값을 읽는다.
         출력: `handoff.next_step=data_pipeline`과 세부 요청 플래그를 담은 딕셔너리를 반환한다.
         데코레이터: 없음.
         호출 맥락: intake 그래프의 마지막 노드로 메인 워크플로우의 데이터 경로 진입 신호를 만든다.
@@ -91,6 +92,7 @@ def build_intake_router_workflow(default_model: str = "gpt-5-nano"):
                 "ask_preprocess": bool(intent.get("ask_preprocess", False)),
                 "ask_visualization": bool(intent.get("ask_visualization", False)),
                 "ask_report": bool(intent.get("ask_report", False)),
+                "ask_guideline": bool(intent.get("ask_guideline", False)),
             }
         }
 

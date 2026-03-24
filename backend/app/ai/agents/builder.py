@@ -15,6 +15,7 @@ if __name__ == "__main__" and __package__ is None:
     sys.path.append(str(Path(__file__).resolve().parents[4]))
 
 from backend.app.ai.agents.intake_router import build_intake_router_workflow
+from backend.app.ai.agents.guideline import build_guideline_workflow
 from backend.app.ai.agents.preprocess import build_preprocess_workflow
 from backend.app.ai.agents.rag import build_rag_workflow
 from backend.app.ai.agents.report import build_report_workflow
@@ -48,6 +49,10 @@ def build_main_workflow(
         db=db,
         default_model=default_model,
     )
+    guideline_graph = build_guideline_workflow(
+        db=db,
+        default_model=default_model,
+    )
     visualization_graph = build_visualization_workflow(
         db=db,
         default_model=default_model,
@@ -70,11 +75,26 @@ def build_main_workflow(
 
     def route_after_rag(state: MainWorkflowState) -> str:
         """
-        역할: RAG 이후 요청 플래그를 확인해 시각화 경로 진입 여부를 판단한다.
+        역할: RAG 이후 요청 플래그를 확인해 guideline 또는 다음 경로를 판단한다.
+        입력: `state.handoff.ask_guideline`, `state.handoff.ask_visualization` 값을 포함한 메인 상태를 받는다.
+        출력: `guideline`, `visualization`, `merge_context` 중 하나의 분기 키를 반환한다.
+        데코레이터: 없음.
+        호출 맥락: 메인 그래프에서 `rag_flow` 다음 conditional edge 라우팅에 사용된다.
+        """
+        handoff = state.get("handoff") or {}
+        if bool(handoff.get("ask_guideline", False)):
+            return "guideline"
+        if bool(handoff.get("ask_visualization", False)):
+            return "visualization"
+        return "merge_context"
+
+    def route_after_data_context(state: MainWorkflowState) -> str:
+        """
+        역할: rag 또는 guideline 이후 요청 플래그를 확인해 시각화 경로 진입 여부를 판단한다.
         입력: `state.handoff.ask_visualization` 값을 포함한 메인 상태를 받는다.
         출력: `visualization` 또는 `merge_context` 중 하나의 분기 키를 반환한다.
         데코레이터: 없음.
-        호출 맥락: 메인 그래프에서 `rag_flow` 다음 conditional edge 라우팅에 사용된다.
+        호출 맥락: 메인 그래프에서 `rag_flow` 또는 `guideline_flow` 이후 conditional edge 라우팅에 사용된다.
         """
         handoff = state.get("handoff") or {}
         if bool(handoff.get("ask_visualization", False)):
@@ -139,8 +159,8 @@ def build_main_workflow(
 
     def merge_context_node(state: MainWorkflowState) -> Dict[str, Any]:
         """
-        역할: 전처리, RAG, 인사이트, 시각화 결과를 하나의 `merged_context` 구조로 정리한다.
-        입력: `preprocess_result`, `rag_result`, `insight`, `visualization_result`, `handoff`를 포함한 상태를 받는다.
+        역할: 전처리, RAG, guideline, 인사이트, 시각화 결과를 하나의 `merged_context` 구조로 정리한다.
+        입력: `preprocess_result`, `rag_result`, `guideline_result`, `insight`, `visualization_result`, `handoff`를 포함한 상태를 받는다.
         출력: `applied_steps`와 세부 결과를 포함한 `merged_context` 딕셔너리를 반환한다.
         데코레이터: 없음.
         호출 맥락: 데이터 파이프라인 공통 합류 지점으로, report/data_qa 분기 직전에 실행된다.
@@ -157,6 +177,7 @@ def build_main_workflow(
                 "ask_preprocess": bool(handoff.get("ask_preprocess", False)),
                 "ask_visualization": bool(handoff.get("ask_visualization", False)),
                 "ask_report": bool(handoff.get("ask_report", False)),
+                "ask_guideline": bool(handoff.get("ask_guideline", False)),
             }
 
         preprocess_result = state.get("preprocess_result")
@@ -171,6 +192,25 @@ def build_main_workflow(
             if int(rag_result.get("retrieved_count", 0) or 0) > 0:
                 merged_context["applied_steps"].append("rag")
 
+        guideline_index_status = state.get("guideline_index_status")
+        if isinstance(guideline_index_status, dict):
+            merged_context["guideline_index_status"] = guideline_index_status
+
+        guideline_result = state.get("guideline_result")
+        if isinstance(guideline_result, dict):
+            merged_context["guideline_result"] = guideline_result
+            merged_context["guideline_context"] = {
+                "active_source_id": state.get("active_guideline_source_id", ""),
+                "status": guideline_result.get("status", ""),
+                "retrieved_count": int(guideline_result.get("retrieved_count", 0) or 0),
+                "has_evidence": int(guideline_result.get("retrieved_count", 0) or 0) > 0,
+                "filename": guideline_result.get("filename", ""),
+                "guideline_id": guideline_result.get("guideline_id", ""),
+                "evidence_summary": guideline_result.get("evidence_summary", ""),
+            }
+            if int(guideline_result.get("retrieved_count", 0) or 0) > 0:
+                merged_context["applied_steps"].append("guideline")
+
         insight = state.get("insight")
         if isinstance(insight, dict):
             merged_context["insight"] = insight
@@ -183,6 +223,8 @@ def build_main_workflow(
             merged_context["visualization_result"] = visualization_result
             if visualization_result.get("status") == "generated":
                 merged_context["applied_steps"].append("visualization")
+
+        merged_context["applied_steps"] = list(dict.fromkeys(merged_context["applied_steps"]))
 
         return {"merged_context": merged_context}
 
@@ -226,6 +268,7 @@ def build_main_workflow(
     graph.add_node("general_question_terminal", general_question_terminal)
     graph.add_node("preprocess_flow", preprocess_graph)
     graph.add_node("rag_flow", rag_graph)
+    graph.add_node("guideline_flow", guideline_graph)
     graph.add_node("visualization_flow", visualization_graph)
     graph.add_node("merge_context", merge_context_node)
     graph.add_node("data_qa_terminal", data_qa_terminal)
@@ -251,6 +294,15 @@ def build_main_workflow(
     graph.add_conditional_edges(
         "rag_flow",
         route_after_rag,
+        {
+            "guideline": "guideline_flow",
+            "visualization": "visualization_flow",
+            "merge_context": "merge_context",
+        },
+    )
+    graph.add_conditional_edges(
+        "guideline_flow",
+        route_after_data_context,
         {
             "visualization": "visualization_flow",
             "merge_context": "merge_context",

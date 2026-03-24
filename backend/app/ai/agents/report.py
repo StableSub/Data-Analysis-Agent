@@ -181,6 +181,20 @@ def build_report_workflow(*, db: Session, default_model: str = "gpt-5-nano"):
         if isinstance(insight, dict) and isinstance(insight.get("summary"), str):
             insight_summary = str(insight.get("summary")).strip()
 
+        guideline_result = state.get("guideline_result")
+        guideline_context = ""
+        if isinstance(guideline_result, dict):
+            guideline_filename = str(guideline_result.get("filename", "")).strip()
+            guideline_summary = str(guideline_result.get("evidence_summary", "")).strip()
+            guideline_count = int(guideline_result.get("retrieved_count", 0) or 0)
+            if guideline_count > 0:
+                guideline_context = (
+                    f"지침서 파일명: {guideline_filename or '알 수 없음'}\n"
+                    f"지침 근거 요약: {guideline_summary or '요약 없음'}"
+                )
+            else:
+                guideline_context = "관련 지침 근거를 찾지 못함"
+
         visualization_result = state.get("visualization_result")
         visualization_summary = ""
         if isinstance(visualization_result, dict):
