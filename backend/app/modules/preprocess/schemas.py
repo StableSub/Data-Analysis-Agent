@@ -44,6 +44,52 @@ class DerivedColumnOperation(StrictModel):
     name: str
     expression: str
 
+class EncodeCategoricalOperation(StrictModel):
+    op: Literal["encode_categorical"]
+    columns: list[str]
+    method: Literal["one_hot", "label"]
+
+
+class ParseDatetimeOperation(StrictModel):
+    op: Literal["parse_datetime"]
+    columns: list[str] = Field(default_factory=list)
+    format: str | None = None
+
+
+class OutlierOperation(StrictModel):
+    op: Literal["outlier"]
+    columns: list[str]
+    method: Literal["zscore", "iqr"]
+    strategy: Literal["drop", "clip"]
+    z_threshold: float = 3.0
+    iqr_multiplier: float = 1.5
+
+
+class NumericDistribution(StrictModel):
+    min: float | None = None
+    max: float | None = None
+    mean: float | None = None
+    std: float | None = None
+    p25: float | None = None
+    p50: float | None = None
+    p75: float | None = None
+
+
+class DataSummary(StrictModel):
+    row_count: int
+    column_count: int
+    missing_total: int
+    missing_by_column: dict[str, int]
+    numeric_distribution: dict[str, NumericDistribution]
+    dtypes: dict[str, str]
+
+
+class SummaryDiff(StrictModel):
+    row_count_delta: int
+    column_count_delta: int
+    missing_total_delta: int
+    missing_by_column_delta: dict[str, int]
+    dtype_changes: dict[str, dict[str, str]]
 
 PreprocessOperation = Annotated[
     Union[
@@ -53,6 +99,9 @@ PreprocessOperation = Annotated[
         RenameColumnsOperation,
         ScaleOperation,
         DerivedColumnOperation,
+        EncodeCategoricalOperation,
+        ParseDatetimeOperation,
+        OutlierOperation,
     ],
     Field(discriminator="op"),
 ]
@@ -67,3 +116,6 @@ class PreprocessApplyResponse(StrictModel):
     input_source_id: str
     output_source_id: str
     output_filename: str
+    summary_before: DataSummary | None = None
+    summary_after: DataSummary | None = None
+    summary_diff: SummaryDiff | None = None

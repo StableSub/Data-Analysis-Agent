@@ -6,12 +6,17 @@ from sqlalchemy.orm import Session
 
 from ...core.db import get_db
 from ..datasets.repository import DataSourceRepository
+from .guideline_repository import GuidelineRagRepository
 from .repository import RagRepository
-from .service import RagService
+from .service import GuidelineRagService, RagService
 
 
 def _vector_storage_dir() -> Path:
     return Path(__file__).resolve().parents[4] / "storage" / "vectors"
+
+
+def _guideline_vector_storage_dir() -> Path:
+    return Path(__file__).resolve().parents[4] / "storage" / "guideline_vectors"
 
 
 @lru_cache(maxsize=1)
@@ -53,3 +58,28 @@ def get_rag_service(
         repository=repository,
         dataset_repository=dataset_repository,
     )
+
+
+def build_guideline_rag_repository(db: Session) -> GuidelineRagRepository:
+    return GuidelineRagRepository(db)
+
+
+def get_guideline_rag_repository(db: Session = Depends(get_db)) -> GuidelineRagRepository:
+    return build_guideline_rag_repository(db)
+
+
+def build_guideline_rag_service(
+    *,
+    repository: GuidelineRagRepository,
+) -> GuidelineRagService:
+    return GuidelineRagService(
+        repository=repository,
+        storage_dir=_guideline_vector_storage_dir(),
+        embedder=get_embedder(),
+    )
+
+
+def get_guideline_rag_service(
+    repository: GuidelineRagRepository = Depends(get_guideline_rag_repository),
+) -> GuidelineRagService:
+    return build_guideline_rag_service(repository=repository)

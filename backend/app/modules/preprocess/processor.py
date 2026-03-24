@@ -97,5 +97,78 @@ class PreprocessProcessor:
                 out[operation.name] = out.eval(operation.expression, engine="python")
                 continue
 
+            if operation.op == "encode_categorical":
+                if not operation.columns:
+                    raise ValueError("encode_categorical requires 'columns'")
+                if operation.method not in {"one_hot", "label"}:
+                    raise ValueError("encode_categorical.method must be one_hot or label")
+                for column in operation.columns:
+                    if column not in out.columns:
+                        raise ValueError(f"Column not found: {column}")
+                if operation.method == "one_hot":
+                    out = pd.get_dummies(out, columns=operation.columns, prefix=operation.columns, dtype=int)
+                else:
+                    for column in operation.columns:
+                        categories = sorted(out[column].dropna().unique().tolist(), key=str)
+                        mapping = {category: index for index, category in enumerate(categories)}
+                        out[column] = out[column].map(mapping)
+                continue
+
+            if operation.op == "parse_datetime":
+                if not operation.columns:
+                    raise ValueError("parse_datetime requires 'columns'")
+                for column in operation.columns:
+                    if column not in out.columns:
+                        raise ValueError(f"Column not found: {column}")
+                    out[column] = pd.to_datetime(
+                        out[column],
+                        format=operation.format,
+                        errors="coerce",
+                    )
+                continue
+
+            if operation.op == "outlier":
+                if not operation.columns:
+                    raise ValueError("outlier requires 'columns'")
+                if operation.method not in {"zscore", "iqr"}:
+                    raise ValueError("outlier.method must be zscore or iqr")
+                if operation.strategy not in {"drop", "clip"}:
+                    raise ValueError("outlier.strategy must be drop or clip")
+
+                drop_mask = pd.Series([False] * len(out), index=out.index)
+                for column in operation.columns:
+                    if column not in out.columns:
+                        raise ValueError(f"Column not found: {column}")
+
+                    series = pd.to_numeric(out[column], errors="coerce")
+                    if operation.method == "zscore":
+                        mean = series.mean()
+                        std = series.std(ddof=0)
+                        if std == 0 or pd.isna(std):
+                            continue
+                        z_scores = (series - mean) / std
+                        is_outlier = z_scores.abs() > operation.z_threshold
+                        if operation.strategy == "drop":
+                            drop_mask |= is_outlier
+                        else:
+                            lower = mean - operation.z_threshold * std
+                            upper = mean + operation.z_threshold * std
+                            out[column] = series.clip(lower=lower, upper=upper)
+                    else:
+                        q1 = series.quantile(0.25)
+                        q3 = series.quantile(0.75)
+                        iqr = q3 - q1
+                        lower = q1 - operation.iqr_multiplier * iqr
+                        upper = q3 + operation.iqr_multiplier * iqr
+                        is_outlier = (series < lower) | (series > upper)
+                        if operation.strategy == "drop":
+                            drop_mask |= is_outlier
+                        else:
+                            out[column] = series.clip(lower=lower, upper=upper)
+
+                if operation.strategy == "drop":
+                    out = out[~drop_mask].reset_index(drop=True)
+                continue
+
             raise ValueError(f"Unknown operation: {operation.op}")
         return out

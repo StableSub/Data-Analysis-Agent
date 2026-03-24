@@ -1,15 +1,16 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any
 
+from fastapi import Depends
+from langgraph.checkpoint.memory import InMemorySaver
 from sqlalchemy.orm import Session
 
-from ..modules.datasets.dependencies import (
-    build_data_source_repository,
-    build_dataset_reader,
-)
+from ..core.db import get_db
+from ..modules.datasets.service import build_data_source_repository, build_dataset_reader
 from ..modules.preprocess.dependencies import (
     build_preprocess_processor,
     build_preprocess_service,
@@ -35,25 +36,8 @@ class WorkflowServices:
 
 
 @lru_cache(maxsize=1)
-def get_agent() -> "AgentClient":
-    from .client import AgentClient
-
-    return AgentClient()
-
-
-def _bundle_workflow_services(
-    *,
-    preprocess_service: PreprocessService,
-    rag_service: RagService,
-    visualization_service: VisualizationService,
-    report_service: ReportService,
-) -> WorkflowServices:
-    return WorkflowServices(
-        preprocess_service=preprocess_service,
-        rag_service=rag_service,
-        visualization_service=visualization_service,
-        report_service=report_service,
-    )
+def get_workflow_checkpointer() -> InMemorySaver:
+    return InMemorySaver()
 
 
 def build_orchestration_services(*, db: Session, agent: Any) -> WorkflowServices:
@@ -78,9 +62,43 @@ def build_orchestration_services(*, db: Session, agent: Any) -> WorkflowServices
         dataset_repository=dataset_repository,
         reader=dataset_reader,
     )
-    return _bundle_workflow_services(
+    return WorkflowServices(
         preprocess_service=preprocess_service,
         rag_service=rag_service,
         visualization_service=visualization_service,
         report_service=report_service,
     )
+
+
+def build_agent_client(*, db: Session) -> "AgentClient":
+    from .builder import build_main_workflow
+    from .client import AgentClient
+
+    checkpointer = get_workflow_checkpointer()
+    agent_box: dict[str, AgentClient] = {}
+
+    @contextmanager
+    def workflow_runtime_factory():
+        agent = agent_box["agent"]
+        services = build_orchestration_services(db=db, agent=agent)
+        workflow = build_main_workflow(
+            db=db,
+            preprocess_service=services.preprocess_service,
+            rag_service=services.rag_service,
+            visualization_service=services.visualization_service,
+            report_service=services.report_service,
+            default_model=agent.default_model,
+            checkpointer=checkpointer,
+        )
+        yield workflow
+
+    agent = AgentClient(
+        workflow_runtime_factory=workflow_runtime_factory,
+        checkpointer=checkpointer,
+    )
+    agent_box["agent"] = agent
+    return agent
+
+
+def get_agent_client(db: Session = Depends(get_db)) -> "AgentClient":
+    return build_agent_client(db=db)

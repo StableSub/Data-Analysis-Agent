@@ -7,6 +7,7 @@ from langgraph.graph import END, START, StateGraph
 from .ai import answer_data_question, answer_general_question
 from .intake_router import build_intake_router_workflow
 from .state import MainWorkflowState
+from .workflows.guideline import build_guideline_workflow
 from .workflows.preprocess import build_preprocess_workflow
 from .workflows.rag import build_rag_workflow
 from .workflows.report import build_report_workflow
@@ -15,6 +16,7 @@ from .workflows.visualization import build_visualization_workflow
 
 def build_main_workflow(
     *,
+    db,
     preprocess_service,
     rag_service,
     visualization_service,
@@ -31,6 +33,10 @@ def build_main_workflow(
         rag_service=rag_service,
         default_model=default_model,
     )
+    guideline_graph = build_guideline_workflow(
+        db=db,
+        default_model=default_model,
+    )
     visualization_graph = build_visualization_workflow(
         visualization_service=visualization_service,
         default_model=default_model,
@@ -45,6 +51,14 @@ def build_main_workflow(
         return branch
 
     def route_after_rag(state: MainWorkflowState) -> str:
+        handoff = state.get("handoff") or {}
+        if bool(handoff.get("ask_guideline", False)):
+            return "guideline"
+        if bool(handoff.get("ask_visualization", False)):
+            return "visualization"
+        return "merge_context"
+
+    def route_after_guideline(state: MainWorkflowState) -> str:
         handoff = state.get("handoff") or {}
         if bool(handoff.get("ask_visualization", False)):
             return "visualization"
@@ -97,6 +111,7 @@ def build_main_workflow(
                 "ask_preprocess": bool(handoff.get("ask_preprocess", False)),
                 "ask_visualization": bool(handoff.get("ask_visualization", False)),
                 "ask_report": bool(handoff.get("ask_report", False)),
+                "ask_guideline": bool(handoff.get("ask_guideline", False)),
             }
 
         preprocess_result = state.get("preprocess_result")
@@ -110,6 +125,25 @@ def build_main_workflow(
             merged_context["rag_result"] = rag_result
             if int(rag_result.get("retrieved_count", 0) or 0) > 0:
                 merged_context["applied_steps"].append("rag")
+
+        guideline_index_status = state.get("guideline_index_status")
+        if isinstance(guideline_index_status, dict):
+            merged_context["guideline_index_status"] = guideline_index_status
+
+        guideline_result = state.get("guideline_result")
+        if isinstance(guideline_result, dict):
+            merged_context["guideline_result"] = guideline_result
+            merged_context["guideline_context"] = {
+                "active_source_id": state.get("active_guideline_source_id", ""),
+                "status": guideline_result.get("status", ""),
+                "retrieved_count": int(guideline_result.get("retrieved_count", 0) or 0),
+                "has_evidence": int(guideline_result.get("retrieved_count", 0) or 0) > 0,
+                "filename": guideline_result.get("filename", ""),
+                "guideline_id": guideline_result.get("guideline_id", ""),
+                "evidence_summary": guideline_result.get("evidence_summary", ""),
+            }
+            if int(guideline_result.get("retrieved_count", 0) or 0) > 0:
+                merged_context["applied_steps"].append("guideline")
 
         insight = state.get("insight")
         if isinstance(insight, dict):
@@ -147,6 +181,7 @@ def build_main_workflow(
     graph.add_node("general_question_terminal", general_question_terminal)
     graph.add_node("preprocess_flow", preprocess_graph)
     graph.add_node("rag_flow", rag_graph)
+    graph.add_node("guideline_flow", guideline_graph)
     graph.add_node("visualization_flow", visualization_graph)
     graph.add_node("merge_context", merge_context_node)
     graph.add_node("data_qa_terminal", data_qa_terminal)
@@ -172,6 +207,15 @@ def build_main_workflow(
     graph.add_conditional_edges(
         "rag_flow",
         route_after_rag,
+        {
+            "guideline": "guideline_flow",
+            "visualization": "visualization_flow",
+            "merge_context": "merge_context",
+        },
+    )
+    graph.add_conditional_edges(
+        "guideline_flow",
+        route_after_guideline,
         {
             "visualization": "visualization_flow",
             "merge_context": "merge_context",

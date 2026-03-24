@@ -3,8 +3,8 @@ from typing import Any, Dict
 
 import pandas as pd
 
-from ..datasets.reader import DatasetReader
 from ..datasets.repository import DataSourceRepository
+from ..datasets.service import DatasetReader
 from .schemas import ManualVizRequest
 
 

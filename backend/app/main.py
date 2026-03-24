@@ -8,6 +8,8 @@ from .modules.chat import router as chats_api
 from .modules.datasets import models as dataset_models
 from .modules.datasets import router as datasets_api
 from .modules.export import router as export_api
+from .modules.guidelines import models as guideline_models
+from .modules.guidelines import router as guidelines_api
 from .modules.preprocess import router as preprocess_api
 from .modules.rag import models as rag_models
 from .modules.rag import router as rag_router
@@ -45,5 +47,6 @@ app.include_router(chats_api.router)
 app.include_router(visualization_api.router)
 app.include_router(rag_router.router)
 app.include_router(export_api.router)
+app.include_router(guidelines_api.router)
 app.include_router(preprocess_api.router)
 app.include_router(reports_api.router)

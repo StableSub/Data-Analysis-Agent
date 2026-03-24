@@ -1,8 +1,7 @@
 from fastapi import Depends
 
-from ..datasets.dependencies import get_data_source_repository, get_dataset_reader
-from ..datasets.reader import DatasetReader
 from ..datasets.repository import DataSourceRepository
+from ..datasets.service import DatasetReader, get_data_source_repository, get_dataset_reader
 from .processor import PreprocessProcessor
 from .service import PreprocessService
 

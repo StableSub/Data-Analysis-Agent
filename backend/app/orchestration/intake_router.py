@@ -35,6 +35,7 @@ def build_intake_router_workflow(
                 "ask_preprocess": bool(intent.get("ask_preprocess", False)),
                 "ask_visualization": bool(intent.get("ask_visualization", False)),
                 "ask_report": bool(intent.get("ask_report", False)),
+                "ask_guideline": bool(intent.get("ask_guideline", False)),
             }
         }
 

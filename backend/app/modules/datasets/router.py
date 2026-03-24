@@ -1,10 +1,8 @@
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import Response
 
-from .dependencies import get_data_source_service
-from .errors import DatasetUploadError
 from .schemas import DatasetBase, DatasetListResponse, DatasetSampleResponse
-from .service import DataSourceService
+from .service import DataSourceService, DatasetUploadError, get_data_source_service
 
 router = APIRouter(prefix="/datasets", tags=["datasets"])
 
