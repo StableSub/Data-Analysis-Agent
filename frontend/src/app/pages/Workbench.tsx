@@ -1,23 +1,35 @@
 import React, { useState, useRef, useCallback, useEffect } from "react";
-import { TimelineItem } from "../components/genui/TimelineItem";
 import { ToolCallIndicator } from "../components/genui/ToolCallIndicator";
 import { WorkbenchCommandBar } from "../components/genui/WorkbenchCommandBar";
 import { Dropzone } from "../components/genui/Dropzone";
 import { WorkbenchLayout } from "../components/genui/WorkbenchLayout";
 import { StatusBadge } from "../components/genui/StatusBadge";
-import { DetailsPanel } from "../components/genui/DetailsPanel";
 import { GateBar } from "../components/genui/GateBar";
 import { AssistantReportMessage } from "../components/genui/AssistantReportMessage";
 import { RightPanelTabs, type RightTabId } from "../components/genui/RightPanelTabs";
 import { CopilotPanel } from "../components/genui/CopilotPanel";
 import { MCPPanel } from "../components/genui/MCPPanel";
 import { DecisionChips } from "../components/genui/DecisionChips";
-import { Sparkles, FileText, CheckCircle2, Plus, Trash2, MessageSquare } from "lucide-react";
+import { ApprovalCard } from "../components/genui/ApprovalCard";
+import { CardShell, CardHeader, CardBody } from "../components/genui/CardShell";
+import { PreEdaBoard } from "../components/genui/PreEdaBoard";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  FileText,
+  MessageSquare,
+  Plus,
+  Trash2,
+} from "lucide-react";
 import { cn } from "../../lib/utils";
 import { PipelineBar, type PipelineBarVariant } from "../components/genui/PipelineBar";
 import { useAnalysisPipeline, type PipelineSessionContext } from "../hooks/useAnalysisPipeline";
 import { useWorkbenchSessionStore } from "../hooks/useWorkbenchSessionStore";
-import { deleteChatSession, getChatHistory } from "../../lib/api";
+import {
+  deleteChatSession,
+  getChatHistory,
+  isApiErrorStatus,
+} from "../../lib/api";
 import { toast } from "sonner";
 
 // --- INLINE COMPONENTS ---
@@ -77,11 +89,10 @@ export default function Workbench() {
     pipelineSteps,
     decisionChips,
     evidence,
-    milestones,
-    history,
     hitlProposal,
     rawLogs,
     latestVisualizationResult,
+    selectedPreEdaProfile,
     chatHistory,
     fileName,
     uploadedDatasets,
@@ -136,12 +147,6 @@ export default function Workbench() {
     if (tab === "agent") setCopilotHasNew(false);
   };
 
-  const handleDetailsAction = (action: string) => {
-    if (action === "try-sample") pipeline.startWithSample();
-    if (action === "cancel-upload") pipeline.handleCancel();
-    if (action === "resolve-retry") pipeline.handleRetry();
-  };
-
   const saveSessionSnapshot = useCallback(
     (targetSessionId: string | null) => {
       if (!targetSessionId) {
@@ -186,8 +191,19 @@ export default function Workbench() {
             backendSessionId: targetSession.backendSessionId,
             context: nextContext,
           });
-        } catch {
-          toast.error("세션 히스토리를 불러오지 못했습니다.");
+        } catch (error) {
+          if (isApiErrorStatus(error, 404)) {
+            nextContext = {
+              ...nextContext,
+              backendSessionId: null,
+            };
+            updateSession(targetSessionId, {
+              backendSessionId: null,
+              context: nextContext,
+            });
+          } else {
+            toast.error("세션 히스토리를 불러오지 못했습니다.");
+          }
         }
       }
 
@@ -224,9 +240,19 @@ export default function Workbench() {
       if (targetSession.backendSessionId !== null) {
         try {
           await deleteChatSession(targetSession.backendSessionId);
-        } catch {
-          toast.error("서버 세션 삭제에 실패했습니다.");
-          return;
+        } catch (error) {
+          if (isApiErrorStatus(error, 404)) {
+            updateSession(targetSessionId, {
+              backendSessionId: null,
+              context: {
+                ...targetSession.context,
+                backendSessionId: null,
+              },
+            });
+          } else {
+            toast.error("서버 세션 삭제에 실패했습니다.");
+            return;
+          }
         }
       }
 
@@ -239,7 +265,6 @@ export default function Workbench() {
       }
 
       if (remaining.length === 0) {
-        createSession();
         clearForNewDraft();
         return;
       }
@@ -252,7 +277,6 @@ export default function Workbench() {
       sessions,
       activeSessionId,
       deleteSessionFromStore,
-      createSession,
       clearForNewDraft,
       selectSession,
       restoreSessionById,
@@ -284,7 +308,6 @@ export default function Workbench() {
       return;
     }
     if (sessions.length === 0) {
-      createSession();
       clearForNewDraft();
       initializedRef.current = true;
       return;
@@ -299,7 +322,7 @@ export default function Workbench() {
     }
     void restoreSessionById(initialSessionId);
     initializedRef.current = true;
-  }, [sessions, activeSessionId, createSession, clearForNewDraft, selectSession, restoreSessionById]);
+  }, [sessions, activeSessionId, clearForNewDraft, selectSession, restoreSessionById]);
 
   useEffect(() => {
     if (!initializedRef.current || !activeSessionId) {
@@ -369,6 +392,20 @@ export default function Workbench() {
     return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   };
 
+  const formatPercent = (value: number) => `${(value * 100).toFixed(2).replace(/\.00$/, "")}%`;
+
+  const formatUploadedAt = (value?: string) => {
+    if (!value) {
+      return "-";
+    }
+    return new Date(value).toLocaleString([], {
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  };
+
   const handleDeleteSelectedDataset = useCallback(() => {
     if (!selectedSourceId) {
       return;
@@ -379,15 +416,111 @@ export default function Workbench() {
   // Current running tool call for inline indicator
   const currentRunningTool = toolCalls.filter((tc) => tc.status === "running");
   const lastRunningTool = currentRunningTool[currentRunningTool.length - 1];
+  const currentDatasetLabel = selectedDataset?.fileName || fileName || "선택된 데이터셋 없음";
+  const sessionDisplayTitle =
+    activeSession?.title ||
+    (hasDatasetContext
+      ? currentDatasetLabel
+      : state === "empty"
+        ? "새 세션"
+        : "Gen-UI Workbench");
 
-  /* ── LEFT PANEL — Session + History ── */
+  const derivedRouteChips = hasUploadedDatasets
+    ? [
+        {
+          stage: "Pre-EDA",
+          value: "DONE" as const,
+          tooltip: "업로드 직후 데이터 미리보기와 구조/품질 요약을 먼저 확인합니다.",
+        },
+        {
+          stage: "Deep EDA",
+          value:
+            state === "ready"
+              ? "QUEUED" as const
+              : state === "running"
+                ? runningSubPhase === "report"
+                  ? "DONE" as const
+                  : "RUNNING" as const
+                : state === "needs-user"
+                  ? "BLOCKED" as const
+                  : state === "error"
+                    ? "FAILED" as const
+                    : state === "success"
+                      ? "DONE" as const
+                      : "QUEUED" as const,
+          tooltip: "사용자 질문 이후 분포, 상관관계, 이상치 탐지로 확장됩니다.",
+        },
+        {
+          stage: "Report",
+          value:
+            state === "success"
+              ? "DONE" as const
+              : state === "running" && runningSubPhase === "report"
+                ? "RUNNING" as const
+                : state === "error" && runningSubPhase === "report"
+                  ? "FAILED" as const
+                  : "QUEUED" as const,
+          tooltip: "Deep EDA가 끝나면 최종 요약과 후속 리포트 흐름을 남깁니다.",
+        },
+      ]
+    : [];
+
+  const preEdaSummarySections = [
+    { type: "heading" as const, content: "AI 분석 요약" },
+    {
+      type: "paragraph" as const,
+      content:
+        selectedPreEdaProfile?.qualitySummary
+          ?? (hasDatasetContext
+            ? `${currentDatasetLabel}이(가) 현재 source로 선택되어 있습니다. 질문 전에 구조와 품질 맥락을 먼저 확인하고, 이후 질문이 들어오면 Deep EDA와 report로 이어집니다.`
+            : "데이터 업로드는 완료됐지만 아직 source가 선택되지 않았습니다. 상단에서 source를 고르면 해당 데이터 기준으로 질문을 이어갈 수 있습니다."),
+    },
+    {
+      type: "checklist" as const,
+      items:
+        selectedPreEdaProfile?.summaryBullets ?? [
+          "상위 5개 row 미리보기와 데이터 개요 요약을 먼저 확인합니다.",
+          "컬럼 타입 분류와 결측치 분석은 Details 패널에서 drill-down 됩니다.",
+          "질문 이후에는 Deep EDA와 report 흐름으로 이어집니다.",
+        ],
+    },
+  ];
+
+  const headerSubtitle =
+    state === "empty"
+      ? "데이터 업로드 또는 일반 질문으로 새 세션을 시작할 수 있습니다."
+      : state === "uploading"
+        ? `${fileName || "dataset"} 업로드와 검증이 진행 중입니다.`
+        : state === "ready"
+          ? hasDatasetContext
+            ? `${currentDatasetLabel} 기준 Pre-EDA 레이아웃이 준비되었습니다.`
+            : "업로드는 완료됐지만 아직 source가 선택되지 않았습니다."
+          : state === "running"
+            ? `${currentDatasetLabel} 질문을 바탕으로 Deep EDA를 진행 중입니다.`
+            : state === "needs-user"
+              ? "전처리 필요성이 감지되어 HITL 승인 대기 상태입니다."
+              : state === "error"
+                ? "실패 원인과 복구 맥락을 우측 패널과 중앙 카드에서 함께 확인합니다."
+                : hasDatasetContext
+                  ? `${currentDatasetLabel} 기준 Deep EDA 결과와 report가 누적되고 있습니다.`
+                  : "일반 질문 결과가 준비되었습니다.";
+
+  /* ── LEFT PANEL — Session only ── */
   const LeftPanel = (
     <>
       <div className="h-10 border-b border-[var(--genui-border)] flex items-center px-4 gap-2 flex-shrink-0">
         <MessageSquare className="w-3.5 h-3.5 text-[var(--genui-running)]" />
         <span className="font-semibold text-sm text-[var(--genui-text)]">Session</span>
       </div>
-      <div className="p-2 border-b border-[var(--genui-border)] space-y-2">
+      <div className="flex-1 min-h-0 p-2 flex flex-col gap-2">
+        <div className="rounded-md border border-[var(--genui-border)] bg-[var(--genui-surface)] px-3 py-2">
+          <p className="text-[10px] font-semibold uppercase tracking-widest text-[var(--genui-muted)]">
+            Current
+          </p>
+          <p className="mt-1 text-[12px] font-medium text-[var(--genui-text)] truncate">
+            {activeSession?.title || "새 채팅"}
+          </p>
+        </div>
         <button
           type="button"
           onClick={handleNewChat}
@@ -396,7 +529,7 @@ export default function Workbench() {
           <Plus className="w-3.5 h-3.5" />
           새 채팅
         </button>
-        <div className="max-h-44 overflow-y-auto space-y-1">
+        <div className="flex-1 min-h-0 overflow-y-auto space-y-1 pr-1">
           {sessions.map((session) => {
             const isActive = session.id === activeSessionId;
             return (
@@ -445,63 +578,24 @@ export default function Workbench() {
           )}
         </div>
       </div>
-      <div className="h-10 border-b border-[var(--genui-border)] flex items-center px-4 gap-2 flex-shrink-0">
-        <Sparkles className="w-3.5 h-3.5 text-[var(--genui-running)]" />
-        <span className="font-semibold text-sm text-[var(--genui-text)]">History</span>
-      </div>
-      <div className="flex-1 overflow-y-auto p-2 space-y-1">
-        {state === "empty" && (
-          <div className="px-4 py-8 text-center opacity-50">
-            <div className="w-full h-2 bg-[var(--genui-surface)] rounded mb-2" />
-            <div className="w-2/3 h-2 bg-[var(--genui-surface)] rounded mx-auto" />
-          </div>
-        )}
-        {state === "uploading" && (
-          <>
-            <div className="px-2 py-2 text-[10px] font-semibold text-[var(--genui-muted)] uppercase tracking-wider">Today</div>
-            <TimelineItem status="running" title="Uploading dataset…" subtext={fileName} timestamp="Now" selected />
-          </>
-        )}
-        {milestones.length > 0 && (
-          <>
-            <div className="px-2 py-2 text-[10px] font-semibold text-[var(--genui-muted)] uppercase tracking-wider">Today</div>
-            {milestones.map((item, idx) => (
-              <TimelineItem
-                key={idx}
-                status={item.status}
-                title={item.title}
-                subtext={item.subtext}
-                timestamp={item.timestamp}
-                selected={item.selected}
-                onClick={
-                  (item.status === "failed" || item.status === "needs-user")
-                    ? focusDetails
-                    : undefined
-                }
-                statusBadge={
-                  item.status === "needs-user" ? "Awaiting" :
-                    item.status === "failed" ? "Error" :
-                      undefined
-                }
-              />
-            ))}
-            {history.map((item, idx) => <TimelineItem key={`h-${idx}`} {...item} />)}
-          </>
-        )}
+      <div className="border-t border-[var(--genui-border)] px-3 py-3 bg-[var(--genui-surface)]">
+        <p className="text-[10px] leading-relaxed text-[var(--genui-muted)]">
+          세션 전환과 삭제는 여기서만 처리하고, 실제 분석 흐름과 승인 결정은 중앙 캔버스에서 진행합니다.
+        </p>
       </div>
     </>
   );
 
   /* ── CENTER: Decision chips → centerSubHeader ── */
   const CenterSubHeader = (
-    <div className="w-full flex flex-wrap items-center justify-between gap-3 min-w-0">
+    <div className="grid w-full min-w-0 items-center gap-3 xl:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
       {hasUploadedDatasets ? (
-        <div className="flex items-center gap-2 min-w-0 flex-shrink-0">
+        <div className="flex min-w-0 items-center gap-2 overflow-hidden">
           <span className="text-[11px] font-medium text-[var(--genui-muted)] whitespace-nowrap">데이터 소스</span>
           <select
             value={selectedSourceId ?? ""}
             onChange={(e) => selectUploadedDataset(e.target.value || null)}
-            className="h-7 w-[200px] flex-shrink-0 max-w-[320px] rounded-md border border-[var(--genui-border)] bg-[var(--genui-surface)] px-2 text-xs text-[var(--genui-text)] focus:outline-none focus:ring-1 focus:ring-[var(--genui-focus-ring)] truncate"
+            className="h-7 w-[220px] max-w-full flex-shrink-0 rounded-md border border-[var(--genui-border)] bg-[var(--genui-surface)] px-2 text-xs text-[var(--genui-text)] focus:outline-none focus:ring-1 focus:ring-[var(--genui-focus-ring)] truncate"
           >
             <option value="">선택 안 함 (일반 질문)</option>
             {uploadedDatasets.map((dataset) => (
@@ -521,23 +615,31 @@ export default function Workbench() {
           </button>
         </div>
       ) : (
-        <span className="text-xs text-[var(--genui-muted)] whitespace-nowrap flex-shrink-0">
-          업로드 없이도 질문을 바로 보낼 수 있습니다.
+        <span className="text-xs text-[var(--genui-muted)] whitespace-nowrap">
+          업로드가 완료되면 선택된 source와 route 상태가 여기에 표시됩니다.
         </span>
       )}
 
-      {decisionChips.length > 0 ? (
-        <DecisionChips
-          className="flex-shrink flex-wrap justify-end min-w-0"
-          chips={decisionChips.map((c) => ({
-            ...c,
-            onNavigate:
-              c.value === "BLOCKED" || c.value === "FAILED"
-                ? focusDetails
-                : () => handleTabChange("agent"),
-          }))}
-        />
-      ) : null}
+      {derivedRouteChips.length > 0 ? (
+        <div className="justify-self-start xl:justify-self-center">
+          <DecisionChips
+            className="flex-wrap"
+            chips={derivedRouteChips.map((c) => ({
+              ...c,
+              onNavigate:
+                c.value === "BLOCKED" || c.value === "FAILED"
+                  ? focusDetails
+                  : c.stage === "Mode"
+                    ? undefined
+                    : () => handleTabChange("agent"),
+            }))}
+          />
+        </div>
+      ) : (
+        <div />
+      )}
+
+      <div className="hidden xl:block" />
     </div>
   );
 
@@ -551,7 +653,16 @@ export default function Workbench() {
   };
 
   const MainContent = (
-    <div className="max-w-3xl mx-auto w-full space-y-8 pb-32 pt-8 px-4">
+    <div
+      className={cn(
+        "mx-auto w-full space-y-4 pb-28 pt-4 px-2 xl:px-3",
+        state === "empty" || state === "uploading"
+          ? "max-w-3xl"
+          : state === "ready"
+            ? "max-w-[1360px] 2xl:max-w-[1460px]"
+            : "max-w-[1120px]",
+      )}
+    >
       {/* Hidden file input for real file selection */}
       <input
         ref={fileInputRef}
@@ -561,9 +672,17 @@ export default function Workbench() {
         onChange={handleFileSelected}
       />
 
+      {state !== "empty" && state !== "uploading" && (
+        <div className="flex justify-center">
+          <div className="max-w-[480px] truncate rounded-full border border-[var(--genui-border)] bg-[var(--genui-panel)] px-6 py-3 text-sm font-semibold text-[var(--genui-text)] shadow-[0_10px_30px_rgba(15,23,42,0.12)]">
+            {sessionDisplayTitle}
+          </div>
+        </div>
+      )}
+
       {state === "empty" && (
         <div className="flex flex-col items-center justify-center min-h-[50vh] animate-in fade-in zoom-in-95 duration-500">
-          <Dropzone status="idle" onDrop={handleDrop} onTrySample={() => pipeline.startWithSample()} />
+          <Dropzone status="idle" onDrop={handleDrop} />
         </div>
       )}
 
@@ -607,17 +726,21 @@ export default function Workbench() {
       )}
 
       {state === "ready" && (
-        <div className="flex flex-col items-center justify-center min-h-[50vh] animate-in fade-in zoom-in-95 duration-300">
-          <div className="w-full max-w-2xl rounded-xl border border-[var(--genui-border)] bg-[var(--genui-panel)] p-6 space-y-2">
-            <h2 className="text-lg font-semibold text-[var(--genui-text)]">
-              업로드 완료, 질문 대기 중
-            </h2>
-            <p className="text-sm text-[var(--genui-muted)] leading-relaxed">
-              {selectedDataset
-                ? `${selectedDataset.fileName}이(가) 선택되었습니다. 질문을 보내면 LangGraph가 라우팅합니다.`
-                : "상단에서 파일을 선택하면 해당 source로 질문이 전송됩니다. 선택 없이 질문하면 일반 질의로 처리됩니다."}
-            </p>
-          </div>
+        <div className="space-y-6 animate-in fade-in zoom-in-95 duration-300">
+          {selectedPreEdaProfile ? (
+            <PreEdaBoard
+              profile={selectedPreEdaProfile}
+              summarySections={preEdaSummarySections}
+            />
+          ) : (
+            <AssistantReportMessage
+              className="max-w-none mx-0"
+              title="Pre-EDA Summary"
+              subtitle={hasDatasetContext ? currentDatasetLabel : "Select source"}
+              sections={preEdaSummarySections}
+              maxBodyHeight={420}
+            />
+          )}
         </div>
       )}
 
@@ -634,10 +757,8 @@ export default function Workbench() {
             evidence={evidenceWithNav}
           />
           {lastRunningTool && (
-            <div className="flex justify-center">
-              <div className="inline-flex items-center gap-3 px-4 py-2 bg-[var(--genui-panel)] border border-[var(--genui-border)] rounded-full shadow-sm">
-                <ToolCallIndicator status="running" label={lastRunningTool.name} sublabel="Processing..." />
-              </div>
+            <div className="rounded-xl border border-[var(--genui-border)] bg-[var(--genui-panel)] px-4 py-3 shadow-sm">
+              <ToolCallIndicator status="running" label={lastRunningTool.name} sublabel="현재 질문 범위를 기준으로 계산 중입니다." />
             </div>
           )}
         </div>
@@ -646,6 +767,19 @@ export default function Workbench() {
       {/* NEEDS-USER */}
       {state === "needs-user" && (
         <div className="space-y-4 animate-in slide-in-from-bottom-4 fade-in duration-500">
+          {hitlProposal && (
+            <ApprovalCard
+              title={`Impute ${hitlProposal.column}`}
+              description={`${hitlProposal.column} 컬럼의 결측 ${hitlProposal.missingCount}건 (${hitlProposal.missingPercent.toFixed(1)}%)을 ${hitlProposal.strategy} 방식으로 처리하면 이후 Deep EDA를 계속 진행할 수 있습니다.`}
+              changes={[
+                `${hitlProposal.column} 결측을 ${hitlProposal.fillValue}로 대체`,
+                "전처리 메타데이터와 품질 요약 갱신",
+                "승인 후 분포 / 상관관계 / 이상치 계산 재개",
+              ]}
+              hideActions
+            />
+          )}
+
           <AssistantReportMessage
             variant="final"
             accentVariant="needs-user"
@@ -656,14 +790,10 @@ export default function Workbench() {
             maxBodyHeight={300}
             evidence={evidenceWithNav}
           />
-          <div className="flex justify-center">
-            <div className="inline-flex items-center gap-3 px-4 py-2 bg-[var(--genui-panel)] border border-[var(--genui-needs-user)]/30 rounded-full shadow-sm">
-              <ToolCallIndicator status="needs-user" label="propose_imputation" sublabel="Awaiting user decision" />
-            </div>
+
+          <div className="rounded-xl border border-[var(--genui-needs-user)]/30 bg-[var(--genui-needs-user)]/5 px-4 py-3">
+            <ToolCallIndicator status="needs-user" label="preprocess approval" sublabel="결정은 중앙 승인 카드와 하단 GateBar에서만 처리됩니다." />
           </div>
-          <p className="text-center text-[11px] text-[var(--genui-muted)]">
-            Use the decision bar below ↓ to approve, reject, or modify the proposed changes.
-          </p>
         </div>
       )}
 
@@ -684,10 +814,8 @@ export default function Workbench() {
       {state === "success" && chatHistory.length === 0 && (
         <div className="space-y-4 animate-in slide-in-from-bottom-4 fade-in duration-500">
           <AssistantReportMessage
-            variant="final"
-            title={hasDatasetContext ? "Analysis Complete" : "AI 답변"}
-            subtitle={hasDatasetContext ? selectedDataset?.fileName || fileName : undefined}
-            timestamp="Now"
+            title="AI 답변"
+            subtitle={hasDatasetContext ? currentDatasetLabel : undefined}
             sections={reportSections}
             maxBodyHeight={400}
             evidence={evidenceWithNav}
@@ -703,15 +831,14 @@ export default function Workbench() {
       status={state === "empty" ? "empty" : state === "running" ? "streaming" : "idle"}
       placeholder={
         state === "empty" ? "Upload a dataset or ask a question..." :
-          state === "ready" ? "파일을 선택하거나, 바로 질문을 입력하세요..." :
-            state === "needs-user" ? "Agent is waiting for approval..." :
+          state === "ready" ? "Pre-EDA를 확인한 뒤 질문을 이어서 입력하세요..." :
+            state === "needs-user" ? "승인안이 왜 필요한지 물어보거나 수정 지시를 입력하세요..." :
               state === "error" ? "Type to discuss the error..." :
                 "Ask Gen-UI to analyze, visualize, or transform..."
       }
       onSend={handleSendMessage}
       onStop={() => pipeline.handleCancel()}
       onUploadDataset={openFilePicker}
-      onUseSample={() => pipeline.startWithSample()}
     />
   );
 
@@ -731,7 +858,7 @@ export default function Workbench() {
       onTabChange={handleTabChange}
       agentHasNew={copilotHasNew}
       detailsContent={
-        <div ref={detailsPanelRef}>
+        <div ref={detailsPanelRef} className="h-full overflow-y-auto p-4 space-y-4">
           {highlightDetails && (
             <div className="mx-4 mt-3 mb-0 px-3 py-2 rounded-lg border border-[var(--genui-error)]/40 bg-[var(--genui-error)]/5 flex items-center gap-2 animate-in fade-in duration-200">
               <span className="text-[10px] font-semibold text-[var(--genui-error)] animate-pulse">
@@ -739,11 +866,157 @@ export default function Workbench() {
               </span>
             </div>
           )}
-          <DetailsPanel
-            state={state === "running" || state === "success" ? "streaming" : state}
-            selectedItem={{ visualization: latestVisualizationResult, hasDatasetContext }}
-            onAction={handleDetailsAction}
-          />
+          {state === "empty" && (
+            <>
+              <CardShell>
+                <CardHeader title="업로드 규칙" meta="Details" statusLabel="CSV · JSON · XLSX" statusVariant="neutral" />
+                <CardBody className="space-y-2 text-sm text-[var(--genui-text)]">
+                  <p>파일당 최대 200MB까지 업로드할 수 있습니다.</p>
+                  <p>업로드 후에는 선택된 source와 Pre-EDA 맥락이 중앙과 이 패널에 함께 표시됩니다.</p>
+                </CardBody>
+              </CardShell>
+              <CardShell>
+                <CardHeader title="질문 흐름" meta="Before dataset" statusLabel="Optional" statusVariant="neutral" />
+                <CardBody className="space-y-2 text-sm text-[var(--genui-text)]">
+                  <p>데이터 없이도 일반 질문은 가능하지만, Pre-EDA와 Deep EDA 흐름은 업로드 후에만 활성화됩니다.</p>
+                </CardBody>
+              </CardShell>
+            </>
+          )}
+
+          {state === "ready" && (
+            <>
+              <CardShell>
+                <CardHeader
+                  title="컬럼 타입 분해"
+                  meta="DETAILS"
+                  statusLabel={`${selectedPreEdaProfile?.columnCount ?? 0} Columns`}
+                  statusVariant="neutral"
+                />
+                <CardBody className="space-y-3">
+                  {selectedPreEdaProfile ? (
+                    <>
+                      {[
+                        {
+                          label: `numeric ${selectedPreEdaProfile.numericColumns.length}개`,
+                          detail: "기본 통계 / 상관관계 / 이상치 대상",
+                        },
+                        {
+                          label: `categorical ${selectedPreEdaProfile.categoricalColumns.length}개`,
+                          detail: "빈도 분석 / bar chart 대상",
+                        },
+                        {
+                          label: `boolean ${selectedPreEdaProfile.booleanColumns.length}개`,
+                          detail: "categorical로 간주하여 빈도 분석 포함",
+                        },
+                        {
+                          label: `datetime ${selectedPreEdaProfile.datetimeColumns.length}개`,
+                          detail: "시계열 흐름 / key 후보",
+                        },
+                        {
+                          label: `group key ${selectedPreEdaProfile.groupKeyColumns.length}개`,
+                          detail: "그룹별 비교 기준 컬럼",
+                        },
+                        {
+                          label: `identifier ${selectedPreEdaProfile.identifierColumns.length}개`,
+                          detail: "미리보기 전용 / 통계·상관관계 제외",
+                        },
+                      ].map((item) => (
+                        <div key={item.label} className="rounded-xl border border-[var(--genui-border)] bg-[var(--genui-surface)] px-4 py-3">
+                          <p className="text-sm font-medium text-[var(--genui-text)]">{item.label}</p>
+                          <p className="mt-1 text-xs text-[var(--genui-muted)]">{item.detail}</p>
+                        </div>
+                      ))}
+                    </>
+                  ) : (
+                    <p className="text-sm text-[var(--genui-text)]">선택된 source의 Pre-EDA 정보가 아직 없습니다.</p>
+                  )}
+                </CardBody>
+              </CardShell>
+
+              <CardShell>
+                <CardHeader
+                  title="선택 source 메타데이터"
+                  meta="SOURCE"
+                  statusLabel={selectedDataset?.sourceId ?? "-"}
+                  statusVariant="neutral"
+                />
+                <CardBody className="space-y-3 text-sm text-[var(--genui-text)]">
+                  <div className="space-y-2">
+                    <p>업로드 시각: {formatUploadedAt(selectedDataset?.uploadedAt)}</p>
+                    <p>source_id: {selectedDataset?.sourceId ?? "-"}</p>
+                    <p>
+                      group key 후보: {selectedPreEdaProfile?.groupKeyColumns.length
+                        ? selectedPreEdaProfile.groupKeyColumns.join(", ")
+                        : "없음"}
+                    </p>
+                  </div>
+                </CardBody>
+              </CardShell>
+            </>
+          )}
+
+          {state === "running" && (
+            <>
+              <CardShell>
+                <CardHeader title="현재 질문 범위" meta="Details" statusLabel="Running" statusVariant="running" />
+                <CardBody className="space-y-2 text-sm text-[var(--genui-text)]">
+                  <p>{selectedDataset ? `${selectedDataset.fileName} 기준으로 질문이 실행 중입니다.` : "선택된 데이터 source 기준으로 질문이 실행 중입니다."}</p>
+                  <p className="text-xs text-[var(--genui-muted)]">현재 단계: {runningSubPhase === "report" ? "report" : "Deep EDA"}</p>
+                </CardBody>
+              </CardShell>
+              <CardShell>
+                <CardHeader title="도착 예정 결과" meta="Artifacts" statusLabel="Pending" statusVariant="neutral" />
+                <CardBody className="space-y-2 text-sm text-[var(--genui-text)]">
+                  <p>분포 시각화, 상관관계, 이상치 결과와 최종 report가 질문 맥락에 맞춰 순차적으로 도착합니다.</p>
+                </CardBody>
+              </CardShell>
+            </>
+          )}
+
+          {state === "needs-user" && (
+            <>
+              <CardShell>
+                <CardHeader title="왜 멈췄나" meta="Before / After" statusLabel="Needs Approval" statusVariant="needs-user" />
+                <CardBody className="space-y-2 text-sm text-[var(--genui-text)]">
+                  <p>
+                    {hitlProposal
+                      ? `${hitlProposal.column} 결측 ${hitlProposal.missingCount}건을 처리하지 않으면 이후 Deep EDA 결과가 불안정할 수 있어 현재 단계에서 멈췄습니다.`
+                      : "전처리 제안에 대한 사용자 확인이 필요해 현재 단계에서 멈췄습니다."}
+                  </p>
+                  <p className="text-xs text-[var(--genui-muted)]">승인/거절/수정은 중앙 승인 카드와 GateBar에서만 처리합니다.</p>
+                </CardBody>
+              </CardShell>
+            </>
+          )}
+
+          {state === "success" && (
+            <>
+              <CardShell>
+                <CardHeader title="최종 결과 보강" meta="Details" statusLabel="Complete" statusVariant="success" />
+                <CardBody className="space-y-2 text-sm text-[var(--genui-text)]">
+                  <p>질문 결과와 함께 생성된 Deep EDA 결과와 report 아티팩트는 이후 후속 질문에서도 계속 누적됩니다.</p>
+                  {latestVisualizationResult?.summary ? (
+                    <p className="text-xs text-[var(--genui-muted)]">{latestVisualizationResult.summary}</p>
+                  ) : null}
+                </CardBody>
+              </CardShell>
+            </>
+          )}
+
+          {state === "error" && (
+            <>
+              <CardShell status="error">
+                <CardHeader title="실패 요약" meta="Details" statusLabel="Error" statusVariant="error" />
+                <CardBody className="space-y-2 text-sm text-[var(--genui-text)]">
+                  <div className="flex items-start gap-2">
+                    <AlertTriangle className="w-4 h-4 text-[var(--genui-error)] mt-0.5" />
+                    <p>실패한 툴과 원인 요약을 먼저 확인한 뒤, 우측 Agent 또는 중앙 입력창에서 다음 복구 질문을 이어갈 수 있습니다.</p>
+                  </div>
+                </CardBody>
+              </CardShell>
+            </>
+          )}
         </div>
       }
       toolsContent={
@@ -768,13 +1041,23 @@ export default function Workbench() {
 
   /* ── HEADER ── */
   const Header = (
-    <div className="h-full flex items-center justify-between px-4 w-full">
-      <div className="flex items-center gap-3">
-        <span className="font-semibold text-[var(--genui-text)]">
-          {activeSession?.title || (state === "empty" ? "새 세션" : selectedDataset?.fileName || fileName || "채팅 세션")}
-        </span>
-        <StatusBadge status={state} />
+    <div className="h-full flex items-center justify-between gap-4 px-4 w-full min-w-0">
+      <div className="min-w-0">
+        <div className="flex items-center gap-3 min-w-0">
+          <span className="truncate text-[15px] font-semibold tracking-tight text-[var(--genui-text)]">
+            {sessionDisplayTitle}
+          </span>
+          <StatusBadge status={state} className="shrink-0" />
+        </div>
+        <p className="mt-0.5 truncate text-[11px] text-[var(--genui-muted)]">
+          {headerSubtitle}
+        </p>
       </div>
+      {hasDatasetContext && (
+        <div className="hidden xl:flex items-center gap-2 rounded-full border border-[var(--genui-border)] bg-[var(--genui-surface)] px-3 py-1.5 text-[11px] text-[var(--genui-muted)]">
+          <span className="font-medium text-[var(--genui-text)] truncate max-w-[220px]">{currentDatasetLabel}</span>
+        </div>
+      )}
     </div>
   );
 

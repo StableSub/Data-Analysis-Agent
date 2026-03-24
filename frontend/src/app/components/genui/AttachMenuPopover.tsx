@@ -1,5 +1,5 @@
 import React from "react";
-import { Upload, ImageIcon, Database, X } from "lucide-react";
+import { Upload, ImageIcon, X } from "lucide-react";
 import { cn } from "../../../lib/utils";
 
 export interface AttachMenuItem {
@@ -23,7 +23,6 @@ export function AttachMenuPopover({
   onClose,
   onUploadDataset,
   onAddFiles,
-  onUseSample,
   className,
 }: AttachMenuPopoverProps) {
   if (!open) return null;
@@ -40,12 +39,6 @@ export function AttachMenuPopover({
       label: "Add photos & files",
       description: "PNG, JPG, PDF, DOCX",
       onClick: onAddFiles,
-    },
-    {
-      icon: <Database className="w-4 h-4" />,
-      label: "Use sample dataset",
-      description: "Try with Q3 Sales data",
-      onClick: onUseSample,
     },
   ];
 
@@ -102,7 +95,7 @@ export function AttachMenuPopover({
       {/* Footer hint */}
       <div className="px-4 py-2 border-t border-[var(--genui-border)] bg-[var(--genui-panel)]">
         <p className="text-[10px] text-[var(--genui-muted)]">
-          Max file size: 50 MB per file
+          CSV, JSON, Excel(.xlsx) · Max file size: 200 MB per file
         </p>
       </div>
     </div>

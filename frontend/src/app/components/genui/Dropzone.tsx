@@ -6,8 +6,6 @@ import { GenUIChip } from "./GenUIChip";
 interface DropzoneProps {
   status: "idle" | "dragover" | "uploading" | "disabled";
   onDrop?: (files: FileList) => void;
-  /** Called when "Try Sample Dataset" button is clicked */
-  onTrySample?: () => void;
   progress?: number;
   fileName?: string;
   fileSize?: string;
@@ -19,7 +17,6 @@ interface DropzoneProps {
 export function Dropzone({ 
   status, 
   onDrop,
-  onTrySample,
   progress = 0, 
   fileName, 
   fileSize, 
@@ -101,10 +98,10 @@ export function Dropzone({
       
       <div className="space-y-2 max-w-sm">
         <h3 className="text-lg font-semibold text-[var(--genui-text)]">
-          Drag & drop CSV/JSON
+          CSV, XLSX, JSON 업로드
         </h3>
         <p className="text-sm text-[var(--genui-muted)]">
-          Limit 200MB per file • <span className="underline decoration-dotted cursor-help">Supported formats</span>
+          파일당 최대 200MB • CSV, JSON, Excel(.xlsx, .xls)
         </p>
       </div>
 
@@ -113,21 +110,7 @@ export function Dropzone({
           onClick={() => onDrop?.(new DataTransfer().files)}
           className="w-full py-2.5 px-4 bg-[var(--genui-text)] text-[var(--genui-panel)] rounded-lg text-sm font-medium hover:opacity-90 transition-opacity shadow-sm"
         >
-          Upload Dataset
-        </button>
-        <div className="flex items-center gap-2">
-           <div className="h-px bg-[var(--genui-border)] flex-1" />
-           <span className="text-[10px] uppercase text-[var(--genui-muted)] font-medium">Or</span>
-           <div className="h-px bg-[var(--genui-border)] flex-1" />
-        </div>
-        <button
-          onClick={onTrySample}
-          className="w-full py-2 px-4 bg-[var(--genui-panel)] border border-[var(--genui-border)] text-[var(--genui-text)] rounded-lg text-sm font-medium hover:bg-[var(--genui-surface)] transition-colors"
-        >
-          Try Sample Dataset
-        </button>
-        <button className="text-xs text-[var(--genui-muted)] hover:text-[var(--genui-running)] hover:underline transition-colors mt-2">
-          Start from Template (EDA / Preprocess)
+          데이터 업로드
         </button>
       </div>
     </div>

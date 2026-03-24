@@ -51,13 +51,13 @@ export function WorkbenchLayout({
     <div className="flex h-full w-full flex-col genui-scope bg-[var(--genui-surface)] overflow-hidden">
 
       {/* ── Row 1: Session header (h-12, full-width) ── */}
-      <header className="h-12 flex-shrink-0 border-b border-[var(--genui-border)] bg-[var(--genui-panel)] z-20 flex items-center pr-4 relative">
+      <header className="h-12 flex-shrink-0 border-b border-[var(--genui-border)] bg-[var(--genui-panel)] z-20 flex items-center pr-4 relative shadow-[0_1px_0_rgba(0,0,0,0.02)]">
         <div className="flex items-center h-full flex-1 min-w-0">
           {/* History toggle */}
           <button
             onClick={() => setIsLeftPanelOpen(!isLeftPanelOpen)}
-            className="w-12 h-full flex-shrink-0 flex items-center justify-center border-r border-[var(--genui-border)] hover:bg-[var(--genui-surface)] transition-colors"
-            title={isLeftPanelOpen ? "Close History" : "Open History"}
+            className="w-11 h-full flex-shrink-0 flex items-center justify-center border-r border-[var(--genui-border)] hover:bg-[var(--genui-surface)] transition-colors"
+            title={isLeftPanelOpen ? "Close Sessions" : "Open Sessions"}
           >
             {isLeftPanelOpen
               ? <SidebarClose className="w-5 h-5 text-[var(--genui-text)]" />
@@ -131,7 +131,7 @@ export function WorkbenchLayout({
         </main>
 
         {/* ── Right: Details / Agent panel (fixed) ── */}
-        <aside className="w-[400px] flex-shrink-0 border-l border-[var(--genui-border)] bg-[var(--genui-panel)] flex flex-col z-10 relative shadow-sm hidden xl:flex">
+        <aside className="w-[360px] 2xl:w-[380px] flex-shrink-0 border-l border-[var(--genui-border)] bg-[var(--genui-panel)] flex flex-col z-10 relative shadow-sm hidden lg:flex">
           {rightPanel}
         </aside>
       </div>

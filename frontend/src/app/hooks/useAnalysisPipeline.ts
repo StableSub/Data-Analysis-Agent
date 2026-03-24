@@ -18,6 +18,11 @@ import type { EvidenceFooterProps } from "../components/genui/EvidenceFooter";
 import type { RawLogEntry } from "../components/genui/MCPPanel";
 import type { TimelineItemStatus } from "../components/genui/TimelineItem";
 import type { PipelineStepStatus } from "../components/genui/PipelineTracker";
+import {
+  buildPreEdaProfile,
+  type PreEdaProfile,
+  type PreprocessRecommendation,
+} from "../lib/preEdaProfile";
 
 /* ─────────────────────────────────────────────
    Types
@@ -59,6 +64,9 @@ export interface UploadedDatasetMeta {
   datasetId: number;
   sourceId: string;
   fileName: string;
+  uploadedAt: string;
+  preEdaProfile: PreEdaProfile | null;
+  preprocessApproved: boolean;
 }
 
 export interface VisualizationResultPayload {
@@ -117,6 +125,7 @@ export interface UseAnalysisPipelineReturn {
   hitlProposal: HitlProposal | null;
   rawLogs: RawLogEntry[];
   latestVisualizationResult: VisualizationResultPayload | null;
+  selectedPreEdaProfile: PreEdaProfile | null;
 
   // Upload selection
   uploadedDatasets: UploadedDatasetMeta[];
@@ -218,6 +227,16 @@ function makeRawLog(label: string, payload: Record<string, unknown>, isError?: b
     label,
     payload: JSON.stringify(payload, null, 2),
     isError,
+  };
+}
+
+function recommendationToProposal(recommendation: PreprocessRecommendation) {
+  return {
+    column: recommendation.column,
+    strategy: recommendation.strategy,
+    fillValue: recommendation.fillValue,
+    missingCount: recommendation.missingCount,
+    missingPercent: recommendation.missingPercent,
   };
 }
 
@@ -407,6 +426,15 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
     });
   }, []);
 
+  const updateUploadedDataset = useCallback(
+    (sourceId: string, updater: (current: UploadedDatasetMeta) => UploadedDatasetMeta) => {
+      setUploadedDatasets((prev) =>
+        prev.map((item) => (item.sourceId === sourceId ? updater(item) : item)),
+      );
+    },
+    [],
+  );
+
   const appendThoughtStep = useCallback(
     (step: ThoughtStep) => {
       setThoughtSteps((prev) => {
@@ -487,19 +515,27 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
       setFileName(file.name);
       setState("uploading");
 
+      const uploadedAt = new Date().toISOString();
+      const profilePromise = buildPreEdaProfile(file).catch(() => null);
+
       uploadFile(file, (percent) => {
         setUploadProgress(percent);
       })
-        .then((dataset: DatasetResponse) => {
+        .then(async (dataset: DatasetResponse) => {
+          const preEdaProfile = await profilePromise;
           setUploadProgress(100);
           setState("ready");
           setRunningSubPhase("intake");
           setFileName(dataset.filename || file.name);
+          setSelectedSourceId(dataset.source_id);
 
           upsertUploadedDataset({
             datasetId: dataset.id,
             sourceId: dataset.source_id,
             fileName: dataset.filename || file.name,
+            uploadedAt,
+            preEdaProfile,
+            preprocessApproved: !preEdaProfile?.recommendation,
           });
 
           addMilestone({
@@ -523,33 +559,12 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
     startUpload(file);
   }, [startUpload]);
 
-  const handleApprove = useCallback(() => {
-    setHistory((prev) => [
-      ...prev,
-      { status: "completed" as TimelineItemStatus, title: "Approved", subtext: "User confirmed strategy", timestamp: now() },
-    ]);
-    setHitlProposal(null);
-  }, []);
-
-  const handleReject = useCallback(() => {
-    setHistory((prev) => [
-      ...prev,
-      { status: "failed" as TimelineItemStatus, title: "Rejected Changes", subtext: "User cancelled action", timestamp: now() },
-    ]);
-    setHitlProposal(null);
-  }, []);
-
-  const handleEditInstruction = useCallback((text: string) => {
-    setHistory((prev) => [
-      ...prev,
-      { status: "completed" as TimelineItemStatus, title: "User Edit", subtext: text, timestamp: now() },
-    ]);
-  }, []);
-
-  const handleSend = useCallback(
+  const runQuestionStream = useCallback(
     (message: string) => {
       const question = message.trim();
       if (!question) return;
+
+      lastQuestionRef.current = question;
 
       setChatHistory((prev) => [
         ...prev,
@@ -561,9 +576,9 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
         },
       ]);
 
-      lastQuestionRef.current = question;
       setErrorMessage(null);
       setErrorStep(null);
+      setHitlProposal(null);
       setState("running");
       setRunningSubPhase("intake");
       setStreamingAnswer("");
@@ -724,6 +739,9 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
                       typeof preprocess.output_filename === "string" && preprocess.output_filename
                         ? preprocess.output_filename
                         : `processed_${preprocess.output_source_id}`,
+                    uploadedAt: new Date().toISOString(),
+                    preEdaProfile: null,
+                    preprocessApproved: true,
                   });
                 }
               }
@@ -823,6 +841,72 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
       upsertUploadedDataset,
       nextLocalMessageId,
     ],
+  );
+
+  const handleApprove = useCallback(() => {
+    setHistory((prev) => [
+      ...prev,
+      { status: "completed" as TimelineItemStatus, title: "Approved", subtext: "User confirmed strategy", timestamp: now() },
+    ]);
+
+    if (selectedSourceId) {
+      updateUploadedDataset(selectedSourceId, (current) => ({
+        ...current,
+        preprocessApproved: true,
+      }));
+    }
+
+    setHitlProposal(null);
+
+    if (lastQuestionRef.current.trim()) {
+      runQuestionStream(lastQuestionRef.current);
+      return;
+    }
+
+    setState(uploadedDatasets.length > 0 ? "ready" : "empty");
+  }, [selectedSourceId, updateUploadedDataset, runQuestionStream, uploadedDatasets.length]);
+
+  const handleReject = useCallback(() => {
+    setHistory((prev) => [
+      ...prev,
+      { status: "failed" as TimelineItemStatus, title: "Rejected Changes", subtext: "User cancelled action", timestamp: now() },
+    ]);
+    setHitlProposal(null);
+    setState(uploadedDatasets.length > 0 ? "ready" : "empty");
+  }, [uploadedDatasets.length]);
+
+  const handleEditInstruction = useCallback((text: string) => {
+    setHistory((prev) => [
+      ...prev,
+      { status: "completed" as TimelineItemStatus, title: "User Edit", subtext: text, timestamp: now() },
+    ]);
+  }, []);
+
+  const handleSend = useCallback(
+    (message: string) => {
+      const question = message.trim();
+      if (!question) return;
+
+      const selectedDataset =
+        uploadedDatasets.find((item) => item.sourceId === selectedSourceId) ?? null;
+      const recommendation = selectedDataset?.preEdaProfile?.recommendation ?? null;
+
+      lastQuestionRef.current = question;
+
+      if (selectedSourceId && recommendation && !selectedDataset?.preprocessApproved) {
+        setErrorMessage(null);
+        setErrorStep(null);
+        setStreamingAnswer("");
+        setThoughtSteps([]);
+        setRunningSubPhase("preprocessing");
+        setHitlProposal(recommendationToProposal(recommendation));
+        setState("needs-user");
+        return;
+      }
+
+      runQuestionStream(question);
+    },
+    [uploadedDatasets, selectedSourceId, runQuestionStream],
   );
 
   const handleRetry = useCallback(() => {
@@ -984,15 +1068,28 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
 
   /* ─── Derived data: GenUI prop mappings ─── */
 
+  const selectedPreEdaProfile =
+    uploadedDatasets.find((item) => item.sourceId === selectedSourceId)?.preEdaProfile ?? null;
+
   const reportSections: ReportSection[] = (() => {
     if (state === "ready") {
       const selected = uploadedDatasets.find((item) => item.sourceId === selectedSourceId);
-      const selectedText = selected
-        ? `선택된 파일: ${selected.fileName}`
-        : "선택된 파일 없음 (일반 질문으로 전송됩니다).";
       return [
-        { type: "paragraph" as const, content: "업로드가 완료되었습니다. 파일을 선택한 뒤 질문하면 해당 데이터로 라우팅됩니다." },
-        { type: "paragraph" as const, content: selectedText },
+        {
+          type: "paragraph" as const,
+          content: selectedPreEdaProfile?.qualitySummary
+            ?? "업로드가 완료되었습니다. 파일을 선택한 뒤 질문하면 해당 데이터셋 기준으로 Deep EDA와 리포트가 이어집니다.",
+        },
+        ...(selectedPreEdaProfile?.summaryBullets?.length
+          ? [{ type: "checklist" as const, items: selectedPreEdaProfile.summaryBullets }]
+          : [
+              {
+                type: "paragraph" as const,
+                content: selected
+                  ? `선택된 파일: ${selected.fileName}`
+                  : "선택된 파일 없음 (일반 질문으로 전송됩니다).",
+              },
+            ]),
       ];
     }
 
@@ -1016,14 +1113,14 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
     if (state === "needs-user" && hitlProposal) {
       const p = hitlProposal;
       return [
-        { type: "paragraph" as const, content: "Missing values found that need your attention before proceeding." },
-        { type: "heading" as const, content: "Finding" },
+        { type: "paragraph" as const, content: "Deep EDA로 넘어가기 전에 전처리 여부를 먼저 결정해야 합니다." },
+        { type: "heading" as const, content: "HITL Proposal" },
         {
           type: "numbered-list" as const,
           items: [
-            `${p.missingCount} rows in '${p.column}' column have null values (${p.missingPercent.toFixed(2)}%)`,
-            `Recommended strategy: ${p.strategy} imputation -> '${p.fillValue}'`,
-            "Downstream steps are blocked until this is resolved",
+            `${p.column} 컬럼에 결측 ${p.missingCount}건 (${p.missingPercent.toFixed(2)}%)이 있습니다.`,
+            `추천 전략: ${p.strategy} -> ${p.fillValue}`,
+            "승인 전에는 Deep EDA와 최종 report 생성을 진행하지 않습니다.",
           ],
         },
       ];
@@ -1171,6 +1268,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
     hitlProposal,
     rawLogs,
     latestVisualizationResult,
+    selectedPreEdaProfile,
 
     uploadedDatasets,
     selectedSourceId,

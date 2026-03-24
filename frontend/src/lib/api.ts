@@ -1,5 +1,19 @@
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 
+export class ApiError extends Error {
+  status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
+export function isApiErrorStatus(error: unknown, status: number): boolean {
+  return error instanceof ApiError && error.status === status;
+}
+
 export function buildApiUrl(path: string): string {
   return path.startsWith("http") ? path : `${API_BASE}${path}`;
 }
@@ -16,7 +30,7 @@ export async function apiRequest<T>(path: string, options?: RequestInit): Promis
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(body.detail ?? `HTTP ${res.status}`);
+    throw new ApiError(res.status, body.detail ?? `HTTP ${res.status}`);
   }
 
   if (res.status === 204) return undefined as T;
