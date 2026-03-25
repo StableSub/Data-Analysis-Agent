@@ -1,19 +1,25 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from dotenv import load_dotenv
 
 from .core.db import Base, engine
-from .api import datasets as datasets_api
-from .api import chats as chats_api
-from .api import visualization as visualization_api
-from .rag import models as rag_models
-from .rag import router as rag_router
-from .api import export as export_api
-from .api import guidelines as guidelines_api
-from .api import preprocess as preprocess_api
-from .api import reports as reports_api
-from .domain.guideline import models as guideline_models
-from .domain.report import models as report_models
+from .modules.chat import models as chat_models
+from .modules.chat import router as chats_api
+from .modules.datasets import models as dataset_models
+from .modules.datasets import router as datasets_api
+from .modules.export import router as export_api
+from .modules.guidelines import models as guideline_models
+from .modules.guidelines import router as guidelines_api
+from .modules.preprocess import router as preprocess_api
+from .modules.rag import models as rag_models
+from .modules.rag import router as rag_router
+from .modules.reports import models as report_models
+from .modules.reports import router as reports_api
+from .modules.results import models as result_models
+from .modules.visualization import router as visualization_api
 
+
+load_dotenv()
 
 app = FastAPI()
 

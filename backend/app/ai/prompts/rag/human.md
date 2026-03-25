@@ -1,5 +1,0 @@
-question:
-{question}
-
-context:
-{context}
