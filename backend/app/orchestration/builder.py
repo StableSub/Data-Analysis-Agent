@@ -16,9 +16,10 @@ from .workflows.visualization import build_visualization_workflow
 
 def build_main_workflow(
     *,
-    db,
     preprocess_service,
     rag_service,
+    guideline_service,
+    guideline_rag_service,
     visualization_service,
     report_service,
     default_model: str = "gpt-5-nano",
@@ -34,7 +35,8 @@ def build_main_workflow(
         default_model=default_model,
     )
     guideline_graph = build_guideline_workflow(
-        db=db,
+        guideline_service=guideline_service,
+        guideline_rag_service=guideline_rag_service,
         default_model=default_model,
     )
     visualization_graph = build_visualization_workflow(

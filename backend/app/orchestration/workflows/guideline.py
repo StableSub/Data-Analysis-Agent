@@ -9,53 +9,38 @@ Guideline 서브그래프.
 
 from __future__ import annotations
 
-from functools import lru_cache
-from pathlib import Path
 from typing import Any, Dict
 
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
 
 from ..state import GuidelineGraphState
-from ...modules.guidelines.repository import GuidelineRepository
-from ...modules.rag.guideline_repository import GuidelineRagRepository
+from ...modules.guidelines.service import GuidelineService
 from ...modules.rag.service import GuidelineRagService
-
-
-@lru_cache(maxsize=1)
-def _cached_embedder():
-    """Guideline RAG 임베더를 단일 객체로 재사용한다."""
-    from ...modules.rag.infra.embedding import E5Embedder
-
-    return E5Embedder()
 
 
 class GuidelineSynthesisPayload(BaseModel):
     evidence_summary: str = Field(...)
 
 
-def build_guideline_workflow(*, db: Session, default_model: str = "gpt-5-nano"):
+def build_guideline_workflow(
+    *,
+    guideline_service: GuidelineService,
+    guideline_rag_service: GuidelineRagService,
+    default_model: str = "gpt-5-nano",
+):
     """
     역할: 활성 지침서 확인, 검색, 근거 요약 3단계로 구성된 guideline 서브그래프를 생성한다.
-    입력: DB 세션(`db`)과 요약용 기본 모델명(`default_model`)을 받는다.
+    입력: guideline 조회용 service, guideline RAG service, 요약용 기본 모델명을 받는다.
     출력: `guideline_result`, `guideline_index_status`를 누적하는 컴파일된 그래프를 반환한다.
     """
-    guideline_repository = GuidelineRepository(db)
-    guideline_rag_repository = GuidelineRagRepository(db)
-    guideline_rag_service = GuidelineRagService(
-        repository=guideline_rag_repository,
-        storage_dir=Path(__file__).resolve().parents[4] / "storage" / "guideline_vectors",
-        embedder=_cached_embedder(),
-    )
-
     def ensure_guideline_index_node(state: GuidelineGraphState) -> Dict[str, Any]:
         """
         역할: 활성 지침서의 인덱스 존재 여부를 확인하고 필요 시 새로 인덱싱한다.
         """
-        active_guideline = guideline_repository.get_active()
+        active_guideline = guideline_service.get_active_guideline()
         if active_guideline is None:
             return {
                 "active_guideline_source_id": "",
@@ -70,24 +55,12 @@ def build_guideline_workflow(*, db: Session, default_model: str = "gpt-5-nano"):
             }
 
         source_id = active_guideline.source_id
-        source_meta = guideline_rag_repository.get_source(source_id)
-        index_path = guideline_rag_service._index_path(source_id)
-        if source_meta is not None and index_path.exists():
-            status = "existing"
-        else:
-            guideline_rag_service.index_guideline(active_guideline)
-            updated_meta = guideline_rag_repository.get_source(source_id)
-            updated_index_path = guideline_rag_service._index_path(source_id)
-            status = (
-                "created"
-                if updated_meta is not None and updated_index_path.exists()
-                else "missing"
-            )
+        index_status = guideline_rag_service.ensure_index_for_guideline(active_guideline)
 
         return {
             "active_guideline_source_id": source_id,
             "guideline_index_status": {
-                "status": status,
+                "status": index_status.get("status", "missing"),
                 "source_id": source_id,
                 "guideline_id": active_guideline.guideline_id,
                 "filename": active_guideline.filename,
@@ -107,18 +80,19 @@ def build_guideline_workflow(*, db: Session, default_model: str = "gpt-5-nano"):
             status_raw = index_status.get("status")
             status_value = status_raw if isinstance(status_raw, str) else ""
 
-        active_guideline = guideline_repository.get_by_source_id(active_source_id) if active_source_id else None
+        active_guideline = (
+            guideline_service.get_guideline_by_source_id(active_source_id)
+            if active_source_id
+            else None
+        )
 
         retrieved = []
         if query and active_source_id and status_value in {"existing", "created"}:
-            source_meta = guideline_rag_repository.get_source(active_source_id)
-            index_path = guideline_rag_service._index_path(active_source_id)
-            if source_meta is not None and index_path.exists():
-                retrieved = guideline_rag_service.query(
-                    query=query,
-                    top_k=3,
-                    source_filter=[active_source_id],
-                )
+            retrieved = guideline_rag_service.query_for_source(
+                query=query,
+                source_id=active_source_id,
+                top_k=3,
+            )
 
         context = guideline_rag_service.build_context(retrieved) if retrieved else ""
         retrieved_chunks = [

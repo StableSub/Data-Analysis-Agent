@@ -1,14 +1,10 @@
-from pathlib import Path
-
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import Response
-from sqlalchemy.orm import Session
 
-from ...core.db import get_db
+from .dependencies import get_guideline_service
 from ..rag.dependencies import get_guideline_rag_service
 from ..rag.errors import RagEmbeddingError
 from ..rag.service import GuidelineRagService
-from .repository import GuidelineRepository
 from .schemas import GuidelineActivateResponse, GuidelineBase, GuidelineListResponse
 from .service import GuidelineService
 
@@ -21,12 +17,6 @@ ALLOWED_GUIDELINE_MIME_TYPES = {
     "applications/vnd.pdf",
     "text/pdf",
 }
-
-
-def get_guideline_service(db: Session = Depends(get_db)) -> GuidelineService:
-    repository = GuidelineRepository(db)
-    storage_dir = Path(__file__).resolve().parents[4] / "storage" / "guidelines"
-    return GuidelineService(repository=repository, storage_dir=storage_dir)
 
 
 def _validate_guideline_pdf(file: UploadFile) -> None:
@@ -112,4 +102,3 @@ async def delete_guideline(
         pass
 
     return Response(status_code=status.HTTP_204_NO_CONTENT)
-

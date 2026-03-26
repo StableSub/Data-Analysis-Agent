@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from ...core.db import get_db
 from ..datasets.repository import DataSourceRepository
+from ..datasets.service import get_data_source_repository
 from .guideline_repository import GuidelineRagRepository
 from .repository import RagRepository
 from .service import GuidelineRagService, RagService
@@ -50,10 +51,9 @@ def build_rag_service(
 
 
 def get_rag_service(
-    db: Session = Depends(get_db),
     repository: RagRepository = Depends(get_rag_repository),
+    dataset_repository: DataSourceRepository = Depends(get_data_source_repository),
 ) -> RagService:
-    dataset_repository = DataSourceRepository(db)
     return build_rag_service(
         repository=repository,
         dataset_repository=dataset_repository,

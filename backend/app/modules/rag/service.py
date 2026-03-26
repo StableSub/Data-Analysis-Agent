@@ -325,6 +325,23 @@ class GuidelineRagService:
         self.chunk_overlap = chunk_overlap
         self.storage_dir.mkdir(parents=True, exist_ok=True)
 
+    def ensure_index_for_guideline(self, guideline: Guideline) -> dict[str, str]:
+        source_id = guideline.source_id
+        source_meta = self.repository.get_source(source_id)
+        index_path = self._index_path(source_id)
+        if source_meta is not None and index_path.exists():
+            return {"status": "existing", "source_id": source_id}
+
+        self.index_guideline(guideline)
+        updated_meta = self.repository.get_source(source_id)
+        updated_index_path = self._index_path(source_id)
+        status = (
+            "created"
+            if updated_meta is not None and updated_index_path.exists()
+            else "missing"
+        )
+        return {"status": status, "source_id": source_id}
+
     def index_guideline(self, guideline: Guideline) -> None:
         if not guideline.storage_path:
             return
@@ -420,6 +437,13 @@ class GuidelineRagService:
             parts.append(f"[source:{item.source_id}][chunk:{item.chunk_id}]")
             parts.append(item.content)
         return "\n\n".join(parts)
+
+    def query_for_source(self, *, query: str, source_id: str, top_k: int = 3) -> List[RetrievedChunk]:
+        source_meta = self.repository.get_source(source_id)
+        index_path = self._index_path(source_id)
+        if source_meta is None or not index_path.exists():
+            return []
+        return self.query(query=query, top_k=top_k, source_filter=[source_id])
 
     def delete_source(self, source_id: str) -> None:
         vector_dir = self.storage_dir / source_id
