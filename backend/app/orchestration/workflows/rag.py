@@ -8,7 +8,7 @@ V1 RAG 서브그래프.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from langgraph.graph import END, START, StateGraph
 
@@ -119,17 +119,3 @@ def build_rag_workflow(*, rag_service: RagService, default_model: str = "gpt-5-n
     graph.add_edge("insight_synthesis", END)
 
     return graph.compile()
-
-
-async def generate_rag_answer(
-    *,
-    service: RagService,
-    query: str,
-    top_k: int = 3,
-    source_filter: Optional[List[str]] = None,
-) -> tuple[str, List[RetrievedChunk]] | None:
-    return await service.answer_query(
-        query=query,
-        top_k=top_k,
-        source_filter=source_filter,
-    )

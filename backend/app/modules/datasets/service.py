@@ -7,16 +7,9 @@ from fastapi import Depends
 from sqlalchemy.orm import Session
 
 from ...core.db import get_db
-from ..rag.dependencies import get_rag_service
 
 from .models import Dataset
 from .repository import DataSourceRepository
-
-
-class DatasetUploadError(RuntimeError):
-    def __init__(self, code: str, message: str | None = None) -> None:
-        super().__init__(message or code)
-        self.code = code
 
 
 class DatasetStorage:
@@ -106,12 +99,10 @@ class DataSourceService:
         repository: DataSourceRepository,
         storage: DatasetStorage,
         reader: DatasetReader,
-        rag_service: Any | None = None,
     ) -> None:
         self.repository = repository
         self.storage = storage
         self.reader = reader
-        self.rag_service = rag_service
 
     def upload_dataset(
         self,
@@ -127,13 +118,6 @@ class DataSourceService:
             filesize=size,
         )
         dataset = self.repository.create(dataset)
-        if self.rag_service is not None:
-            try:
-                self.rag_service.index_dataset(dataset)
-            except Exception as exc:
-                if getattr(exc, "code", "") == "EMBEDDING_ERROR":
-                    raise DatasetUploadError("EMBEDDING_ERROR") from exc
-                raise
         return dataset
 
     def list_datasets(self, skip: int = 0, limit: int = 20) -> List[Dataset]:
@@ -146,9 +130,6 @@ class DataSourceService:
         if not dataset:
             return None
         return {"dataset": dataset}
-
-    def get_dataset_by_source_id(self, source_id: str) -> Optional[Dataset]:
-        return self.repository.get_by_source_id(source_id)
 
     def delete_dataset(self, source_id: str) -> Dict[str, Any]:
         dataset = self.repository.get_by_source_id(source_id)
@@ -171,12 +152,6 @@ class DataSourceService:
             pass
 
         self.repository.delete(dataset)
-
-        if self.rag_service is not None:
-            try:
-                self.rag_service.delete_source(source_id)
-            except Exception:
-                pass
 
         return {
             "success": True,
@@ -206,13 +181,11 @@ def build_data_source_service(
     repository: DataSourceRepository,
     storage: DatasetStorage,
     reader: DatasetReader,
-    rag_service,
 ) -> DataSourceService:
     return DataSourceService(
         repository=repository,
         storage=storage,
         reader=reader,
-        rag_service=rag_service,
     )
 
 
@@ -220,11 +193,9 @@ def get_data_source_service(
     repository: DataSourceRepository = Depends(get_data_source_repository),
     storage: DatasetStorage = Depends(get_dataset_storage),
     reader: DatasetReader = Depends(get_dataset_reader),
-    rag_service=Depends(get_rag_service),
 ) -> DataSourceService:
     return build_data_source_service(
         repository=repository,
         storage=storage,
         reader=reader,
-        rag_service=rag_service,
     )
