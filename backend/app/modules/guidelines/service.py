@@ -54,6 +54,12 @@ class GuidelineService:
         end = skip + limit if limit is not None else None
         return guidelines[skip:end]
 
+    def get_active_guideline(self) -> Optional[Guideline]:
+        return self.repository.get_active()
+
+    def get_guideline_by_source_id(self, source_id: str) -> Optional[Guideline]:
+        return self.repository.get_by_source_id(source_id)
+
     def activate_guideline(self, source_id: str) -> dict[str, Any]:
         guideline = self.repository.get_by_source_id(source_id)
         if not guideline:

@@ -11,13 +11,20 @@ from sqlalchemy.orm import Session
 
 from ..core.db import get_db
 from ..modules.datasets.service import build_data_source_repository, build_dataset_reader
+from ..modules.guidelines.dependencies import build_guideline_repository, build_guideline_service
+from ..modules.guidelines.service import GuidelineService
 from ..modules.preprocess.dependencies import (
     build_preprocess_processor,
     build_preprocess_service,
 )
 from ..modules.preprocess.service import PreprocessService
-from ..modules.rag.dependencies import build_rag_repository, build_rag_service
-from ..modules.rag.service import RagService
+from ..modules.rag.dependencies import (
+    build_guideline_rag_repository,
+    build_guideline_rag_service,
+    build_rag_repository,
+    build_rag_service,
+)
+from ..modules.rag.service import GuidelineRagService, RagService
 from ..modules.reports.dependencies import build_report_repository, build_report_service
 from ..modules.reports.service import ReportService
 from ..modules.visualization.dependencies import build_visualization_service
@@ -31,6 +38,8 @@ if TYPE_CHECKING:
 class WorkflowServices:
     preprocess_service: PreprocessService
     rag_service: RagService
+    guideline_service: GuidelineService
+    guideline_rag_service: GuidelineRagService
     visualization_service: VisualizationService
     report_service: ReportService
 
@@ -53,6 +62,12 @@ def build_orchestration_services(*, db: Session, agent: Any) -> WorkflowServices
         dataset_repository=dataset_repository,
         answer_agent=agent,
     )
+    guideline_service = build_guideline_service(
+        repository=build_guideline_repository(db),
+    )
+    guideline_rag_service = build_guideline_rag_service(
+        repository=build_guideline_rag_repository(db),
+    )
     visualization_service = build_visualization_service(
         repository=dataset_repository,
         reader=dataset_reader,
@@ -65,6 +80,8 @@ def build_orchestration_services(*, db: Session, agent: Any) -> WorkflowServices
     return WorkflowServices(
         preprocess_service=preprocess_service,
         rag_service=rag_service,
+        guideline_service=guideline_service,
+        guideline_rag_service=guideline_rag_service,
         visualization_service=visualization_service,
         report_service=report_service,
     )
@@ -82,9 +99,10 @@ def build_agent_client(*, db: Session) -> "AgentClient":
         agent = agent_box["agent"]
         services = build_orchestration_services(db=db, agent=agent)
         workflow = build_main_workflow(
-            db=db,
             preprocess_service=services.preprocess_service,
             rag_service=services.rag_service,
+            guideline_service=services.guideline_service,
+            guideline_rag_service=services.guideline_rag_service,
             visualization_service=services.visualization_service,
             report_service=services.report_service,
             default_model=agent.default_model,
