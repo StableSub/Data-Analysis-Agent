@@ -1,8 +1,11 @@
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import Response
 
+from ..rag.dependencies import get_rag_service
+from ..rag.errors import RagEmbeddingError
+from ..rag.service import RagService
 from .schemas import DatasetBase, DatasetListResponse, DatasetSampleResponse
-from .service import DataSourceService, DatasetUploadError, get_data_source_service
+from .service import DataSourceService, get_data_source_service
 
 router = APIRouter(prefix="/datasets", tags=["datasets"])
 
@@ -11,6 +14,7 @@ router = APIRouter(prefix="/datasets", tags=["datasets"])
 async def upload_dataset(
     file: UploadFile = File(...),
     service: DataSourceService = Depends(get_data_source_service),
+    rag_service: RagService = Depends(get_rag_service),
 ):
     if not file.filename:
         raise HTTPException(status_code=400, detail="파일명이 비어 있습니다.")
@@ -21,9 +25,24 @@ async def upload_dataset(
             original_filename=file.filename,
             display_name=file.filename,
         )
-    except DatasetUploadError as exc:
-        raise HTTPException(status_code=500, detail=exc.code)
     except Exception:
+        raise HTTPException(status_code=500, detail="파일 업로드 중 오류가 발생했습니다.")
+
+    try:
+        rag_service.index_dataset(dataset)
+    except RagEmbeddingError:
+        try:
+            rag_service.delete_source(dataset.source_id)
+        except Exception:
+            pass
+        service.delete_dataset(dataset.source_id)
+        raise HTTPException(status_code=500, detail="EMBEDDING_ERROR")
+    except Exception:
+        try:
+            rag_service.delete_source(dataset.source_id)
+        except Exception:
+            pass
+        service.delete_dataset(dataset.source_id)
         raise HTTPException(status_code=500, detail="파일 업로드 중 오류가 발생했습니다.")
 
     return {
@@ -62,8 +81,14 @@ async def get_dataset_detail(
 async def delete_dataset(
     source_id: str,
     service: DataSourceService = Depends(get_data_source_service),
+    rag_service: RagService = Depends(get_rag_service),
 ):
     result = service.delete_dataset(source_id)
+    if result["success"]:
+        try:
+            rag_service.delete_source(source_id)
+        except Exception:
+            pass
     if not result["success"]:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=result["message"])
     return Response(status_code=status.HTTP_204_NO_CONTENT)
