@@ -4,8 +4,8 @@ from sqlalchemy.orm import Session
 from ...core.db import get_db
 from ...orchestration.client import AgentClient
 from ...orchestration.dependencies import get_agent_client
+from ..datasets.dependencies import get_data_source_repository
 from ..datasets.repository import DataSourceRepository
-from ..datasets.service import get_data_source_repository
 from .repository import ChatRepository
 from .service import ChatService
 

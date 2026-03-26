@@ -2,8 +2,9 @@ from fastapi import Depends
 from sqlalchemy.orm import Session
 
 from ...core.db import get_db
+from ..datasets.dependencies import get_data_source_repository, get_dataset_reader
 from ..datasets.repository import DataSourceRepository
-from ..datasets.service import DatasetReader, get_data_source_repository, get_dataset_reader
+from ..datasets.service import DatasetReader
 from .repository import ReportRepository
 from .service import ReportService
 

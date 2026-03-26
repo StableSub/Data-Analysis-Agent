@@ -32,6 +32,57 @@ def _validate_guideline_pdf(file: UploadFile) -> None:
         raise HTTPException(status_code=400, detail="PDF MIME 타입 파일만 업로드할 수 있습니다.")
 
 
+def _upload_with_rag_indexing(
+    *,
+    service: GuidelineService,
+    guideline_rag_service: GuidelineRagService,
+    file: UploadFile,
+):
+    try:
+        guideline = service.upload_guideline(
+            file_stream=file.file,
+            original_filename=file.filename or "guideline.pdf",
+            display_name=file.filename,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="지침서 업로드 중 오류가 발생했습니다.") from exc
+
+    try:
+        guideline_rag_service.index_guideline(guideline)
+    except RagEmbeddingError as exc:
+        try:
+            guideline_rag_service.delete_source(guideline.source_id)
+        except Exception:
+            pass
+        service.delete_guideline(guideline.source_id)
+        raise HTTPException(status_code=500, detail="EMBEDDING_ERROR") from exc
+    except Exception as exc:
+        try:
+            guideline_rag_service.delete_source(guideline.source_id)
+        except Exception:
+            pass
+        service.delete_guideline(guideline.source_id)
+        raise HTTPException(status_code=500, detail="지침서 업로드 중 오류가 발생했습니다.") from exc
+
+    return guideline
+
+
+def _delete_with_rag_cleanup(
+    *,
+    source_id: str,
+    service: GuidelineService,
+    guideline_rag_service: GuidelineRagService,
+) -> None:
+    result = service.delete_guideline(source_id)
+    if not result["success"]:
+        raise HTTPException(status_code=404, detail=result["message"])
+
+    try:
+        guideline_rag_service.delete_source(source_id)
+    except Exception:
+        pass
+
+
 @router.post("/upload", response_model=GuidelineBase)
 async def upload_guideline(
     file: UploadFile = File(...),
@@ -40,17 +91,11 @@ async def upload_guideline(
 ):
     _validate_guideline_pdf(file)
 
-    try:
-        guideline = service.upload_guideline(
-            file_stream=file.file,
-            original_filename=file.filename or "guideline.pdf",
-            display_name=file.filename,
-        )
-        guideline_rag_service.index_guideline(guideline)
-    except RagEmbeddingError:
-        raise HTTPException(status_code=500, detail="EMBEDDING_ERROR")
-    except Exception:
-        raise HTTPException(status_code=500, detail="지침서 업로드 중 오류가 발생했습니다.")
+    guideline = _upload_with_rag_indexing(
+        service=service,
+        guideline_rag_service=guideline_rag_service,
+        file=file,
+    )
 
     return guideline
 
@@ -92,13 +137,10 @@ async def delete_guideline(
     service: GuidelineService = Depends(get_guideline_service),
     guideline_rag_service: GuidelineRagService = Depends(get_guideline_rag_service),
 ):
-    result = service.delete_guideline(source_id)
-    if not result["success"]:
-        raise HTTPException(status_code=404, detail=result["message"])
-
-    try:
-        guideline_rag_service.delete_source(source_id)
-    except Exception:
-        pass
+    _delete_with_rag_cleanup(
+        source_id=source_id,
+        service=service,
+        guideline_rag_service=guideline_rag_service,
+    )
 
     return Response(status_code=status.HTTP_204_NO_CONTENT)

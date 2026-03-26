@@ -10,7 +10,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from sqlalchemy.orm import Session
 
 from ..core.db import get_db
-from ..modules.datasets.service import build_data_source_repository, build_dataset_reader
+from ..modules.datasets.dependencies import build_data_source_repository, build_dataset_reader
 from ..modules.guidelines.dependencies import build_guideline_repository, build_guideline_service
 from ..modules.guidelines.service import GuidelineService
 from ..modules.preprocess.dependencies import (
