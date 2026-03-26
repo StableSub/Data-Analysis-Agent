@@ -3,10 +3,6 @@ from pathlib import Path
 from typing import IO, Any, Dict, List, Optional
 
 import pandas as pd
-from fastapi import Depends
-from sqlalchemy.orm import Session
-
-from ...core.db import get_db
 
 from .models import Dataset
 from .repository import DataSourceRepository
@@ -60,35 +56,6 @@ class DatasetReader:
             nrows=nrows,
             usecols=usecols,
         )
-
-
-def _datasets_storage_dir() -> Path:
-    return Path(__file__).resolve().parents[4] / "storage" / "datasets"
-
-
-def build_data_source_repository(db: Session) -> DataSourceRepository:
-    return DataSourceRepository(db)
-
-
-def get_data_source_repository(db: Session = Depends(get_db)) -> DataSourceRepository:
-    return build_data_source_repository(db)
-
-
-def build_dataset_storage() -> DatasetStorage:
-    return DatasetStorage(_datasets_storage_dir())
-
-
-def get_dataset_storage() -> DatasetStorage:
-    return build_dataset_storage()
-
-
-def build_dataset_reader() -> DatasetReader:
-    return DatasetReader()
-
-
-def get_dataset_reader() -> DatasetReader:
-    return build_dataset_reader()
-
 
 class DataSourceService:
     """데이터셋 흐름만 담당한다."""
@@ -174,28 +141,3 @@ class DataSourceService:
             "columns": df.columns.tolist(),
             "rows": df.where(pd.notnull(df), None).to_dict(orient="records"),
         }
-
-
-def build_data_source_service(
-    *,
-    repository: DataSourceRepository,
-    storage: DatasetStorage,
-    reader: DatasetReader,
-) -> DataSourceService:
-    return DataSourceService(
-        repository=repository,
-        storage=storage,
-        reader=reader,
-    )
-
-
-def get_data_source_service(
-    repository: DataSourceRepository = Depends(get_data_source_repository),
-    storage: DatasetStorage = Depends(get_dataset_storage),
-    reader: DatasetReader = Depends(get_dataset_reader),
-) -> DataSourceService:
-    return build_data_source_service(
-        repository=repository,
-        storage=storage,
-        reader=reader,
-    )

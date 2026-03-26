@@ -5,8 +5,8 @@ from fastapi import Depends
 from sqlalchemy.orm import Session
 
 from ...core.db import get_db
+from ..datasets.dependencies import get_data_source_repository
 from ..datasets.repository import DataSourceRepository
-from ..datasets.service import get_data_source_repository
 from .guideline_repository import GuidelineRagRepository
 from .repository import RagRepository
 from .service import GuidelineRagService, RagService
