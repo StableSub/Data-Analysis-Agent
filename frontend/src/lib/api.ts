@@ -87,15 +87,6 @@ export interface ReportResponse {
   summary_text: string;
 }
 
-// --- Request types ---
-
-export interface ChatRequest {
-  question: string;
-  session_id?: number;
-  model_id?: string;
-  source_id?: string;
-}
-
 export interface PendingApprovalColumnSummary {
   column: string;
   missing_rate: number;
@@ -228,24 +219,14 @@ export function deleteDataset(sourceId: string): Promise<void> {
   });
 }
 
-/** POST /chats/ */
-export function sendChat(req: ChatRequest): Promise<ChatResponse> {
-  return apiRequest<ChatResponse>("/chats/", {
-    method: "POST",
-    body: JSON.stringify(req),
-  });
-}
-
 /** GET /chats/{session_id}/history */
 export function getChatHistory(sessionId: number): Promise<ChatHistoryResponse> {
   return apiRequest<ChatHistoryResponse>(`/chats/${sessionId}/history`);
 }
 
-export function fetchPendingApproval(
-  sessionId: number,
-  runId: string,
-): Promise<PendingApprovalResponse> {
-  return apiRequest<PendingApprovalResponse>(`/chats/${sessionId}/runs/${runId}/pending-approval`);
+/** GET /chats/runs/{run_id}/pending-approval */
+export function fetchPendingApproval(runId: string): Promise<PendingApprovalResponse> {
+  return apiRequest<PendingApprovalResponse>(`/chats/runs/${runId}/pending-approval`);
 }
 
 export function resumeChatRun(

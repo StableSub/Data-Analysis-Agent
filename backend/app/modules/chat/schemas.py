@@ -20,12 +20,6 @@ class ChatRequest(BaseModel):
     source_id: Optional[str] = Field(default=None, description="Optional dataset source identifier.")
 
 
-class ChatThoughtStep(BaseModel):
-    phase: str
-    message: str
-    status: str = "completed"
-
-
 class PendingApproval(BaseModel):
     stage: Literal["preprocess", "visualization", "report"]
     kind: Literal["plan_review", "draft_review"]
@@ -35,14 +29,6 @@ class PendingApproval(BaseModel):
     plan: dict[str, Any] = Field(default_factory=dict)
     draft: str = ""
     review: dict[str, Any] = Field(default_factory=dict)
-
-
-class ChatResponse(BaseModel):
-    answer: str
-    session_id: int
-    run_id: Optional[str] = None
-    thought_steps: List[ChatThoughtStep] = Field(default_factory=list)
-    pending_approval: Optional[PendingApproval] = None
 
 
 class ResumeRunRequest(BaseModel):

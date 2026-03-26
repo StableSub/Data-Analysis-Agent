@@ -177,10 +177,7 @@ export default function Workbench() {
 
           if (nextContext.stateHint === "needs-user" && nextContext.runId) {
             try {
-              const pending = await fetchPendingApproval(
-                targetSession.backendSessionId,
-                nextContext.runId,
-              );
+              const pending = await fetchPendingApproval(nextContext.runId);
               restoredPendingApproval = pending.pending_approval;
               stateHint = "needs-user";
             } catch {

@@ -137,7 +137,24 @@ class AgentClient:
         if not interrupts:
             return None
         pending_approval = getattr(interrupts[0], "value", None)
-        return pending_approval if isinstance(pending_approval, dict) else None
+        if not isinstance(pending_approval, dict):
+            return None
+
+        values = getattr(snapshot, "values", None)
+        if isinstance(values, dict):
+            session_id = values.get("session_id")
+            if isinstance(session_id, int):
+                pending_approval = {
+                    **pending_approval,
+                    "session_id": session_id,
+                }
+            elif isinstance(session_id, str) and session_id.strip().isdigit():
+                pending_approval = {
+                    **pending_approval,
+                    "session_id": int(session_id),
+                }
+
+        return pending_approval
 
     def _build_state(
         self,
