@@ -54,9 +54,6 @@ class GuidelineService:
         end = skip + limit if limit is not None else None
         return guidelines[skip:end]
 
-    def get_active_guideline(self) -> Guideline | None:
-        return self.repository.get_active()
-
     def activate_guideline(self, source_id: str) -> dict[str, Any]:
         guideline = self.repository.get_by_source_id(source_id)
         if not guideline:
@@ -103,4 +100,3 @@ class GuidelineService:
             "deleted_file": deleted_info,
             "message": "지침서가 성공적으로 삭제되었습니다.",
         }
-

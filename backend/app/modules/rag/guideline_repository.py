@@ -2,7 +2,7 @@ from typing import Iterable, List, Optional
 
 from sqlalchemy.orm import Session
 
-from .models import GuidelineRagChunk, GuidelineRagContext, GuidelineRagSource
+from .models import GuidelineRagChunk, GuidelineRagSource
 
 
 class GuidelineRagRepository:
@@ -99,21 +99,3 @@ class GuidelineRagRepository:
             )
             .all()
         )
-
-    def add_context_entries(
-        self,
-        *,
-        session_id: int,
-        source_id: str,
-        chunk_db_ids: Iterable[int],
-    ) -> None:
-        objects = [
-            GuidelineRagContext(
-                session_id=session_id,
-                source_id=source_id,
-                chunk_id=chunk_db_id,
-            )
-            for chunk_db_id in chunk_db_ids
-        ]
-        self.db.add_all(objects)
-        self.db.commit()
