@@ -206,17 +206,6 @@ class RagService:
             )
         return answer, retrieved
 
-    def add_context_links(self, *, session_id: int, retrieved: Iterable[RetrievedChunk]) -> None:
-        by_source: dict[str, List[int]] = {}
-        for item in retrieved:
-            by_source.setdefault(item.source_id, []).append(item.db_id)
-        for source_id, chunk_db_ids in by_source.items():
-            self.repository.add_context_entries(
-                session_id=session_id,
-                source_id=source_id,
-                chunk_db_ids=chunk_db_ids,
-            )
-
     def delete_source(self, source_id: str) -> None:
         vector_dir = self.storage_dir / source_id
         if vector_dir.exists():
@@ -431,17 +420,6 @@ class GuidelineRagService:
             parts.append(f"[source:{item.source_id}][chunk:{item.chunk_id}]")
             parts.append(item.content)
         return "\n\n".join(parts)
-
-    def add_context_links(self, *, session_id: int, retrieved: Iterable[RetrievedChunk]) -> None:
-        by_source: dict[str, List[int]] = {}
-        for item in retrieved:
-            by_source.setdefault(item.source_id, []).append(item.db_id)
-        for source_id, chunk_db_ids in by_source.items():
-            self.repository.add_context_entries(
-                session_id=session_id,
-                source_id=source_id,
-                chunk_db_ids=chunk_db_ids,
-            )
 
     def delete_source(self, source_id: str) -> None:
         vector_dir = self.storage_dir / source_id

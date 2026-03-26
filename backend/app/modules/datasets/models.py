@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Column, ForeignKey, Integer, String
+from sqlalchemy import Column, Integer, String
 
 from ...core.db import Base
 
@@ -15,18 +15,3 @@ class Dataset(Base):
     filename = Column(String(255), nullable=False)
     storage_path = Column(String(512), nullable=False)
     filesize = Column(Integer, nullable=True)
-
-
-class SessionSource(Base):
-    """채팅 세션과 데이터셋(source_id) 연결 관계를 저장하는 ORM 모델."""
-
-    __tablename__ = "session_sources"
-
-    id = Column(Integer, primary_key=True, index=True)
-    session_id = Column(String(64), nullable=False, index=True)
-    source_id = Column(
-        String(36),
-        ForeignKey("datasets.source_id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
