@@ -27,8 +27,10 @@ import { useAnalysisPipeline, type PipelineSessionContext } from "../hooks/useAn
 import { useWorkbenchSessionStore } from "../hooks/useWorkbenchSessionStore";
 import {
   deleteChatSession,
+  fetchPendingApproval,
   getChatHistory,
   isApiErrorStatus,
+  type PendingApprovalPayload,
 } from "../../lib/api";
 import { toast } from "sonner";
 
@@ -74,6 +76,64 @@ const InlineUploadProgress = ({ progress, fileName }: { progress: number; fileNa
   );
 };
 
+const formatPendingValue = (value: unknown): string => {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item)).join(", ");
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "number" || typeof value === "boolean" || value === null) {
+    return String(value);
+  }
+  if (value && typeof value === "object") {
+    return JSON.stringify(value);
+  }
+  return "";
+};
+
+const formatPendingOperation = (operation: Record<string, unknown>): string => {
+  const op = typeof operation.op === "string" && operation.op.trim() ? operation.op : "operation";
+  const details = Object.entries(operation)
+    .filter(([key, value]) => key !== "op" && value !== undefined && value !== "")
+    .map(([key, value]) => `${key}: ${formatPendingValue(value)}`)
+    .filter((value) => value.trim());
+  return details.length > 0 ? `${op} (${details.join(" · ")})` : op;
+};
+
+const buildPendingApprovalChanges = (
+  pendingApproval: PendingApprovalPayload | null,
+): string[] => {
+  if (!pendingApproval) {
+    return ["승인 대기 중인 작업이 있습니다."];
+  }
+
+  if (pendingApproval.stage === "report") {
+    return [
+      "리포트 초안을 검토한 뒤 승인 또는 수정 요청",
+      typeof pendingApproval.review?.revision_count === "number"
+        ? `현재 revision count: ${pendingApproval.review.revision_count}`
+        : "리포트 수정 횟수 정보 없음",
+      "승인 후 최종 report 흐름을 마무리",
+    ];
+  }
+
+  if (pendingApproval.stage === "visualization") {
+    return [
+      `chart_type: ${pendingApproval.plan.chart_type || "-"}`,
+      `x: ${pendingApproval.plan.x_key || "-"} / y: ${pendingApproval.plan.y_key || "-"}`,
+      pendingApproval.plan.reason || "시각화 계획 검토 필요",
+    ];
+  }
+
+  const operationItems =
+    pendingApproval.plan.operations.length > 0
+      ? pendingApproval.plan.operations.map((operation) => formatPendingOperation(operation))
+      : ["제안된 전처리 operation 없음"];
+
+  return operationItems.slice(0, 4);
+};
+
 // --- MAIN PAGE ---
 
 export default function Workbench() {
@@ -89,7 +149,7 @@ export default function Workbench() {
     pipelineSteps,
     decisionChips,
     evidence,
-    hitlProposal,
+    pendingApproval,
     rawLogs,
     latestVisualizationResult,
     selectedPreEdaProfile,
@@ -177,13 +237,36 @@ export default function Workbench() {
           const latestAssistant = [...msgs]
             .reverse()
             .find((message) => message.role === "assistant");
+          let restoredPendingApproval = nextContext.pendingApproval;
+          let stateHint = nextContext.stateHint;
+
+          if (nextContext.stateHint === "needs-user" && nextContext.runId) {
+            try {
+              const pending = await fetchPendingApproval(
+                targetSession.backendSessionId,
+                nextContext.runId,
+              );
+              restoredPendingApproval = pending.pending_approval;
+              stateHint = "needs-user";
+            } catch {
+              restoredPendingApproval = null;
+              stateHint = msgs.length > 0
+                ? "success"
+                : nextContext.uploadedDatasets.length > 0
+                  ? "ready"
+                  : "empty";
+            }
+          } else if (msgs.length > 0) {
+            stateHint = "success";
+          }
 
           nextContext = {
             ...nextContext,
             backendSessionId: targetSession.backendSessionId,
             chatHistory: msgs,
             latestAssistantAnswer: latestAssistant?.content ?? nextContext.latestAssistantAnswer,
-            stateHint: msgs.length > 0 ? "success" : nextContext.stateHint,
+            pendingApproval: restoredPendingApproval,
+            stateHint,
             errorMessage: nextContext.stateHint === "error" ? nextContext.errorMessage : null,
           };
 
@@ -328,7 +411,7 @@ export default function Workbench() {
     if (!initializedRef.current || !activeSessionId) {
       return;
     }
-    if (state === "running" || state === "uploading" || state === "needs-user") {
+    if (state === "running" || state === "uploading") {
       return;
     }
     const snapshot = captureSessionContext();
@@ -767,15 +850,11 @@ export default function Workbench() {
       {/* NEEDS-USER */}
       {state === "needs-user" && (
         <div className="space-y-4 animate-in slide-in-from-bottom-4 fade-in duration-500">
-          {hitlProposal && (
+          {pendingApproval && (
             <ApprovalCard
-              title={`Impute ${hitlProposal.column}`}
-              description={`${hitlProposal.column} 컬럼의 결측 ${hitlProposal.missingCount}건 (${hitlProposal.missingPercent.toFixed(1)}%)을 ${hitlProposal.strategy} 방식으로 처리하면 이후 Deep EDA를 계속 진행할 수 있습니다.`}
-              changes={[
-                `${hitlProposal.column} 결측을 ${hitlProposal.fillValue}로 대체`,
-                "전처리 메타데이터와 품질 요약 갱신",
-                "승인 후 분포 / 상관관계 / 이상치 계산 재개",
-              ]}
+              title={pendingApproval.title}
+              description={pendingApproval.summary}
+              changes={buildPendingApprovalChanges(pendingApproval)}
               hideActions
             />
           )}
@@ -783,8 +862,12 @@ export default function Workbench() {
           <AssistantReportMessage
             variant="final"
             accentVariant="needs-user"
-            title={`Approval Required${hitlProposal ? ` — Impute ${hitlProposal.column}` : ""}`}
-            subtitle="Action needed"
+            title={pendingApproval?.title ?? "Plan review"}
+            subtitle={
+              pendingApproval?.stage === "report"
+                ? "Waiting for report review"
+                : "Waiting for approval"
+            }
             timestamp="Now"
             sections={reportSections}
             maxBodyHeight={300}
@@ -792,7 +875,17 @@ export default function Workbench() {
           />
 
           <div className="rounded-xl border border-[var(--genui-needs-user)]/30 bg-[var(--genui-needs-user)]/5 px-4 py-3">
-            <ToolCallIndicator status="needs-user" label="preprocess approval" sublabel="결정은 중앙 승인 카드와 하단 GateBar에서만 처리됩니다." />
+            <ToolCallIndicator
+              status="needs-user"
+              label={
+                pendingApproval?.stage === "report"
+                  ? "report review"
+                  : pendingApproval?.stage === "visualization"
+                    ? "visualization review"
+                    : "preprocess approval"
+              }
+              sublabel="결정은 중앙 승인 카드와 하단 GateBar에서만 처리됩니다."
+            />
           </div>
         </div>
       )}
@@ -832,7 +925,13 @@ export default function Workbench() {
       placeholder={
         state === "empty" ? "Upload a dataset or ask a question..." :
           state === "ready" ? "Pre-EDA를 확인한 뒤 질문을 이어서 입력하세요..." :
-            state === "needs-user" ? "승인안이 왜 필요한지 물어보거나 수정 지시를 입력하세요..." :
+            state === "needs-user"
+              ? pendingApproval?.stage === "report"
+                ? "리포트 초안을 검토하고 승인 또는 수정 의견을 입력하세요..."
+                : pendingApproval?.stage === "visualization"
+                  ? "시각화 계획을 검토하고 승인 또는 수정 지시를 입력하세요..."
+                  : "전처리 계획을 검토하거나 수정 지시를 입력하세요..."
+              :
               state === "error" ? "Type to discuss the error..." :
                 "Ask Gen-UI to analyze, visualize, or transform..."
       }
@@ -846,8 +945,18 @@ export default function Workbench() {
   const GateBarComponent = state === "needs-user" ? (
     <GateBar
       onApprove={pipeline.handleApprove}
-      onReject={pipeline.handleReject}
+      onCancel={pipeline.handleReject}
       onSubmitChange={pipeline.handleEditInstruction}
+      approveLabel={pendingApproval?.stage === "report" ? "Approve Report" : undefined}
+      cancelLabel={pendingApproval?.stage === "report" ? "Cancel Report" : undefined}
+      changeLabel={pendingApproval?.stage === "report" ? "Request Report Revision..." : undefined}
+      changePlaceholder={
+        pendingApproval?.stage === "report"
+          ? "What should change in the report draft?"
+          : pendingApproval?.stage === "visualization"
+          ? "What should change? (e.g., 'Use bar chart by region')"
+          : "What should change? (e.g., 'Use median imputation')"
+      }
     />
   ) : null;
 
@@ -980,9 +1089,11 @@ export default function Workbench() {
                 <CardHeader title="왜 멈췄나" meta="Before / After" statusLabel="Needs Approval" statusVariant="needs-user" />
                 <CardBody className="space-y-2 text-sm text-[var(--genui-text)]">
                   <p>
-                    {hitlProposal
-                      ? `${hitlProposal.column} 결측 ${hitlProposal.missingCount}건을 처리하지 않으면 이후 Deep EDA 결과가 불안정할 수 있어 현재 단계에서 멈췄습니다.`
-                      : "전처리 제안에 대한 사용자 확인이 필요해 현재 단계에서 멈췄습니다."}
+                    {pendingApproval?.stage === "report"
+                      ? "리포트 초안 검토와 승인 여부 확인이 필요해 현재 단계에서 멈췄습니다."
+                      : pendingApproval?.stage === "visualization"
+                        ? "시각화 계획 검토와 승인 여부 확인이 필요해 현재 단계에서 멈췄습니다."
+                        : "전처리 계획에 대한 사용자 확인이 필요해 현재 단계에서 멈췄습니다."}
                   </p>
                   <p className="text-xs text-[var(--genui-muted)]">승인/거절/수정은 중앙 승인 카드와 GateBar에서만 처리합니다.</p>
                 </CardBody>
@@ -1025,10 +1136,10 @@ export default function Workbench() {
           toolCalls={toolCalls}
           pipelineSteps={pipelineSteps}
           awaitingInfo={
-            state === "needs-user" && hitlProposal
+            state === "needs-user" && pendingApproval
               ? {
-                title: `Impute ${hitlProposal.column}`,
-                description: `${hitlProposal.column} · ${hitlProposal.missingCount} rows · ${hitlProposal.strategy}`,
+                title: pendingApproval.title,
+                description: pendingApproval.summary,
                 onViewDetails: focusDetails,
               }
               : undefined
@@ -1085,7 +1196,12 @@ export default function Workbench() {
         : uploadProgress < 70 ? "Parsing schema…"
           : "Validating dataset…"
       : state === "running" ? `${subPhaseLabel[runningSubPhase] ?? runningSubPhase} 진행 중…`
-        : state === "needs-user" ? "Awaiting approval"
+        : state === "needs-user"
+          ? pendingApproval?.stage === "report"
+            ? "Report draft review"
+            : pendingApproval?.stage === "visualization"
+            ? "Visualization plan review"
+            : "Preprocess plan review"
           : state === "error" ? "Failed — see details"
             : undefined;
 
@@ -1098,7 +1214,13 @@ export default function Workbench() {
       stage={
         state === "uploading" ? "Ingest" :
           state === "running" ? (subPhaseLabel[runningSubPhase] ?? runningSubPhase) :
-            state === "needs-user" ? "Preprocess" :
+            state === "needs-user"
+              ? pendingApproval?.stage === "report"
+                ? "Report"
+                : pendingApproval?.stage === "visualization"
+                ? "Visualization"
+                : "Preprocess"
+            :
               state === "error" ? "Error" :
                 undefined
       }
@@ -1115,8 +1237,10 @@ export default function Workbench() {
       }
       percent={state === "uploading" ? uploadProgress : undefined}
       onViewDetails={
-        state === "running" || state === "needs-user"
+        state === "running"
           ? () => handleTabChange("agent")
+          : state === "needs-user"
+            ? focusDetails
           : state === "error"
             ? focusDetails
             : undefined
