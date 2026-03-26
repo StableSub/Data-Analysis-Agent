@@ -14,7 +14,6 @@ export interface AttachMenuPopoverProps {
   onClose: () => void;
   onUploadDataset?: () => void;
   onAddFiles?: () => void;
-  onUseSample?: () => void;
   className?: string;
 }
 

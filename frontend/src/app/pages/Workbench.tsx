@@ -14,7 +14,6 @@ import { ApprovalCard } from "../components/genui/ApprovalCard";
 import { CardShell, CardHeader, CardBody } from "../components/genui/CardShell";
 import { PreEdaBoard } from "../components/genui/PreEdaBoard";
 import {
-  AlertTriangle,
   CheckCircle2,
   FileText,
   MessageSquare,
@@ -182,12 +181,21 @@ export default function Workbench() {
     uploadedDatasets.find((item) => item.sourceId === selectedSourceId) ?? null;
 
   // UI-only local state
+  type CanvasView = "current" | "pre-eda" | "deep-eda" | "report";
+  const [canvasView, setCanvasView] = useState<CanvasView>("current");
   const [highlightDetails, setHighlightDetails] = useState(false);
   const [rightTab, setRightTab] = useState<RightTabId>("details");
   const [copilotHasNew, setCopilotHasNew] = useState(false);
   const detailsPanelRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const initializedRef = useRef(false);
+
+  // Reset canvas view when pipeline state transitions forward
+  useEffect(() => {
+    if (state === "running" || state === "uploading") {
+      setCanvasView("current");
+    }
+  }, [state]);
 
   // Show NEW dot on Agent tab when tool calls arrive
   useEffect(() => {
@@ -707,15 +715,24 @@ export default function Workbench() {
         <div className="justify-self-start xl:justify-self-center">
           <DecisionChips
             className="flex-wrap"
-            chips={derivedRouteChips.map((c) => ({
-              ...c,
-              onNavigate:
-                c.value === "BLOCKED" || c.value === "FAILED"
-                  ? focusDetails
-                  : c.stage === "Mode"
-                    ? undefined
-                    : () => handleTabChange("agent"),
-            }))}
+            chips={derivedRouteChips.map((c) => {
+              const viewKey: CanvasView =
+                c.stage === "Pre-EDA" ? "pre-eda"
+                : c.stage === "Deep EDA" ? "deep-eda"
+                : c.stage === "Report" ? "report"
+                : "current";
+
+              // QUEUED 상태면 아직 데이터가 없으므로 클릭 불가
+              if (c.value === "QUEUED") return { ...c, onNavigate: undefined };
+
+              return {
+                ...c,
+                onNavigate: () => {
+                  // 토글: 같은 칩 다시 누르면 current로 복귀
+                  setCanvasView((prev) => prev === viewKey ? "current" : viewKey);
+                },
+              };
+            })}
           />
         </div>
       ) : (
@@ -739,11 +756,13 @@ export default function Workbench() {
     <div
       className={cn(
         "mx-auto w-full space-y-4 pb-28 pt-4 px-2 xl:px-3",
-        state === "empty" || state === "uploading"
-          ? "max-w-3xl"
-          : state === "ready"
-            ? "max-w-[1360px] 2xl:max-w-[1460px]"
-            : "max-w-[1120px]",
+        canvasView === "pre-eda"
+          ? "max-w-[1360px] 2xl:max-w-[1460px]"
+          : state === "empty" || state === "uploading"
+            ? "max-w-3xl"
+            : state === "ready"
+              ? "max-w-[1360px] 2xl:max-w-[1460px]"
+              : "max-w-[1120px]",
       )}
     >
       {/* Hidden file input for real file selection */}
@@ -775,16 +794,25 @@ export default function Workbench() {
         </div>
       )}
 
-      {/* ── CHAT HISTORY (Past Turns) ── */}
-      {chatHistory.length > 0 && (
-        <div className="space-y-6 mb-8 w-full max-w-3xl animate-in fade-in duration-500">
+      {/* ── CHAT HISTORY (Past Turns) — 스냅샷 뷰에서는 숨김 ── */}
+      {canvasView === "current" && chatHistory.length > 0 && (
+        <div className="space-y-5 mb-8 w-full max-w-3xl mx-auto animate-in fade-in duration-500">
           {chatHistory.map((msg) => {
             if (msg.role === "user") {
               return (
-                <div key={msg.id} className="flex justify-end">
-                  <div className="max-w-[80%] rounded-2xl bg-[var(--genui-surface)] text-[var(--genui-text)] px-4 py-2.5 text-[13px] leading-relaxed border border-[var(--genui-border)] shadow-[0_2px_12px_rgba(0,0,0,0.06)] dark:shadow-[0_2px_12px_rgba(0,0,0,0.4)] relative">
-                    {msg.content}
-                    <div className="absolute top-1/2 -right-1.5 -translate-y-1/2 w-3 h-3 bg-[var(--genui-surface)] border-r border-b border-[var(--genui-border)] transform rotate-45 rounded-sm z-[-1]" />
+                <div key={msg.id} className="flex items-start gap-3 justify-end">
+                  <div className="max-w-[75%] space-y-1">
+                    <div className="flex items-center justify-end gap-2 px-1">
+                      <span className="text-[10px] font-medium text-[var(--genui-muted)]">
+                        {msg.created_at
+                          ? new Date(msg.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                          : ""}
+                      </span>
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--genui-running)]">You</span>
+                    </div>
+                    <div className="rounded-2xl rounded-tr-md bg-[var(--genui-running)]/10 border border-[var(--genui-running)]/25 text-[var(--genui-text)] px-4 py-3 text-[14px] leading-relaxed shadow-sm">
+                      {msg.content}
+                    </div>
                   </div>
                 </div>
               );
@@ -808,112 +836,210 @@ export default function Workbench() {
         </div>
       )}
 
-      {state === "ready" && (
-        <div className="space-y-6 animate-in fade-in zoom-in-95 duration-300">
-          {selectedPreEdaProfile ? (
-            <PreEdaBoard
-              profile={selectedPreEdaProfile}
-              summarySections={preEdaSummarySections}
-            />
-          ) : (
-            <AssistantReportMessage
-              className="max-w-none mx-0"
-              title="Pre-EDA Summary"
-              subtitle={hasDatasetContext ? currentDatasetLabel : "Select source"}
-              sections={preEdaSummarySections}
-              maxBodyHeight={420}
-            />
-          )}
-        </div>
-      )}
+      {/* ── CANVAS VIEW: Route 칩 스냅샷 뷰 ── */}
+      {canvasView !== "current" && (
+        <div className="animate-in fade-in duration-300">
+          {/* 뒤로가기 바 */}
+          <button
+            type="button"
+            onClick={() => setCanvasView("current")}
+            className="mb-4 inline-flex items-center gap-1.5 rounded-lg border border-[var(--genui-border)] bg-[var(--genui-panel)] px-3 py-1.5 text-xs font-medium text-[var(--genui-muted)] hover:text-[var(--genui-text)] hover:bg-[var(--genui-surface)] transition-colors"
+          >
+            <span className="text-sm">←</span>
+            현재 상태로 돌아가기
+          </button>
 
-      {/* RUNNING */}
-      {state === "running" && (
-        <div className="space-y-4 animate-in slide-in-from-bottom-4 fade-in duration-500">
-          <AssistantReportMessage
-            variant="streaming"
-            title={hasDatasetContext ? `Analyzing ${selectedDataset?.fileName || fileName || "Dataset"}` : "질문 처리 중"}
-            subtitle={hasDatasetContext ? selectedDataset?.fileName || fileName : "AI가 답변을 생성하고 있습니다."}
-            timestamp="Now"
-            sections={reportSections}
-            maxBodyHeight={300}
-            evidence={evidenceWithNav}
-          />
-          {lastRunningTool && (
-            <div className="rounded-xl border border-[var(--genui-border)] bg-[var(--genui-panel)] px-4 py-3 shadow-sm">
-              <ToolCallIndicator status="running" label={lastRunningTool.name} sublabel="현재 질문 범위를 기준으로 계산 중입니다." />
+          {canvasView === "pre-eda" && (
+            <div className="space-y-6">
+              <div className="flex items-center gap-2 mb-2">
+                <StatusBadge status="success" />
+                <span className="text-xs font-semibold text-[var(--genui-text)]">Pre-EDA</span>
+                <span className="text-sm text-[var(--genui-muted)]">업로드 직후 데이터 프로파일 스냅샷</span>
+              </div>
+              {selectedPreEdaProfile ? (
+                <PreEdaBoard
+                  profile={selectedPreEdaProfile}
+                  summarySections={preEdaSummarySections}
+                  onApprovePreprocess={selectedPreEdaProfile?.recommendation ? pipeline.handleApprove : undefined}
+                />
+              ) : (
+                <AssistantReportMessage
+                  title="Pre-EDA"
+                  subtitle="프로파일 데이터가 없습니다."
+                  sections={[{ type: "paragraph", content: "데이터셋을 업로드하면 Pre-EDA 프로파일이 생성됩니다." }]}
+                />
+              )}
+            </div>
+          )}
+
+          {canvasView === "deep-eda" && (
+            <div className="space-y-6">
+              <div className="flex items-center gap-2 mb-2">
+                <StatusBadge
+                  status={state === "success" || (state === "running" && runningSubPhase === "report") ? "success" : state === "error" ? "error" : "running"}
+                />
+                <span className="text-xs font-semibold text-[var(--genui-text)]">Deep EDA</span>
+                <span className="text-sm text-[var(--genui-muted)]">질문 기반 분석 결과 스냅샷</span>
+              </div>
+              {reportSections.length > 0 ? (
+                <AssistantReportMessage
+                  variant="final"
+                  title="Deep EDA 결과"
+                  subtitle={hasDatasetContext ? currentDatasetLabel : undefined}
+                  sections={reportSections}
+                  maxBodyHeight={600}
+                  evidence={evidenceWithNav}
+                />
+              ) : (
+                <AssistantReportMessage
+                  title="Deep EDA"
+                  subtitle="아직 분석 결과가 없습니다."
+                  sections={[{ type: "paragraph", content: "질문을 전송하면 Deep EDA 결과가 여기에 표시됩니다." }]}
+                />
+              )}
+              {latestVisualizationResult?.artifact?.image_base64 && (
+                <CardShell>
+                  <CardHeader title="시각화 결과" meta={latestVisualizationResult.chart?.chart_type} />
+                  <CardBody>
+                    <img
+                      src={`data:${latestVisualizationResult.artifact.mime_type ?? "image/png"};base64,${latestVisualizationResult.artifact.image_base64}`}
+                      alt="Visualization"
+                      className="w-full rounded-lg"
+                    />
+                  </CardBody>
+                </CardShell>
+              )}
+            </div>
+          )}
+
+          {canvasView === "report" && (
+            <div className="space-y-6">
+              <div className="flex items-center gap-2 mb-2">
+                <StatusBadge
+                  status={state === "success" ? "success" : "ready"}
+                />
+                <span className="text-xs font-semibold text-[var(--genui-text)]">Report</span>
+                <span className="text-sm text-[var(--genui-muted)]">최종 리포트 스냅샷</span>
+              </div>
+              {state === "success" && reportSections.length > 0 ? (
+                <AssistantReportMessage
+                  variant="final"
+                  title="최종 리포트"
+                  subtitle={hasDatasetContext ? currentDatasetLabel : undefined}
+                  sections={reportSections}
+                  maxBodyHeight={600}
+                  evidence={evidenceWithNav}
+                />
+              ) : (
+                <AssistantReportMessage
+                  title="Report"
+                  subtitle="아직 리포트가 생성되지 않았습니다."
+                  sections={[{ type: "paragraph", content: "Deep EDA 완료 후 리포트가 자동 생성됩니다." }]}
+                />
+              )}
             </div>
           )}
         </div>
       )}
 
-      {/* NEEDS-USER */}
-      {state === "needs-user" && (
-        <div className="space-y-4 animate-in slide-in-from-bottom-4 fade-in duration-500">
-          {pendingApproval && (
-            <ApprovalCard
-              title={pendingApproval.title}
-              description={pendingApproval.summary}
-              changes={buildPendingApprovalChanges(pendingApproval)}
-              hideActions
-            />
+      {/* ── CURRENT VIEW: 기존 상태 기반 렌더링 ── */}
+      {canvasView === "current" && (
+        <>
+          {state === "ready" && (
+            <div className="space-y-6 animate-in fade-in zoom-in-95 duration-300">
+              {selectedPreEdaProfile ? (
+                <PreEdaBoard
+                  profile={selectedPreEdaProfile}
+                  summarySections={preEdaSummarySections}
+                  onApprovePreprocess={selectedPreEdaProfile?.recommendation ? pipeline.handleApprove : undefined}
+                />
+              ) : (
+                <AssistantReportMessage
+                  className="max-w-none mx-0"
+                  title="Pre-EDA Summary"
+                  subtitle={hasDatasetContext ? currentDatasetLabel : "Select source"}
+                  sections={preEdaSummarySections}
+                  maxBodyHeight={420}
+                />
+              )}
+            </div>
           )}
 
-          <AssistantReportMessage
-            variant="final"
-            accentVariant="needs-user"
-            title={pendingApproval?.title ?? "Plan review"}
-            subtitle={
-              pendingApproval?.stage === "report"
-                ? "Waiting for report review"
-                : "Waiting for approval"
-            }
-            timestamp="Now"
-            sections={reportSections}
-            maxBodyHeight={300}
-            evidence={evidenceWithNav}
-          />
+          {/* RUNNING */}
+          {state === "running" && (
+            <div className="space-y-4 animate-in slide-in-from-bottom-4 fade-in duration-500">
+              <AssistantReportMessage
+                variant="streaming"
+                title={hasDatasetContext ? `Analyzing ${selectedDataset?.fileName || fileName || "Dataset"}` : "질문 처리 중"}
+                subtitle={hasDatasetContext ? selectedDataset?.fileName || fileName : "AI가 답변을 생성하고 있습니다."}
+                timestamp="Now"
+                sections={reportSections}
+                maxBodyHeight={300}
+                evidence={evidenceWithNav}
+              />
+              {lastRunningTool && (
+                <div className="rounded-xl border border-[var(--genui-border)] bg-[var(--genui-panel)] px-4 py-3 shadow-sm">
+                  <ToolCallIndicator status="running" label={lastRunningTool.name} sublabel="현재 질문 범위를 기준으로 계산 중입니다." />
+                </div>
+              )}
+            </div>
+          )}
 
-          <div className="rounded-xl border border-[var(--genui-needs-user)]/30 bg-[var(--genui-needs-user)]/5 px-4 py-3">
-            <ToolCallIndicator
-              status="needs-user"
-              label={
-                pendingApproval?.stage === "report"
-                  ? "report review"
-                  : pendingApproval?.stage === "visualization"
-                    ? "visualization review"
-                    : "preprocess approval"
-              }
-              sublabel="결정은 중앙 승인 카드와 하단 GateBar에서만 처리됩니다."
-            />
-          </div>
-        </div>
-      )}
+          {/* NEEDS-USER */}
+          {state === "needs-user" && (
+            <div className="space-y-4 animate-in slide-in-from-bottom-4 fade-in duration-500">
+              {pendingApproval && (
+                <ApprovalCard
+                  title={pendingApproval.title}
+                  description={pendingApproval.summary}
+                  changes={buildPendingApprovalChanges(pendingApproval)}
+                  hideActions
+                />
+              )}
 
-      {/* ERROR */}
-      {state === "error" && (
-        <div className="space-y-4 animate-in slide-in-from-bottom-4 fade-in duration-500">
-          <AssistantReportMessage
-            variant="error"
-            title="Analysis Failed"
-            sections={reportSections}
-            onReviewDetails={focusDetails}
-            evidence={evidenceWithNav}
-          />
-        </div>
-      )}
+              <AssistantReportMessage
+                variant="final"
+                accentVariant="needs-user"
+                title={pendingApproval?.title ?? "Plan review"}
+                subtitle={
+                  pendingApproval?.stage === "report"
+                    ? "Waiting for report review"
+                    : "Waiting for approval"
+                }
+                timestamp="Now"
+                sections={reportSections}
+                maxBodyHeight={300}
+                evidence={evidenceWithNav}
+              />
+            </div>
+          )}
 
-      {/* SUCCESS */}
-      {state === "success" && chatHistory.length === 0 && (
-        <div className="space-y-4 animate-in slide-in-from-bottom-4 fade-in duration-500">
-          <AssistantReportMessage
-            title="AI 답변"
-            subtitle={hasDatasetContext ? currentDatasetLabel : undefined}
-            sections={reportSections}
-            maxBodyHeight={400}
-            evidence={evidenceWithNav}
-          />
-        </div>
+          {/* ERROR */}
+          {state === "error" && (
+            <div className="space-y-4 animate-in slide-in-from-bottom-4 fade-in duration-500">
+              <AssistantReportMessage
+                variant="error"
+                title="Analysis Failed"
+                sections={reportSections}
+                onReviewDetails={focusDetails}
+                evidence={evidenceWithNav}
+              />
+            </div>
+          )}
+
+          {/* SUCCESS */}
+          {state === "success" && chatHistory.length === 0 && (
+            <div className="space-y-4 animate-in slide-in-from-bottom-4 fade-in duration-500">
+              <AssistantReportMessage
+                title="AI 답변"
+                subtitle={hasDatasetContext ? currentDatasetLabel : undefined}
+                sections={reportSections}
+                maxBodyHeight={400}
+                evidence={evidenceWithNav}
+              />
+            </div>
+          )}
+        </>
       )}
     </div>
   );
@@ -1068,34 +1194,113 @@ export default function Workbench() {
           {state === "running" && (
             <>
               <CardShell>
-                <CardHeader title="현재 질문 범위" meta="Details" statusLabel="Running" statusVariant="running" />
-                <CardBody className="space-y-2 text-sm text-[var(--genui-text)]">
-                  <p>{selectedDataset ? `${selectedDataset.fileName} 기준으로 질문이 실행 중입니다.` : "선택된 데이터 source 기준으로 질문이 실행 중입니다."}</p>
-                  <p className="text-xs text-[var(--genui-muted)]">현재 단계: {runningSubPhase === "report" ? "report" : "Deep EDA"}</p>
+                <CardHeader title="실행 현황" meta="Live" statusLabel="Running" statusVariant="running" />
+                <CardBody className="space-y-3 text-sm text-[var(--genui-text)]">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-[var(--genui-muted)]">데이터셋</span>
+                    <span className="text-xs font-medium truncate max-w-[160px]">{selectedDataset?.fileName ?? "없음"}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-[var(--genui-muted)]">현재 단계</span>
+                    <span className="text-xs font-medium">{runningSubPhase}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-[var(--genui-muted)]">경과 시간</span>
+                    <span className="text-xs font-mono">{formatElapsed(elapsedSeconds)}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-[var(--genui-muted)]">Tool Calls</span>
+                    <span className="text-xs font-medium">{toolCalls.length}개</span>
+                  </div>
                 </CardBody>
               </CardShell>
-              <CardShell>
-                <CardHeader title="도착 예정 결과" meta="Artifacts" statusLabel="Pending" statusVariant="neutral" />
-                <CardBody className="space-y-2 text-sm text-[var(--genui-text)]">
-                  <p>분포 시각화, 상관관계, 이상치 결과와 최종 report가 질문 맥락에 맞춰 순차적으로 도착합니다.</p>
-                </CardBody>
-              </CardShell>
+              {toolCalls.length > 0 && (
+                <CardShell>
+                  <CardHeader title="최근 Tool Calls" meta="Log" />
+                  <CardBody className="space-y-2">
+                    {toolCalls.slice(-5).map((tc) => (
+                      <div key={tc.id} className="flex items-center justify-between gap-2 rounded-lg border border-[var(--genui-border)] bg-[var(--genui-surface)] px-3 py-2">
+                        <div className="min-w-0">
+                          <p className="text-xs font-medium text-[var(--genui-text)] truncate">{tc.name}</p>
+                          {tc.result && <p className="text-[10px] text-[var(--genui-muted)] truncate mt-0.5">{tc.result}</p>}
+                        </div>
+                        <span className={cn(
+                          "text-[10px] font-medium shrink-0 px-1.5 py-0.5 rounded",
+                          tc.status === "completed" ? "bg-[var(--genui-success)]/10 text-[var(--genui-success)]"
+                            : tc.status === "failed" ? "bg-[var(--genui-error)]/10 text-[var(--genui-error)]"
+                            : "bg-[var(--genui-running)]/10 text-[var(--genui-running)]"
+                        )}>
+                          {tc.status === "completed" ? "Done" : tc.status === "failed" ? "Fail" : "..."}
+                          {tc.duration ? ` ${tc.duration}` : ""}
+                        </span>
+                      </div>
+                    ))}
+                  </CardBody>
+                </CardShell>
+              )}
             </>
           )}
 
-          {state === "needs-user" && (
+          {state === "needs-user" && pendingApproval && (
             <>
               <CardShell>
-                <CardHeader title="왜 멈췄나" meta="Before / After" statusLabel="Needs Approval" statusVariant="needs-user" />
-                <CardBody className="space-y-2 text-sm text-[var(--genui-text)]">
-                  <p>
-                    {pendingApproval?.stage === "report"
-                      ? "리포트 초안 검토와 승인 여부 확인이 필요해 현재 단계에서 멈췄습니다."
-                      : pendingApproval?.stage === "visualization"
-                        ? "시각화 계획 검토와 승인 여부 확인이 필요해 현재 단계에서 멈췄습니다."
-                        : "전처리 계획에 대한 사용자 확인이 필요해 현재 단계에서 멈췄습니다."}
-                  </p>
-                  <p className="text-xs text-[var(--genui-muted)]">승인/거절/수정은 중앙 승인 카드와 GateBar에서만 처리합니다.</p>
+                <CardHeader
+                  title={pendingApproval.stage === "report" ? "리포트 검토" : pendingApproval.stage === "visualization" ? "시각화 검토" : "전처리 검토"}
+                  meta={pendingApproval.stage.toUpperCase()}
+                  statusLabel="Needs Approval"
+                  statusVariant="needs-user"
+                />
+                <CardBody className="space-y-3 text-sm text-[var(--genui-text)]">
+                  <p className="text-xs text-[var(--genui-muted)]">{pendingApproval.summary}</p>
+                  {pendingApproval.stage === "preprocess" && (
+                    <div className="space-y-2">
+                      {pendingApproval.plan.operations.map((op, i) => (
+                        <div key={i} className="rounded-lg border border-[var(--genui-border)] bg-[var(--genui-surface)] px-3 py-2">
+                          <p className="text-xs font-medium">{typeof op.op === "string" ? op.op : "operation"}</p>
+                          {typeof op.column === "string" && <p className="text-[10px] text-[var(--genui-muted)] mt-0.5">컬럼: {op.column}</p>}
+                          {typeof op.strategy === "string" && <p className="text-[10px] text-[var(--genui-muted)]">전략: {op.strategy}</p>}
+                        </div>
+                      ))}
+                      {(pendingApproval.plan.top_missing_columns ?? []).length > 0 && (
+                        <div className="mt-2">
+                          <p className="text-[10px] font-semibold text-[var(--genui-muted)] uppercase tracking-wider mb-1">Top Missing</p>
+                          {(pendingApproval.plan.top_missing_columns ?? []).map((c) => (
+                            <div key={c.column} className="flex items-center justify-between text-xs py-1">
+                              <span className="font-medium">{c.column}</span>
+                              <span className="text-[var(--genui-error)]">{formatPercent(c.missing_rate)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {pendingApproval.stage === "visualization" && (
+                    <div className="space-y-1 text-xs">
+                      <div className="flex justify-between"><span className="text-[var(--genui-muted)]">Chart</span><span className="font-medium">{pendingApproval.plan.chart_type || "-"}</span></div>
+                      <div className="flex justify-between"><span className="text-[var(--genui-muted)]">X</span><span className="font-medium">{pendingApproval.plan.x_key || "-"}</span></div>
+                      <div className="flex justify-between"><span className="text-[var(--genui-muted)]">Y</span><span className="font-medium">{pendingApproval.plan.y_key || "-"}</span></div>
+                      {pendingApproval.plan.reason && <p className="text-[10px] text-[var(--genui-muted)] mt-1">{pendingApproval.plan.reason}</p>}
+                    </div>
+                  )}
+                </CardBody>
+              </CardShell>
+              <CardShell>
+                <CardHeader title="실행 경과" meta="Context" />
+                <CardBody className="space-y-2 text-xs text-[var(--genui-text)]">
+                  <div className="flex justify-between">
+                    <span className="text-[var(--genui-muted)]">경과 시간</span>
+                    <span className="font-mono">{formatElapsed(elapsedSeconds)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-[var(--genui-muted)]">Tool Calls</span>
+                    <span>{toolCalls.length}개</span>
+                  </div>
+                  {selectedDataset && (
+                    <div className="flex justify-between">
+                      <span className="text-[var(--genui-muted)]">데이터셋</span>
+                      <span className="truncate max-w-[140px]">{selectedDataset.fileName}</span>
+                    </div>
+                  )}
                 </CardBody>
               </CardShell>
             </>
@@ -1104,28 +1309,97 @@ export default function Workbench() {
           {state === "success" && (
             <>
               <CardShell>
-                <CardHeader title="최종 결과 보강" meta="Details" statusLabel="Complete" statusVariant="success" />
-                <CardBody className="space-y-2 text-sm text-[var(--genui-text)]">
-                  <p>질문 결과와 함께 생성된 Deep EDA 결과와 report 아티팩트는 이후 후속 질문에서도 계속 누적됩니다.</p>
-                  {latestVisualizationResult?.summary ? (
-                    <p className="text-xs text-[var(--genui-muted)]">{latestVisualizationResult.summary}</p>
-                  ) : null}
+                <CardHeader title="분석 결과 요약" meta="Result" statusLabel="Complete" statusVariant="success" />
+                <CardBody className="space-y-3 text-sm text-[var(--genui-text)]">
+                  <div className="flex justify-between text-xs">
+                    <span className="text-[var(--genui-muted)]">총 Tool Calls</span>
+                    <span className="font-medium">{toolCalls.length}개</span>
+                  </div>
+                  {selectedDataset && (
+                    <div className="flex justify-between text-xs">
+                      <span className="text-[var(--genui-muted)]">데이터셋</span>
+                      <span className="font-medium truncate max-w-[140px]">{selectedDataset.fileName}</span>
+                    </div>
+                  )}
+                  {latestVisualizationResult?.chart?.chart_type && (
+                    <div className="flex justify-between text-xs">
+                      <span className="text-[var(--genui-muted)]">시각화</span>
+                      <span className="font-medium">{latestVisualizationResult.chart.chart_type} ({latestVisualizationResult.chart.x_key} × {latestVisualizationResult.chart.y_key})</span>
+                    </div>
+                  )}
+                  {latestVisualizationResult?.summary && (
+                    <p className="text-xs text-[var(--genui-muted)] border-t border-[var(--genui-border)] pt-2">{latestVisualizationResult.summary}</p>
+                  )}
                 </CardBody>
               </CardShell>
+              {latestVisualizationResult?.artifact?.image_base64 && (
+                <CardShell>
+                  <CardHeader title="시각화 미리보기" meta={latestVisualizationResult.chart?.chart_type ?? "Chart"} />
+                  <CardBody>
+                    <img
+                      src={`data:${latestVisualizationResult.artifact.mime_type ?? "image/png"};base64,${latestVisualizationResult.artifact.image_base64}`}
+                      alt="Visualization"
+                      className="w-full rounded-lg"
+                    />
+                  </CardBody>
+                </CardShell>
+              )}
+              {toolCalls.filter((tc) => tc.status === "completed").length > 0 && (
+                <CardShell>
+                  <CardHeader title="완료된 Tool Calls" meta="Log" />
+                  <CardBody className="space-y-1.5">
+                    {toolCalls.filter((tc) => tc.status === "completed").slice(-5).map((tc) => (
+                      <div key={tc.id} className="flex items-center justify-between gap-2 text-xs py-1">
+                        <span className="font-medium truncate">{tc.name}</span>
+                        <span className="text-[var(--genui-muted)] shrink-0">{tc.duration}</span>
+                      </div>
+                    ))}
+                  </CardBody>
+                </CardShell>
+              )}
             </>
           )}
 
           {state === "error" && (
             <>
               <CardShell status="error">
-                <CardHeader title="실패 요약" meta="Details" statusLabel="Error" statusVariant="error" />
-                <CardBody className="space-y-2 text-sm text-[var(--genui-text)]">
-                  <div className="flex items-start gap-2">
-                    <AlertTriangle className="w-4 h-4 text-[var(--genui-error)] mt-0.5" />
-                    <p>실패한 툴과 원인 요약을 먼저 확인한 뒤, 우측 Agent 또는 중앙 입력창에서 다음 복구 질문을 이어갈 수 있습니다.</p>
+                <CardHeader title="오류 상세" meta="Error" statusLabel="Failed" statusVariant="error" />
+                <CardBody className="space-y-3 text-sm text-[var(--genui-text)]">
+                  {pipeline.runningSubPhase && (
+                    <div className="flex justify-between text-xs">
+                      <span className="text-[var(--genui-muted)]">실패 단계</span>
+                      <span className="font-medium text-[var(--genui-error)]">{pipeline.runningSubPhase}</span>
+                    </div>
+                  )}
+                  {reportSections.length > 0 && reportSections[0]?.type === "paragraph" && (
+                    <div className="rounded-lg border border-[var(--genui-error)]/20 bg-[var(--genui-error)]/5 px-3 py-2">
+                      <p className="text-xs text-[var(--genui-error)] break-words">{reportSections[0].content}</p>
+                    </div>
+                  )}
+                  <div className="flex justify-between text-xs">
+                    <span className="text-[var(--genui-muted)]">경과 시간</span>
+                    <span className="font-mono">{formatElapsed(elapsedSeconds)}</span>
+                  </div>
+                  <div className="flex justify-between text-xs">
+                    <span className="text-[var(--genui-muted)]">Tool Calls</span>
+                    <span>{toolCalls.length}개</span>
                   </div>
                 </CardBody>
               </CardShell>
+              {toolCalls.filter((tc) => tc.status === "failed").length > 0 && (
+                <CardShell status="error">
+                  <CardHeader title="실패한 Tool Calls" meta="Log" />
+                  <CardBody className="space-y-2">
+                    {toolCalls.filter((tc) => tc.status === "failed").map((tc) => (
+                      <div key={tc.id} className="rounded-lg border border-[var(--genui-error)]/20 bg-[var(--genui-error)]/5 px-3 py-2">
+                        <p className="text-xs font-medium text-[var(--genui-error)]">{tc.name}</p>
+                        {tc.result && <p className="text-[10px] text-[var(--genui-error)]/70 mt-0.5 break-words">{tc.result}</p>}
+                        {tc.duration && <p className="text-[10px] text-[var(--genui-muted)] mt-0.5">{tc.duration}</p>}
+                      </div>
+                    ))}
+                  </CardBody>
+                </CardShell>
+              )}
             </>
           )}
         </div>

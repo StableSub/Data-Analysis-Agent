@@ -14,6 +14,8 @@ import {
 interface PreEdaBoardProps {
   profile: PreEdaProfile;
   summarySections: ReportSection[];
+  /** 전처리 추천 승인 버튼 클릭 시 호출 */
+  onApprovePreprocess?: () => void;
 }
 
 function formatPercent(value: number): string {
@@ -108,7 +110,7 @@ function MetricTile({ label, value }: { label: string; value: string }) {
   );
 }
 
-export function PreEdaBoard({ profile, summarySections }: PreEdaBoardProps) {
+export function PreEdaBoard({ profile, summarySections, onApprovePreprocess }: PreEdaBoardProps) {
   const previewColumns = profile.columns.slice(0, 5);
   const distributionOptions = profile.distributions;
   const [selectedDistributionColumn, setSelectedDistributionColumn] = useState(
@@ -513,18 +515,28 @@ export function PreEdaBoard({ profile, summarySections }: PreEdaBoardProps) {
                   </p>
                   <p className="mt-1 text-sm text-[var(--genui-text)]">
                     결측 {profile.recommendation.missingCount.toLocaleString()}건(
-                    {profile.recommendation.missingPercent.toFixed(2)}%)이 있어 질문 전 검토가 필요합니다.
+                    {profile.recommendation.missingPercent.toFixed(2)}%)이 있어 전처리가 필요합니다.
                   </p>
                 </div>
-                <ul className="space-y-2 text-sm text-[var(--genui-text)]">
-                  <li>전략: {profile.recommendation.strategy}</li>
-                  <li>기본 제안값: {profile.recommendation.fillValue}</li>
-                  <li>질문을 보내면 HITL 승인 카드에서 최종 결정합니다.</li>
-                </ul>
+                <div className="flex items-center justify-between gap-3">
+                  <ul className="space-y-1 text-sm text-[var(--genui-text)]">
+                    <li>전략: {profile.recommendation.strategy}</li>
+                    <li>기본 제안값: {profile.recommendation.fillValue}</li>
+                  </ul>
+                  {onApprovePreprocess && (
+                    <button
+                      type="button"
+                      onClick={onApprovePreprocess}
+                      className="shrink-0 rounded-lg bg-[var(--genui-running)] px-4 py-2 text-sm font-semibold text-white shadow-sm hover:opacity-90 transition-opacity"
+                    >
+                      승인하고 분석 시작
+                    </button>
+                  )}
+                </div>
               </>
             ) : (
               <div className="rounded-xl border border-[var(--genui-border)] bg-[var(--genui-surface)] px-4 py-4 text-sm text-[var(--genui-text)]">
-                현재 단계에서는 강한 전처리 추천이 없습니다. 필요 시 질문 이후 HITL 단계에서 다시 제안할 수 있습니다.
+                전처리 없이 바로 질문할 수 있습니다.
               </div>
             )}
           </CardBody>

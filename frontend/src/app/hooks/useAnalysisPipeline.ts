@@ -4,6 +4,11 @@ import {
   buildApiUrl,
   deleteDataset,
   resumeChatRun,
+  fetchEdaSummary,
+  fetchEdaQuality,
+  fetchEdaCorrelations,
+  fetchEdaOutliers,
+  fetchEdaInsights,
   type DatasetResponse,
   type ChatResponse,
   type ChatHistoryMessage,
@@ -132,7 +137,6 @@ export interface UseAnalysisPipelineReturn {
 
   // Actions
   startUpload: (file: File) => void;
-  startWithSample: () => void;
   resumeRun: (decision: "approve" | "revise" | "cancel", instruction?: string) => void;
   handleApprove: () => void;
   handleReject: () => void;
@@ -1060,19 +1064,121 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
       setState("uploading");
 
       const uploadedAt = new Date().toISOString();
-      const profilePromise = buildPreEdaProfile(file).catch(() => null);
+      // 로컬 프로파일은 서버 EDA 실패 시 폴백용으로 병렬 준비
+      const localProfilePromise = buildPreEdaProfile(file).catch(() => null);
 
       uploadFile(file, (percent) => {
         setUploadProgress(percent);
       })
         .then(async (dataset: DatasetResponse) => {
-          const preEdaProfile = await profilePromise;
           setUploadProgress(100);
-          setState("ready");
           setRunningSubPhase("intake");
           setFileName(dataset.filename || file.name);
           setSelectedSourceId(dataset.source_id);
 
+          addMilestone({
+            status: "completed",
+            title: "Upload complete",
+            subtext: `${dataset.filename} · ${dataset.source_id}`,
+            timestamp: now(),
+          });
+
+          // 서버 EDA 우선 조회 시도
+          let preEdaProfile: PreEdaProfile | null = null;
+          try {
+            const [summaryRes, qualityRes, corrRes, outlierRes, insightRes] =
+              await Promise.all([
+                fetchEdaSummary(dataset.source_id),
+                fetchEdaQuality(dataset.source_id),
+                fetchEdaCorrelations(dataset.source_id),
+                fetchEdaOutliers(dataset.source_id),
+                fetchEdaInsights(dataset.source_id),
+              ]);
+
+            const summary = summaryRes.data;
+            const quality = qualityRes.data;
+            const correlations = corrRes.data;
+            const outliers = outlierRes.data;
+            const insight = insightRes.data;
+
+            preEdaProfile = {
+              sourceLabel: dataset.filename || file.name,
+              uploadedAt,
+              rowCount: summary.row_count,
+              columnCount: summary.column_count,
+              columns: [
+                ...summary.numeric_columns,
+                ...summary.categorical_columns,
+                ...summary.datetime_columns,
+                ...summary.boolean_columns,
+                ...summary.identifier_columns,
+                ...summary.group_key_columns,
+              ],
+              sampleRows: [], // 서버 EDA는 sampleRows 미포함 — fetchSample로 별도 조회 가능
+              numericColumns: summary.numeric_columns,
+              categoricalColumns: summary.categorical_columns,
+              datetimeColumns: summary.datetime_columns,
+              identifierColumns: summary.identifier_columns,
+              booleanColumns: summary.boolean_columns,
+              groupKeyColumns: summary.group_key_columns,
+              groupKeyCandidates: summary.group_key_columns,
+              columnRoleSummaries: [],
+              missingColumns: quality.missing_columns.map((c) => ({
+                column: c.column,
+                missingCount: c.missing_count,
+                missingRate: c.missing_rate,
+              })),
+              topMissingColumns: quality.missing_columns
+                .sort((a, b) => b.missing_rate - a.missing_rate)
+                .slice(0, 3)
+                .map((c) => ({
+                  column: c.column,
+                  missingCount: c.missing_count,
+                  missingRate: c.missing_rate,
+                })),
+              numericSnapshots: [],
+              numericColumnStats: [],
+              distributions: [],
+              correlationTopPairs: correlations.top_pairs.map((p) => ({
+                left: p.col_a,
+                right: p.col_b,
+                value: p.correlation,
+              })),
+              outlierSummaries: outliers.outlier_columns.map((o) => ({
+                column: o.column,
+                outlierCount: o.outlier_count,
+                outlierRate: 0,
+                lowerBound: o.lower_bound,
+                upperBound: o.upper_bound,
+              })),
+              qualitySummary: summary.quality_summary,
+              summaryBullets: summary.summary_bullets,
+              recommendation: insight.preprocess_recommendation
+                ? {
+                    column: insight.preprocess_recommendation.operations[0]?.target_columns[0] ?? "",
+                    strategy: insight.preprocess_recommendation.operations[0]?.op ?? "",
+                    fillValue: "",
+                    missingCount: 0,
+                    missingPercent: 0,
+                  }
+                : null,
+            };
+
+            addMilestone({
+              status: "completed",
+              title: "Server EDA loaded",
+              subtext: `${summary.row_count} rows · ${summary.column_count} cols`,
+              timestamp: now(),
+            });
+          } catch {
+            // 서버 EDA 미구현 또는 실패 → 로컬 프로파일로 폴백
+            preEdaProfile = await localProfilePromise;
+            addLog(makeRawLog("eda_fallback", {
+              reason: "Server EDA unavailable, using local profile",
+            }));
+          }
+
+          setState("ready");
           upsertUploadedDataset({
             datasetId: dataset.id,
             sourceId: dataset.source_id,
@@ -1081,27 +1187,13 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
             preEdaProfile,
             preprocessApproved: !preEdaProfile?.recommendation,
           });
-
-          addMilestone({
-            status: "completed",
-            title: "Upload complete",
-            subtext: `${dataset.filename} · ${dataset.source_id}`,
-            timestamp: now(),
-          });
         })
         .catch((err: Error) => {
           transitionToError("upload", err.message);
         });
     },
-    [addMilestone, transitionToError, upsertUploadedDataset],
+    [addLog, addMilestone, transitionToError, upsertUploadedDataset],
   );
-
-  const startWithSample = useCallback(() => {
-    const sampleContent = "id,name,region,price,date\n1,Product A,North,100,2024-01-01\n2,Product B,South,200,2024-01-02\n";
-    const blob = new Blob([sampleContent], { type: "text/csv" });
-    const file = new File([blob], "sample_data.csv", { type: "text/csv" });
-    startUpload(file);
-  }, [startUpload]);
 
   const runQuestionStream = useCallback(
     (question: string) => {
@@ -1865,7 +1957,6 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
     removeUploadedDataset,
 
     startUpload,
-    startWithSample,
     resumeRun,
     handleApprove,
     handleReject,

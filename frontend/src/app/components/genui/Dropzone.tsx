@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import { UploadCloud, FileText, AlertCircle, X } from "lucide-react";
 import { cn } from "../../../lib/utils";
 import { GenUIChip } from "./GenUIChip";
@@ -14,17 +14,18 @@ interface DropzoneProps {
   className?: string;
 }
 
-export function Dropzone({ 
-  status, 
+export function Dropzone({
+  status,
   onDrop,
-  progress = 0, 
-  fileName, 
-  fileSize, 
-  uploadStep, 
+  progress = 0,
+  fileName,
+  fileSize,
+  uploadStep,
   onCancel,
-  className 
+  className
 }: DropzoneProps) {
-  
+  const [isDragging, setIsDragging] = useState(false);
+
   if (status === "uploading") {
     return (
       <div className={cn(
@@ -78,20 +79,33 @@ export function Dropzone({
     );
   }
 
+  const isOver = isDragging || status === "dragover";
+
   return (
-    <div 
+    <div
       className={cn(
         "relative w-full rounded-xl border-2 border-dashed transition-all duration-200 flex flex-col items-center justify-center text-center p-12 gap-4",
-        status === "dragover" 
-          ? "border-[var(--genui-focus-ring)] bg-[var(--genui-focus-ring)]/5" 
+        isOver
+          ? "border-[var(--genui-focus-ring)] bg-[var(--genui-focus-ring)]/5"
           : "border-[var(--genui-border)] hover:border-[var(--genui-border-strong)] bg-[var(--genui-surface)]/50",
         status === "disabled" && "opacity-50 cursor-not-allowed",
         className
       )}
+      onDragEnter={(e) => { e.preventDefault(); setIsDragging(true); }}
+      onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+      onDragLeave={(e) => { e.preventDefault(); setIsDragging(false); }}
+      onDrop={(e) => {
+        e.preventDefault();
+        setIsDragging(false);
+        if (status === "disabled") return;
+        if (e.dataTransfer.files.length > 0) {
+          onDrop?.(e.dataTransfer.files);
+        }
+      }}
     >
       <div className={cn(
         "w-16 h-16 rounded-2xl flex items-center justify-center transition-colors",
-        status === "dragover" ? "bg-[var(--genui-focus-ring)]/10 text-[var(--genui-focus-ring)]" : "bg-[var(--genui-panel)] border border-[var(--genui-border)] text-[var(--genui-muted)]"
+        isOver ? "bg-[var(--genui-focus-ring)]/10 text-[var(--genui-focus-ring)]" : "bg-[var(--genui-panel)] border border-[var(--genui-border)] text-[var(--genui-muted)]"
       )}>
         <UploadCloud className="w-8 h-8" />
       </div>
