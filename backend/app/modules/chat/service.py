@@ -5,7 +5,7 @@ from ...orchestration.client import AgentClient
 from ..datasets.repository import DataSourceRepository
 from .models import ChatSession
 from .repository import ChatRepository
-from .schemas import ChatHistoryResponse, ChatResponse, PendingApprovalResponse
+from .schemas import ChatHistoryResponse, PendingApprovalResponse
 
 
 class ChatService:
@@ -22,61 +22,6 @@ class ChatService:
         self.repository = repository
         self.data_source_repository = data_source_repository
 
-    async def ask(
-        self,
-        *,
-        question: str,
-        session_id: Optional[int] = None,
-        model_id: Optional[str] = None,
-        source_id: Optional[str] = None,
-    ) -> ChatResponse:
-        done_payload: Dict[str, Any] | None = None
-        approval_payload: Dict[str, Any] | None = None
-        async for event in self.ask_stream(
-            question=question,
-            session_id=session_id,
-            model_id=model_id,
-            source_id=source_id,
-        ):
-            if event.get("event") == "done":
-                payload = event.get("data")
-                if isinstance(payload, dict):
-                    done_payload = payload
-            elif event.get("event") == "approval_required":
-                payload = event.get("data")
-                if isinstance(payload, dict):
-                    approval_payload = payload
-
-        if approval_payload is not None:
-            session_id_value = approval_payload.get("session_id")
-            run_id = approval_payload.get("run_id")
-            thought_steps = approval_payload.get("thought_steps")
-            pending_approval = approval_payload.get("pending_approval")
-            if not isinstance(session_id_value, int):
-                raise RuntimeError("chat stream finished without session id")
-            return ChatResponse(
-                answer="",
-                session_id=session_id_value,
-                run_id=run_id if isinstance(run_id, str) else None,
-                thought_steps=thought_steps if isinstance(thought_steps, list) else [],
-                pending_approval=pending_approval if isinstance(pending_approval, dict) else None,
-            )
-
-        if done_payload is None:
-            raise RuntimeError("chat stream finished without done event")
-
-        answer = done_payload.get("answer")
-        session_id_value = done_payload.get("session_id")
-        thought_steps = done_payload.get("thought_steps")
-        if not isinstance(session_id_value, int):
-            raise RuntimeError("chat stream finished without session id")
-        return ChatResponse(
-            answer=str(answer) if isinstance(answer, str) else "",
-            session_id=session_id_value,
-            run_id=done_payload.get("run_id") if isinstance(done_payload.get("run_id"), str) else None,
-            thought_steps=thought_steps if isinstance(thought_steps, list) else [],
-        )
-
     async def ask_stream(
         self,
         *,
@@ -88,7 +33,7 @@ class ChatService:
         session = self._get_or_create_session(session_id=session_id, title=question)
         dataset = self.data_source_repository.get_by_source_id(source_id) if source_id else None
 
-        self._append_message(session=session, role="user", content=question)
+        self.repository.append_message(session, "user", question)
         run_id = uuid.uuid4().hex
         yield {"event": "session", "data": {"session_id": session.id, "run_id": run_id}}
 
@@ -102,7 +47,6 @@ class ChatService:
                 dataset=dataset,
                 model_id=model_id,
             ),
-            append_assistant_message=True,
             session=session,
         ):
             yield event
@@ -116,7 +60,7 @@ class ChatService:
         stage: str,
         instruction: Optional[str] = None,
     ) -> AsyncIterator[Dict[str, Any]]:
-        session = self._get_session(session_id)
+        session = self.repository.get_session(session_id)
         if session is None:
             raise RuntimeError("세션을 찾을 수 없습니다.")
 
@@ -133,7 +77,6 @@ class ChatService:
                     "instruction": instruction or "",
                 },
             ),
-            append_assistant_message=True,
             session=session,
         ):
             yield event
@@ -141,25 +84,24 @@ class ChatService:
     def get_pending_approval(
         self,
         *,
-        session_id: int,
         run_id: str,
     ) -> PendingApprovalResponse | None:
-        session = self._get_session(session_id)
-        if session is None:
-            return None
-
         pending_approval = self.agent.get_pending_approval(run_id=run_id)
         if pending_approval is None:
             return None
 
+        session_id = pending_approval.get("session_id")
+        if not isinstance(session_id, int):
+            return None
+
         return PendingApprovalResponse(
-            session_id=session.id,
+            session_id=session_id,
             run_id=run_id,
             pending_approval=pending_approval,
         )
 
     def get_history(self, session_id: int) -> Optional[ChatHistoryResponse]:
-        session = self._get_session(session_id)
+        session = self.repository.get_session(session_id)
         if not session:
             return None
         messages = self.repository.get_history(session_id)
@@ -168,17 +110,11 @@ class ChatService:
     def delete_session(self, session_id: int) -> bool:
         return self.repository.delete_session(session_id)
 
-    def _get_session(self, session_id: int) -> Optional[ChatSession]:
-        return self.repository.get_session(session_id)
-
     def _get_or_create_session(self, *, session_id: int | None, title: str) -> ChatSession:
         session = self.repository.get_session(session_id) if session_id else None
         if session is None:
             session = self.repository.create_session(title=title[:60])
         return session
-
-    def _append_message(self, *, session: ChatSession, role: str, content: str) -> None:
-        self.repository.append_message(session, role, content)
 
     async def _relay_agent_events(
         self,
@@ -186,7 +122,6 @@ class ChatService:
         session_id: int,
         run_id: str,
         agent_stream: AsyncIterator[Dict[str, Any]],
-        append_assistant_message: bool,
         session: ChatSession,
     ) -> AsyncIterator[Dict[str, Any]]:
         answer_parts: list[str] = []
@@ -244,8 +179,7 @@ class ChatService:
         if not final_answer:
             final_answer = "응답을 생성하지 못했습니다."
 
-        if append_assistant_message:
-            self._append_message(session=session, role="assistant", content=final_answer)
+        self.repository.append_message(session, "assistant", final_answer)
 
         done_data: Dict[str, Any] = {
             "answer": final_answer,
