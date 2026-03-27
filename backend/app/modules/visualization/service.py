@@ -3,7 +3,7 @@ from typing import Any, Dict
 
 import pandas as pd
 
-from ..datasets.repository import DataSourceRepository
+from ..datasets.repository import DatasetRepository
 from ..datasets.service import DatasetReader
 from .schemas import ManualVizRequest
 
@@ -44,7 +44,7 @@ class VisualizationService:
     def __init__(
         self,
         *,
-        repository: DataSourceRepository,
+        repository: DatasetRepository,
         reader: DatasetReader,
     ) -> None:
         self.repository = repository

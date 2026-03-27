@@ -5,11 +5,12 @@ from fastapi import Depends
 from sqlalchemy.orm import Session
 
 from ...core.db import get_db
-from ..datasets.dependencies import get_data_source_repository
-from ..datasets.repository import DataSourceRepository
+from ..datasets.dependencies import get_dataset_repository, get_dataset_service
+from ..datasets.repository import DatasetRepository
+from ..datasets.service import DatasetService
 from .guideline_repository import GuidelineRagRepository
 from .repository import RagRepository
-from .service import GuidelineRagService, RagService
+from .service import DatasetRagSyncService, GuidelineRagService, RagService
 
 
 def _vector_storage_dir() -> Path:
@@ -38,7 +39,7 @@ def get_rag_repository(db: Session = Depends(get_db)) -> RagRepository:
 def build_rag_service(
     *,
     repository: RagRepository,
-    dataset_repository: DataSourceRepository,
+    dataset_repository: DatasetRepository,
     answer_agent=None,
 ) -> RagService:
     return RagService(
@@ -52,11 +53,32 @@ def build_rag_service(
 
 def get_rag_service(
     repository: RagRepository = Depends(get_rag_repository),
-    dataset_repository: DataSourceRepository = Depends(get_data_source_repository),
+    dataset_repository: DatasetRepository = Depends(get_dataset_repository),
 ) -> RagService:
     return build_rag_service(
         repository=repository,
         dataset_repository=dataset_repository,
+    )
+
+
+def build_dataset_rag_sync_service(
+    *,
+    dataset_service: DatasetService,
+    rag_service: RagService,
+) -> DatasetRagSyncService:
+    return DatasetRagSyncService(
+        dataset_service=dataset_service,
+        rag_service=rag_service,
+    )
+
+
+def get_dataset_rag_sync_service(
+    dataset_service: DatasetService = Depends(get_dataset_service),
+    rag_service: RagService = Depends(get_rag_service),
+) -> DatasetRagSyncService:
+    return build_dataset_rag_sync_service(
+        dataset_service=dataset_service,
+        rag_service=rag_service,
     )
 
 
