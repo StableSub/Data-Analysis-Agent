@@ -5,7 +5,6 @@ import pandas as pd
 
 from ..datasets.repository import DatasetRepository
 from ..datasets.service import DatasetReader
-from .schemas import ManualVizRequest
 
 
 def _serialize_preview_value(value: Any) -> Any:
@@ -39,7 +38,7 @@ def _build_preview_rows(
 
 
 class VisualizationService:
-    """수동 시각화용 데이터 추출을 담당한다."""
+    """워크플로우용 시각화 데이터 조회를 담당한다."""
 
     def __init__(
         self,
@@ -59,11 +58,16 @@ class VisualizationService:
             return None
         return file_path
 
-    def load_sample_frame(self, source_id: str, *, nrows: int) -> pd.DataFrame | None:
+    def load_sample_frame(self, source_id: str, *, nrows: int) -> tuple[pd.DataFrame | None, str]:
         file_path = self.resolve_source_path(source_id)
         if file_path is None:
-            return None
-        return self.reader.read_csv(str(file_path), nrows=nrows)
+            return None, "dataset_missing"
+        if file_path.suffix.lower() != ".csv":
+            return None, "unsupported_format"
+        try:
+            return self.reader.read_csv(str(file_path), nrows=nrows), "available"
+        except Exception:
+            return None, "read_error"
 
     def build_preview_rows(
         self,
@@ -73,40 +77,7 @@ class VisualizationService:
         y_key: str,
         limit: int = 5,
     ) -> list[Dict[str, Any]]:
-        df = self.load_sample_frame(source_id, nrows=limit)
+        df, _ = self.load_sample_frame(source_id, nrows=limit)
         if df is None or df.empty:
             return []
         return _build_preview_rows(df=df, x_key=x_key, y_key=y_key, limit=limit)
-
-    def get_manual_viz_data(self, request: ManualVizRequest) -> Dict[str, Any]:
-        dataset = self.repository.get_by_source_id(request.source_id)
-        if not dataset:
-            return {"error": "NOT_FOUND", "message": "데이터셋을 찾을 수 없습니다."}
-
-        requested_cols = [request.columns.x, request.columns.y]
-        if request.columns.color:
-            requested_cols.append(request.columns.color)
-        if request.columns.group:
-            requested_cols.append(request.columns.group)
-        requested_cols = list(dict.fromkeys(requested_cols))
-
-        try:
-            df = self.reader.read_csv(
-                dataset.storage_path,
-                nrows=request.limit,
-                usecols=requested_cols,
-            )
-        except FileNotFoundError:
-            return {"error": "FILE_NOT_FOUND", "message": "파일이 존재하지 않습니다."}
-        except ValueError as exc:
-            return {"error": "INVALID_COLUMN", "message": str(exc)}
-        except Exception as exc:
-            return {"error": "INTERNAL_ERROR", "message": f"데이터 처리 중 오류: {exc}"}
-
-        if df.empty:
-            return {"error": "NO_DATA", "message": "조회된 데이터가 없습니다."}
-
-        return {
-            "chart_type": request.chart_type,
-            "data": df.where(pd.notnull(df), None).to_dict(orient="records"),
-        }

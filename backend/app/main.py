@@ -13,7 +13,6 @@ from .modules.preprocess import router as preprocess_api
 from .modules.rag import models as rag_models
 from .modules.rag import router as rag_router
 from .modules.reports import models as report_models
-from .modules.visualization import router as visualization_api
 
 
 load_dotenv()
@@ -41,7 +40,6 @@ def on_startup():
 
 app.include_router(datasets_api.router)
 app.include_router(chats_api.router)
-app.include_router(visualization_api.router)
 app.include_router(rag_router.router)
 app.include_router(guidelines_api.router)
 app.include_router(preprocess_api.router)
