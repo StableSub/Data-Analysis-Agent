@@ -36,7 +36,7 @@ def _build_failed_report_payload(
     draft_data = draft if isinstance(draft, dict) else {}
     return {
         "status": "failed",
-        "summary": "",
+        "summary": "리포트 생성에 실패했습니다.",
         "metrics": draft_data.get("metrics", {}),
         "visualizations": list(draft_data.get("visualizations") or []),
         "revision_count": int(draft_data.get("revision_count", 0) or 0),

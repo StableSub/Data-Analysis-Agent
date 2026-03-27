@@ -62,6 +62,7 @@ def build_rag_workflow(*, rag_service: RagService, default_model: str = "gpt-5-n
                 "context": context,
                 "retrieved_count": len(retrieved_chunks),
                 "status": status_value or "missing",
+                "has_evidence": bool(retrieved_chunks),
                 "evidence_summary": evidence_summary,
             },
             "rag_data_exists": bool(retrieved_chunks),
@@ -87,6 +88,7 @@ def build_rag_workflow(*, rag_service: RagService, default_model: str = "gpt-5-n
                 },
                 "rag_result": {
                     **rag_result_dict,
+                    "has_evidence": False,
                     "evidence_summary": no_evidence_summary,
                 },
             }
@@ -115,6 +117,7 @@ def build_rag_workflow(*, rag_service: RagService, default_model: str = "gpt-5-n
             },
             "rag_result": {
                 **rag_result_dict,
+                "has_evidence": True,
                 "evidence_summary": evidence_summary,
             },
         }

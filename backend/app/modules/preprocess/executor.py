@@ -20,6 +20,7 @@ def execute_preprocess_plan(
         return {
             "preprocess_result": {
                 "status": "failed",
+                "summary": "source_id가 없어 전처리를 실행하지 못했습니다.",
                 "applied_ops_count": 0,
                 "error": "source_id is required",
             }
@@ -31,6 +32,7 @@ def execute_preprocess_plan(
         return {
             "preprocess_result": {
                 "status": "failed",
+                "summary": "전처리 계획 형식이 올바르지 않습니다.",
                 "applied_ops_count": 0,
                 "error": f"invalid operation format: {exc}",
             }
@@ -40,6 +42,7 @@ def execute_preprocess_plan(
         return {
             "preprocess_result": {
                 "status": "skipped",
+                "summary": "전처리 없이 다음 단계로 진행했습니다.",
                 "applied_ops_count": 0,
             }
         }
@@ -50,6 +53,7 @@ def execute_preprocess_plan(
         return {
             "preprocess_result": {
                 "status": "failed",
+                "summary": f"전처리 단계에서 오류가 발생했습니다: {exc}",
                 "applied_ops_count": 0,
                 "error": str(exc),
             },
@@ -65,6 +69,7 @@ def execute_preprocess_plan(
         "dataset_profile": updated_profile,
         "preprocess_result": {
             "status": "applied",
+            "summary": f"전처리 연산 {len(plan.operations)}개를 적용했습니다.",
             "applied_ops_count": len(plan.operations),
             "input_source_id": apply_response.input_source_id,
             "output_source_id": apply_response.output_source_id,

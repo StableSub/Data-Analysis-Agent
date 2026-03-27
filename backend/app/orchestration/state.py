@@ -13,6 +13,7 @@ class HandoffPayload(TypedDict, total=False):
 
 class PreprocessResultPayload(TypedDict, total=False):
     status: str
+    summary: str
     applied_ops_count: int
     input_source_id: str
     output_source_id: str
@@ -21,6 +22,8 @@ class PreprocessResultPayload(TypedDict, total=False):
 
 
 class RagResultPayload(TypedDict, total=False):
+    status: str
+    has_evidence: bool
     query: str
     source_id: str
     retrieved_chunks: list
@@ -30,6 +33,7 @@ class RagResultPayload(TypedDict, total=False):
 
 
 class GuidelineResultPayload(TypedDict, total=False):
+    has_evidence: bool
     query: str
     source_id: str
     guideline_id: str
@@ -47,6 +51,16 @@ class VisualizationResultPayload(TypedDict, total=False):
     summary: str
     chart: Dict[str, Any]
     artifact: Dict[str, Any]
+
+
+class ReportResultPayload(TypedDict, total=False):
+    status: str
+    summary: str
+    error: str
+    report_id: str
+    metrics: Dict[str, Any]
+    visualizations: list[Dict[str, Any]]
+    revision_count: int
 
 
 class OutputPayload(TypedDict, total=False):
@@ -76,7 +90,6 @@ class AgentState(TypedDict, total=False):
     session_id: str
     model_id: str
     run_id: str
-    dataset_id: int
     source_id: str
     active_guideline_source_id: str
     dataset_profile: Dict[str, Any]
@@ -136,7 +149,7 @@ class ReportGraphState(AgentState, total=False):
     visualization_result: VisualizationResultPayload
     merged_context: Dict[str, Any]
     report_draft: Dict[str, Any]
-    report_result: Dict[str, Any]
+    report_result: ReportResultPayload
     output: OutputPayload
 
 
@@ -160,10 +173,7 @@ class MainWorkflowState(AgentState, total=False):
     visualization_result: VisualizationResultPayload
     merged_context: Dict[str, Any]
     report_draft: Dict[str, Any]
-    report_result: Dict[str, Any]
+    report_result: ReportResultPayload
     data_qa_result: Dict[str, Any]
 
     output: OutputPayload
-
-
-CommonAgentState = AgentState

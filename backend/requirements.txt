@@ -10,6 +10,7 @@ python-dotenv
 langchain
 langchain-core
 langgraph
+langgraph-checkpoint-sqlite
 langchain-tavily
 sentence-transformers
 faiss-cpu

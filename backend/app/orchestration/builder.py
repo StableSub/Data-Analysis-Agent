@@ -6,6 +6,7 @@ from langgraph.graph import END, START, StateGraph
 
 from .ai import answer_data_question, answer_general_question
 from .intake_router import build_intake_router_workflow
+from .presentation import build_merged_context
 from .state import MainWorkflowState
 from .workflows.guideline import build_guideline_workflow
 from .workflows.preprocess import build_preprocess_workflow
@@ -101,66 +102,7 @@ def build_main_workflow(
         }
 
     def merge_context_node(state: MainWorkflowState) -> Dict[str, Any]:
-        merged_context: Dict[str, Any] = {"applied_steps": []}
-
-        request_context = state.get("request_context")
-        if isinstance(request_context, str) and request_context.strip():
-            merged_context["request_context"] = request_context.strip()
-
-        handoff = state.get("handoff")
-        if isinstance(handoff, dict):
-            merged_context["request_flags"] = {
-                "ask_preprocess": bool(handoff.get("ask_preprocess", False)),
-                "ask_visualization": bool(handoff.get("ask_visualization", False)),
-                "ask_report": bool(handoff.get("ask_report", False)),
-                "ask_guideline": bool(handoff.get("ask_guideline", False)),
-            }
-
-        preprocess_result = state.get("preprocess_result")
-        if isinstance(preprocess_result, dict):
-            merged_context["preprocess_result"] = preprocess_result
-            if preprocess_result.get("status") == "applied":
-                merged_context["applied_steps"].append("preprocess")
-
-        rag_result = state.get("rag_result")
-        if isinstance(rag_result, dict):
-            merged_context["rag_result"] = rag_result
-            if int(rag_result.get("retrieved_count", 0) or 0) > 0:
-                merged_context["applied_steps"].append("rag")
-
-        guideline_index_status = state.get("guideline_index_status")
-        if isinstance(guideline_index_status, dict):
-            merged_context["guideline_index_status"] = guideline_index_status
-
-        guideline_result = state.get("guideline_result")
-        if isinstance(guideline_result, dict):
-            merged_context["guideline_result"] = guideline_result
-            merged_context["guideline_context"] = {
-                "active_source_id": state.get("active_guideline_source_id", ""),
-                "status": guideline_result.get("status", ""),
-                "retrieved_count": int(guideline_result.get("retrieved_count", 0) or 0),
-                "has_evidence": int(guideline_result.get("retrieved_count", 0) or 0) > 0,
-                "filename": guideline_result.get("filename", ""),
-                "guideline_id": guideline_result.get("guideline_id", ""),
-                "evidence_summary": guideline_result.get("evidence_summary", ""),
-            }
-            if int(guideline_result.get("retrieved_count", 0) or 0) > 0:
-                merged_context["applied_steps"].append("guideline")
-
-        insight = state.get("insight")
-        if isinstance(insight, dict):
-            merged_context["insight"] = insight
-            summary = insight.get("summary")
-            if isinstance(summary, str) and summary.strip():
-                merged_context["applied_steps"].append("insight")
-
-        visualization_result = state.get("visualization_result")
-        if isinstance(visualization_result, dict):
-            merged_context["visualization_result"] = visualization_result
-            if visualization_result.get("status") == "generated":
-                merged_context["applied_steps"].append("visualization")
-
-        return {"merged_context": merged_context}
+        return {"merged_context": build_merged_context(state)}
 
     def data_qa_terminal(state: MainWorkflowState) -> Dict[str, Any]:
         merged_context = state.get("merged_context")
