@@ -8,9 +8,11 @@ from ...core.db import get_db
 from ..datasets.dependencies import get_dataset_repository, get_dataset_service
 from ..datasets.repository import DatasetRepository
 from ..datasets.service import DatasetService
+from ..guidelines.dependencies import get_guideline_service
+from ..guidelines.service import GuidelineService
 from .guideline_repository import GuidelineRagRepository
 from .repository import RagRepository
-from .service import DatasetRagSyncService, GuidelineRagService, RagService
+from .service import DatasetRagSyncService, GuidelineRagService, GuidelineRagSyncService, RagService
 
 
 def _vector_storage_dir() -> Path:
@@ -105,3 +107,24 @@ def get_guideline_rag_service(
     repository: GuidelineRagRepository = Depends(get_guideline_rag_repository),
 ) -> GuidelineRagService:
     return build_guideline_rag_service(repository=repository)
+
+
+def build_guideline_rag_sync_service(
+    *,
+    guideline_service: GuidelineService,
+    guideline_rag_service: GuidelineRagService,
+) -> GuidelineRagSyncService:
+    return GuidelineRagSyncService(
+        guideline_service=guideline_service,
+        guideline_rag_service=guideline_rag_service,
+    )
+
+
+def get_guideline_rag_sync_service(
+    guideline_service: GuidelineService = Depends(get_guideline_service),
+    guideline_rag_service: GuidelineRagService = Depends(get_guideline_rag_service),
+) -> GuidelineRagSyncService:
+    return build_guideline_rag_sync_service(
+        guideline_service=guideline_service,
+        guideline_rag_service=guideline_rag_service,
+    )
