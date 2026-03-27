@@ -5,7 +5,7 @@ from typing import Any, Dict
 
 import pandas as pd
 from ..datasets.models import Dataset
-from ..datasets.repository import DataSourceRepository
+from ..datasets.repository import DatasetRepository
 from ..datasets.service import DatasetReader
 from .processor import PreprocessProcessor
 from .schemas import (
@@ -79,7 +79,7 @@ class PreprocessService:
     def __init__(
         self,
         *,
-        repository: DataSourceRepository,
+        repository: DatasetRepository,
         reader: DatasetReader,
         processor: PreprocessProcessor,
     ) -> None:

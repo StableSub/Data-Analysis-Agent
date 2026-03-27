@@ -10,7 +10,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from sqlalchemy.orm import Session
 
 from ..core.db import get_db
-from ..modules.datasets.dependencies import build_data_source_repository, build_dataset_reader
+from ..modules.datasets.dependencies import build_dataset_reader, build_dataset_repository
 from ..modules.guidelines.dependencies import build_guideline_repository, build_guideline_service
 from ..modules.guidelines.service import GuidelineService
 from ..modules.preprocess.dependencies import (
@@ -50,7 +50,7 @@ def get_workflow_checkpointer() -> InMemorySaver:
 
 
 def build_orchestration_services(*, db: Session, agent: Any) -> WorkflowServices:
-    dataset_repository = build_data_source_repository(db)
+    dataset_repository = build_dataset_repository(db)
     dataset_reader = build_dataset_reader()
     preprocess_service = build_preprocess_service(
         repository=dataset_repository,

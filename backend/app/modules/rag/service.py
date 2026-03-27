@@ -4,10 +4,11 @@ import hashlib
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, List, Optional
+from typing import IO, Any, Iterable, List, Optional
 
 from ..datasets.models import Dataset
-from ..datasets.repository import DataSourceRepository
+from ..datasets.repository import DatasetRepository
+from ..datasets.service import DatasetService
 from ..guidelines.models import Guideline
 from .ai import answer_with_context
 from .errors import RagEmbeddingError, RagNotIndexedError, RagSearchError
@@ -31,7 +32,7 @@ class RagService:
         repository: RagRepository,
         storage_dir: Path,
         embedder: Any,
-        dataset_repository: DataSourceRepository | None = None,
+        dataset_repository: DatasetRepository | None = None,
         answer_agent: Any | None = None,
         chunk_size: int = 800,
         chunk_overlap: int = 100,
@@ -306,6 +307,50 @@ class RagService:
                 )
             )
         return retrieved
+
+
+class DatasetRagSyncService:
+    def __init__(
+        self,
+        *,
+        dataset_service: DatasetService,
+        rag_service: RagService,
+    ) -> None:
+        self.dataset_service = dataset_service
+        self.rag_service = rag_service
+
+    def upload_dataset(
+        self,
+        *,
+        file_stream: IO[bytes],
+        original_filename: str,
+        display_name: str | None = None,
+    ) -> Dataset:
+        dataset = self.dataset_service.upload_dataset(
+            file_stream=file_stream,
+            original_filename=original_filename,
+            display_name=display_name,
+        )
+        try:
+            self.rag_service.index_dataset(dataset)
+        except Exception:
+            try:
+                self.rag_service.delete_source(dataset.source_id)
+            except Exception:
+                pass
+            self.dataset_service.delete_dataset(dataset.source_id)
+            raise
+        return dataset
+
+    def delete_dataset(self, source_id: str) -> bool:
+        deleted = self.dataset_service.delete_dataset(source_id)
+        if not deleted:
+            return False
+        try:
+            self.rag_service.delete_source(source_id)
+        except Exception:
+            pass
+        return True
 
 
 class GuidelineRagService:

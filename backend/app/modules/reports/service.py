@@ -3,7 +3,7 @@ from typing import Any, Dict, List
 
 import pandas as pd
 
-from ..datasets.repository import DataSourceRepository
+from ..datasets.repository import DatasetRepository
 from ..datasets.service import DatasetReader
 from .ai import draft_report, generate_summary_from_payload
 from .models import Report
@@ -113,7 +113,7 @@ class ReportService:
         self,
         repository: ReportRepository,
         *,
-        dataset_repository: DataSourceRepository | None = None,
+        dataset_repository: DatasetRepository | None = None,
         reader: DatasetReader | None = None,
         default_model: str = "gpt-5-nano",
     ) -> None:

@@ -1,11 +1,11 @@
 import uuid
 from pathlib import Path
-from typing import IO, Any, Dict, List, Optional
+from typing import IO, Any, List, Optional
 
 import pandas as pd
 
 from .models import Dataset
-from .repository import DataSourceRepository
+from .repository import DatasetRepository
 
 
 class DatasetStorage:
@@ -57,13 +57,13 @@ class DatasetReader:
             usecols=usecols,
         )
 
-class DataSourceService:
+class DatasetService:
     """데이터셋 흐름만 담당한다."""
 
     def __init__(
         self,
         *,
-        repository: DataSourceRepository,
+        repository: DatasetRepository,
         storage: DatasetStorage,
         reader: DatasetReader,
     ) -> None:
@@ -84,34 +84,20 @@ class DataSourceService:
             storage_path=str(storage_path),
             filesize=size,
         )
-        dataset = self.repository.create(dataset)
-        return dataset
+        return self.repository.create(dataset)
 
-    def list_datasets(self, skip: int = 0, limit: int = 20) -> List[Dataset]:
-        datasets = self.repository.list_all()
-        end = skip + limit if limit is not None else None
-        return datasets[skip:end]
+    def list_datasets(self, skip: int = 0, limit: int = 20) -> tuple[List[Dataset], int]:
+        items = self.repository.list_page(skip=skip, limit=limit)
+        total = self.repository.count_all()
+        return items, total
 
-    def get_dataset_detail(self, dataset_id: int) -> Optional[Dict[str, Dataset]]:
-        dataset = self.repository.get_by_id(dataset_id)
-        if not dataset:
-            return None
-        return {"dataset": dataset}
+    def get_dataset_detail(self, source_id: str) -> Optional[Dataset]:
+        return self.repository.get_by_source_id(source_id)
 
-    def delete_dataset(self, source_id: str) -> Dict[str, Any]:
+    def delete_dataset(self, source_id: str) -> bool:
         dataset = self.repository.get_by_source_id(source_id)
         if not dataset:
-            return {
-                "success": False,
-                "deleted_file": None,
-                "message": "데이터셋을 찾을 수 없습니다.",
-            }
-
-        deleted_info = {
-            "source_id": dataset.source_id,
-            "filename": dataset.filename,
-            "storage_path": dataset.storage_path,
-        }
+            return False
 
         try:
             self.storage.delete_file(dataset.storage_path)
@@ -119,22 +105,14 @@ class DataSourceService:
             pass
 
         self.repository.delete(dataset)
+        return True
 
-        return {
-            "success": True,
-            "deleted_file": deleted_info,
-            "message": "데이터셋이 성공적으로 삭제되었습니다.",
-        }
-
-    def get_dataset_sample(self, source_id: str, n_rows: int = 5) -> Optional[Dict[str, Any]]:
+    def get_dataset_sample(self, source_id: str, n_rows: int = 5) -> Optional[dict[str, Any]]:
         dataset = self.repository.get_by_source_id(source_id)
         if not dataset:
             return None
 
-        try:
-            df = self.reader.read_csv(dataset.storage_path, nrows=n_rows)
-        except Exception:
-            return None
+        df = self.reader.read_csv(dataset.storage_path, nrows=n_rows)
 
         return {
             "source_id": source_id,

@@ -1,7 +1,7 @@
 from fastapi import Depends
 
-from ..datasets.dependencies import get_data_source_repository, get_dataset_reader
-from ..datasets.repository import DataSourceRepository
+from ..datasets.dependencies import get_dataset_reader, get_dataset_repository
+from ..datasets.repository import DatasetRepository
 from ..datasets.service import DatasetReader
 from .processor import PreprocessProcessor
 from .service import PreprocessService
@@ -17,7 +17,7 @@ def get_preprocess_processor() -> PreprocessProcessor:
 
 def build_preprocess_service(
     *,
-    repository: DataSourceRepository,
+    repository: DatasetRepository,
     reader: DatasetReader,
     processor: PreprocessProcessor,
 ) -> PreprocessService:
@@ -25,7 +25,7 @@ def build_preprocess_service(
 
 
 def get_preprocess_service(
-    repository: DataSourceRepository = Depends(get_data_source_repository),
+    repository: DatasetRepository = Depends(get_dataset_repository),
     reader: DatasetReader = Depends(get_dataset_reader),
     processor: PreprocessProcessor = Depends(get_preprocess_processor),
 ) -> PreprocessService:

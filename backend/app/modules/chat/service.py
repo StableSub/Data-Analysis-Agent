@@ -2,7 +2,7 @@ import uuid
 from typing import Any, AsyncIterator, Dict, Optional
 
 from ...orchestration.client import AgentClient
-from ..datasets.repository import DataSourceRepository
+from ..datasets.repository import DatasetRepository
 from .models import ChatSession
 from .repository import ChatRepository
 from .schemas import ChatHistoryResponse, PendingApprovalResponse
@@ -16,11 +16,11 @@ class ChatService:
         *,
         agent: AgentClient,
         repository: ChatRepository,
-        data_source_repository: DataSourceRepository,
+        dataset_repository: DatasetRepository,
     ) -> None:
         self.agent = agent
         self.repository = repository
-        self.data_source_repository = data_source_repository
+        self.dataset_repository = dataset_repository
 
     async def ask_stream(
         self,
@@ -31,7 +31,7 @@ class ChatService:
         source_id: Optional[str] = None,
     ) -> AsyncIterator[Dict[str, Any]]:
         session = self._get_or_create_session(session_id=session_id, title=question)
-        dataset = self.data_source_repository.get_by_source_id(source_id) if source_id else None
+        dataset = self.dataset_repository.get_by_source_id(source_id) if source_id else None
 
         self.repository.append_message(session, "user", question)
         run_id = uuid.uuid4().hex

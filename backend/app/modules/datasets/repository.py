@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from .models import Dataset
 
 
-class DataSourceRepository:
+class DatasetRepository:
     """데이터셋 영속화/조회/삭제를 담당하는 저장소 계층."""
 
     def __init__(self, db: Session):
@@ -17,11 +17,17 @@ class DataSourceRepository:
         self.db.refresh(dataset)
         return dataset
 
-    def list_all(self) -> List[Dataset]:
-        return self.db.query(Dataset).order_by(Dataset.id.desc()).all()
+    def list_page(self, skip: int = 0, limit: int = 20) -> List[Dataset]:
+        return (
+            self.db.query(Dataset)
+            .order_by(Dataset.id.desc())
+            .offset(skip)
+            .limit(limit)
+            .all()
+        )
 
-    def get_by_id(self, dataset_id: int) -> Optional[Dataset]:
-        return self.db.query(Dataset).filter(Dataset.id == dataset_id).first()
+    def count_all(self) -> int:
+        return self.db.query(Dataset).count()
 
     def get_by_source_id(self, source_id: str) -> Optional[Dataset]:
         return self.db.query(Dataset).filter(Dataset.source_id == source_id).first()
