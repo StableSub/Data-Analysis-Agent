@@ -139,18 +139,6 @@ export interface PendingApprovalResponse {
   pending_approval: PendingApprovalPayload;
 }
 
-export interface ManualVizRequest {
-  source_id: string;
-  chart_type: "bar" | "line" | "pie" | "scatter" | "heatmap";
-  columns: { x: string; y: string; color?: string; group?: string };
-  limit?: number;
-}
-
-export interface ManualVizResponse {
-  chart_type: string;
-  data: Record<string, unknown>[];
-}
-
 // --- Endpoint functions ---
 
 /** GET /datasets/{source_id}/sample */
@@ -193,14 +181,6 @@ export function resumeChatRun(
 export function deleteChatSession(sessionId: number): Promise<void> {
   return apiRequest<void>(`/chats/${sessionId}`, {
     method: "DELETE",
-  });
-}
-
-/** POST /vizualization/manual (note: backend uses "vizualization") */
-export function createManualViz(req: ManualVizRequest): Promise<ManualVizResponse> {
-  return apiRequest<ManualVizResponse>("/vizualization/manual", {
-    method: "POST",
-    body: JSON.stringify(req),
   });
 }
 
