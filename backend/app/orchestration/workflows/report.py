@@ -28,6 +28,22 @@ def _get_report_revision_instruction(state: ReportGraphState) -> str:
     return str(revision_request or "").strip()
 
 
+def _build_failed_report_payload(
+    *,
+    draft: Dict[str, Any] | None,
+    error: str,
+) -> Dict[str, Any]:
+    draft_data = draft if isinstance(draft, dict) else {}
+    return {
+        "status": "failed",
+        "summary": "",
+        "metrics": draft_data.get("metrics", {}),
+        "visualizations": list(draft_data.get("visualizations") or []),
+        "revision_count": int(draft_data.get("revision_count", 0) or 0),
+        "error": error,
+    }
+
+
 def build_report_workflow(*, report_service: ReportService, default_model: str = "gpt-5-nano"):
     def report_draft_node(state: ReportGraphState) -> Dict[str, Any]:
         target_source_id = resolve_target_source_id(state)
@@ -63,21 +79,41 @@ def build_report_workflow(*, report_service: ReportService, default_model: str =
         if revision_instruction:
             revision_count += 1
 
-        draft = report_service.build_report_draft(
-            question=question,
-            source_id=str(target_source_id or ""),
-            insight_summary=insight_summary,
-            visualization_summary=visualization_summary,
-            revision_instruction=revision_instruction,
-            model_id=state.get("model_id"),
-            visualizations=report_visualizations,
-            default_model=default_model,
-        )
+        try:
+            draft = report_service.build_report_draft(
+                question=question,
+                source_id=str(target_source_id or ""),
+                insight_summary=insight_summary,
+                visualization_summary=visualization_summary,
+                revision_instruction=revision_instruction,
+                model_id=state.get("model_id"),
+                visualizations=report_visualizations,
+                default_model=default_model,
+            )
+        except Exception as exc:
+            failed = _build_failed_report_payload(draft=None, error=str(exc))
+            failed["revision_count"] = revision_count
+            return {
+                "report_draft": failed,
+                "report_result": failed,
+                "pending_approval": {},
+                "revision_request": {},
+                "output": {
+                    "type": "report_answer",
+                    "content": "리포트 생성에 실패했습니다.",
+                },
+            }
 
         return {
             "report_draft": {**draft, "revision_count": revision_count},
             "revision_request": {},
         }
+
+    def route_after_draft(state: ReportGraphState) -> str:
+        draft = state.get("report_draft")
+        if isinstance(draft, dict) and draft.get("status") == "failed":
+            return "failed"
+        return "approval"
 
     def approval_gate_node(state: ReportGraphState) -> Dict[str, Any]:
         draft = state.get("report_draft")
@@ -146,14 +182,58 @@ def build_report_workflow(*, report_service: ReportService, default_model: str =
         if not isinstance(draft, dict):
             draft = {}
         report_text = str(draft.get("summary") or "").strip()
+        if not report_text:
+            failed = _build_failed_report_payload(
+                draft=draft,
+                error="REPORT_DRAFT_EMPTY",
+            )
+            return {
+                "report_result": failed,
+                "pending_approval": {},
+                "revision_request": {},
+                "output": {
+                    "type": "report_answer",
+                    "content": "리포트 생성에 실패했습니다.",
+                },
+            }
+
+        try:
+            session_id = int(str(state.get("session_id") or "").strip())
+            report = report_service.save_report(
+                session_id=session_id,
+                summary_text=report_text,
+            )
+        except Exception as exc:
+            failed = _build_failed_report_payload(draft=draft, error=str(exc))
+            return {
+                "report_result": failed,
+                "pending_approval": {},
+                "revision_request": {},
+                "output": {
+                    "type": "report_answer",
+                    "content": "리포트 생성에 실패했습니다.",
+                },
+            }
+
+        result = {
+            **draft,
+            "status": "generated",
+            "report_id": report.id,
+        }
         return {
-            "report_result": draft,
+            "report_result": result,
             "pending_approval": {},
             "revision_request": {},
             "output": {
                 "type": "report_answer",
                 "content": report_text or "리포트 초안을 생성하지 못했습니다.",
             },
+        }
+
+    def fail_node(_: ReportGraphState) -> Dict[str, Any]:
+        return {
+            "pending_approval": {},
+            "revision_request": {},
         }
 
     def cancel_node(_: ReportGraphState) -> Dict[str, Any]:
@@ -164,11 +244,19 @@ def build_report_workflow(*, report_service: ReportService, default_model: str =
 
     graph = StateGraph(ReportGraphState)
     graph.add_node("report_draft", report_draft_node)
+    graph.add_node("fail", fail_node)
     graph.add_node("approval_gate", approval_gate_node)
     graph.add_node("finalize", finalize_node)
     graph.add_node("cancel", cancel_node)
     graph.add_edge(START, "report_draft")
-    graph.add_edge("report_draft", "approval_gate")
+    graph.add_conditional_edges(
+        "report_draft",
+        route_after_draft,
+        {
+            "approval": "approval_gate",
+            "failed": "fail",
+        },
+    )
     graph.add_conditional_edges(
         "approval_gate",
         route_after_approval,
@@ -178,6 +266,7 @@ def build_report_workflow(*, report_service: ReportService, default_model: str =
             "cancel": "cancel",
         },
     )
+    graph.add_edge("fail", END)
     graph.add_edge("finalize", END)
     graph.add_edge("cancel", END)
 
