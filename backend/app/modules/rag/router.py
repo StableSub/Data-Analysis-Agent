@@ -4,13 +4,20 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 
 from .dependencies import get_rag_service
 from .errors import RagEmbeddingError, RagNotIndexedError, RagSearchError
-from .schemas import RagDeleteResponse, RagQueryRequest, RagQueryResponse, RagRetrievedChunk
+from .schemas import RagQueryRequest, RagQueryResponse, RagRetrievedChunk
 from .service import RagService
 
 router = APIRouter(prefix="/rag", tags=["rag"])
 
 
-@router.post("/query", response_model=RagQueryResponse)
+@router.post(
+    "/query",
+    response_model=RagQueryResponse,
+    responses={
+        204: {"description": "검색 결과가 없습니다."},
+        404: {"description": "RAG 인덱스가 없습니다."},
+    },
+)
 async def rag_query(
     request: RagQueryRequest,
     rag_service: RagService = Depends(get_rag_service),
@@ -48,10 +55,10 @@ async def rag_query(
     )
 
 
-@router.delete("/sources/{source_id}", response_model=RagDeleteResponse)
+@router.delete("/sources/{source_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_rag_source(
     source_id: str,
     rag_service: RagService = Depends(get_rag_service),
 ):
     rag_service.delete_source(source_id)
-    return RagDeleteResponse(success=True)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
