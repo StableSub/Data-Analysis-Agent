@@ -68,19 +68,6 @@ export interface ChatHistoryResponse {
   messages: ChatHistoryMessage[];
 }
 
-export interface RagChunk {
-  source_id: string;
-  chunk_id: number;
-  score: number;
-  snippet: string;
-}
-
-export interface RagResponse {
-  answer: string;
-  retrieved_chunks: RagChunk[];
-  executed_at: string;
-}
-
 export interface ReportResponse {
   report_id: string;
   session_id: number;
@@ -158,12 +145,6 @@ export interface PendingApprovalResponse {
   pending_approval: PendingApprovalPayload;
 }
 
-export interface RagQueryRequest {
-  query: string;
-  top_k?: number;
-  source_filter?: string[];
-}
-
 export interface ReportCreateRequest {
   session_id: number;
   analysis_results?: Record<string, unknown>[];
@@ -225,14 +206,6 @@ export function resumeChatRun(
 export function deleteChatSession(sessionId: number): Promise<void> {
   return apiRequest<void>(`/chats/${sessionId}`, {
     method: "DELETE",
-  });
-}
-
-/** POST /rag/query */
-export function queryRag(req: RagQueryRequest): Promise<RagResponse> {
-  return apiRequest<RagResponse>("/rag/query", {
-    method: "POST",
-    body: JSON.stringify(req),
   });
 }
 

@@ -41,6 +41,9 @@ def build_rag_workflow(*, rag_service: RagService, default_model: str = "gpt-5-n
             )
 
         context = rag_service.build_context(retrieved) if retrieved else ""
+        evidence_summary = ""
+        if status_value == "unsupported_format":
+            evidence_summary = "현재 RAG는 해당 파일 형식을 지원하지 않습니다."
         retrieved_chunks = [
             {
                 "source_id": item.source_id,
@@ -58,6 +61,8 @@ def build_rag_workflow(*, rag_service: RagService, default_model: str = "gpt-5-n
                 "retrieved_chunks": retrieved_chunks,
                 "context": context,
                 "retrieved_count": len(retrieved_chunks),
+                "status": status_value or "missing",
+                "evidence_summary": evidence_summary,
             },
             "rag_data_exists": bool(retrieved_chunks),
         }
@@ -69,7 +74,12 @@ def build_rag_workflow(*, rag_service: RagService, default_model: str = "gpt-5-n
         retrieved_count = retrieved_count_raw if isinstance(retrieved_count_raw, int) else 0
 
         if not bool(state.get("rag_data_exists", False)):
-            no_evidence_summary = "질문과 직접 연결되는 근거를 찾지 못했습니다."
+            raw_summary = rag_result_dict.get("evidence_summary")
+            no_evidence_summary = (
+                raw_summary
+                if isinstance(raw_summary, str) and raw_summary.strip()
+                else "질문과 직접 연결되는 근거를 찾지 못했습니다."
+            )
             return {
                 "insight": {
                     "summary": no_evidence_summary,
