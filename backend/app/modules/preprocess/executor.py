@@ -44,7 +44,20 @@ def execute_preprocess_plan(
             }
         }
 
-    apply_response = preprocess_service.apply(source_id=str(source_id), operations=plan.operations)
+    try:
+        apply_response = preprocess_service.apply(source_id=str(source_id), operations=plan.operations)
+    except (FileNotFoundError, ValueError) as exc:
+        return {
+            "preprocess_result": {
+                "status": "failed",
+                "applied_ops_count": 0,
+                "error": str(exc),
+            },
+            "revision_request": {},
+            "approved_plan": {},
+            "pending_approval": {},
+        }
+
     updated_profile = dict(dataset_profile or {})
     updated_profile["preprocess_applied"] = True
 

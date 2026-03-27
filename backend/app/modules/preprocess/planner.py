@@ -15,7 +15,8 @@ PROMPTS = PromptRegistry(
         "plan.system": (
             "너는 전처리 플래너다. "
             "PreprocessPlan 스키마 형식으로만 반환하고 "
-            "지원 연산은 drop_missing, impute, drop_columns, rename_columns, scale, derived_column다. "
+            "지원 연산은 drop_missing, impute, drop_columns, rename_columns, scale, "
+            "derived_column, encode_categorical, parse_datetime, outlier다. "
             "전처리가 불필요하면 operations는 빈 배열로 반환하라. "
             "operations는 op+파라미터로 구성하며 "
             "planner_comment에는 판단 근거를 1~2문장으로 남겨라."
@@ -143,7 +144,7 @@ def build_preprocess_review_payload(
         or reason_summary.strip()
         or "전처리 계획을 검토한 뒤 승인 여부를 결정해 주세요."
     )
-    row_count = dataset_profile.get("row_count")
+    row_count = dataset_profile.get("sample_row_count")
 
     return {
         "stage": "preprocess",
@@ -164,7 +165,15 @@ def build_preprocess_review_payload(
 def _collect_affected_columns(operations: list[PreprocessOperation]) -> list[str]:
     columns: list[str] = []
     for operation in operations:
-        if operation.op in {"drop_missing", "impute", "drop_columns", "scale"}:
+        if operation.op in {
+            "drop_missing",
+            "impute",
+            "drop_columns",
+            "scale",
+            "encode_categorical",
+            "parse_datetime",
+            "outlier",
+        }:
             columns.extend(operation.columns)
         elif operation.op == "rename_columns":
             columns.extend(operation.rename_from)

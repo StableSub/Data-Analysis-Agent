@@ -117,7 +117,7 @@ class PreprocessService:
         sample_rows = sample_df.head(3)
         return {
             "available": True,
-            "row_count": len(sample_df),
+            "sample_row_count": len(sample_df),
             "columns": sample_df.columns.tolist(),
             "dtypes": sample_df.dtypes.astype(str).to_dict(),
             "missing_rates": sample_df.isna().mean().round(3).to_dict(),
