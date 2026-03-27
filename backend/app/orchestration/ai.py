@@ -12,7 +12,6 @@ PROMPTS = PromptRegistry(
     {
         "intent.system": (
             "데이터셋이 이미 선택된 상황이다. "
-            "step은 data_pipeline으로 반환하라. "
             "질문을 보고 ask_preprocess, ask_visualization, ask_report, ask_guideline을 true/false로 판단하라."
         ),
         "general.system": "사용자 질문에 간결하고 정확하게 답하라.",
@@ -22,7 +21,6 @@ PROMPTS = PromptRegistry(
 
 
 class IntentDecision(BaseModel):
-    step: Literal["general_question", "data_pipeline"] = Field(...)
     ask_preprocess: bool = Field(False)
     ask_visualization: bool = Field(False)
     ask_report: bool = Field(False)

@@ -105,6 +105,7 @@ def build_preprocess_workflow(
             "revision_request": {},
             "preprocess_result": {
                 "status": "cancelled",
+                "summary": "전처리 계획 검토 단계에서 실행을 취소했습니다.",
                 "applied_ops_count": 0,
             },
             "output": {
@@ -131,7 +132,13 @@ def build_preprocess_workflow(
         )
 
     def skip_node(_: PreprocessGraphState) -> Dict[str, Any]:
-        return {"preprocess_result": {"status": "skipped", "applied_ops_count": 0}}
+        return {
+            "preprocess_result": {
+                "status": "skipped",
+                "summary": "전처리 없이 다음 단계로 진행했습니다.",
+                "applied_ops_count": 0,
+            }
+        }
 
     def cancel_node(_: PreprocessGraphState) -> Dict[str, Any]:
         return {}

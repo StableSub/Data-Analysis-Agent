@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import sqlite3
 from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import lru_cache
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from fastapi import Depends
-from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.checkpoint.sqlite import SqliteSaver
 from sqlalchemy.orm import Session
 
 from ..core.db import get_db
@@ -33,6 +35,8 @@ from ..modules.visualization.service import VisualizationService
 if TYPE_CHECKING:
     from .client import AgentClient
 
+CHECKPOINT_DB_PATH = Path(__file__).resolve().parents[3] / "storage" / "langgraph_checkpoints.db"
+
 
 @dataclass(frozen=True)
 class WorkflowServices:
@@ -45,8 +49,12 @@ class WorkflowServices:
 
 
 @lru_cache(maxsize=1)
-def get_workflow_checkpointer() -> InMemorySaver:
-    return InMemorySaver()
+def get_workflow_checkpointer() -> SqliteSaver:
+    CHECKPOINT_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(str(CHECKPOINT_DB_PATH), check_same_thread=False)
+    saver = SqliteSaver(connection)
+    saver.setup()
+    return saver
 
 
 def build_orchestration_services(*, db: Session, agent: Any) -> WorkflowServices:

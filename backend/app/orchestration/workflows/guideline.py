@@ -47,6 +47,7 @@ def build_guideline_workflow(
                 "guideline_index_status": {"status": "no_active_guideline"},
                 "guideline_result": {
                     "status": "no_active_guideline",
+                    "has_evidence": False,
                     "retrieved_chunks": [],
                     "retrieved_count": 0,
                     "evidence_summary": "활성화된 지침서가 없어 지침 근거를 확인하지 못했습니다.",
@@ -114,6 +115,7 @@ def build_guideline_workflow(
                 "retrieved_chunks": retrieved_chunks,
                 "context": context,
                 "retrieved_count": len(retrieved_chunks),
+                "has_evidence": bool(retrieved_chunks),
                 "status": "retrieved" if retrieved_chunks else "no_evidence",
             },
             "guideline_data_exists": bool(retrieved_chunks),
@@ -131,6 +133,7 @@ def build_guideline_workflow(
             return {
                 "guideline_result": {
                     **guideline_result_dict,
+                    "has_evidence": False,
                     "evidence_summary": no_evidence_summary,
                     "status": guideline_result_dict.get("status", "no_evidence"),
                 }
@@ -161,6 +164,7 @@ def build_guideline_workflow(
         return {
             "guideline_result": {
                 **guideline_result_dict,
+                "has_evidence": True,
                 "evidence_summary": llm_result.evidence_summary,
                 "status": "retrieved",
             }
