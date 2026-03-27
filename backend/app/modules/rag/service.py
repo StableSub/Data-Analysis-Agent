@@ -10,6 +10,7 @@ from ..datasets.models import Dataset
 from ..datasets.repository import DatasetRepository
 from ..datasets.service import DatasetService
 from ..guidelines.models import Guideline
+from ..guidelines.service import GuidelineService
 from .ai import answer_with_context
 from .errors import RagEmbeddingError, RagNotIndexedError, RagSearchError
 from .guideline_repository import GuidelineRagRepository
@@ -348,6 +349,52 @@ class DatasetRagSyncService:
             return False
         try:
             self.rag_service.delete_source(source_id)
+        except Exception:
+            pass
+        return True
+
+
+class GuidelineRagSyncService:
+    def __init__(
+        self,
+        *,
+        guideline_service: GuidelineService,
+        guideline_rag_service: GuidelineRagService,
+    ) -> None:
+        self.guideline_service = guideline_service
+        self.guideline_rag_service = guideline_rag_service
+
+    def upload_guideline(
+        self,
+        *,
+        file_stream: IO[bytes],
+        original_filename: str,
+        display_name: str | None = None,
+        content_type: str | None = None,
+    ) -> Guideline:
+        guideline = self.guideline_service.upload_guideline(
+            file_stream=file_stream,
+            original_filename=original_filename,
+            display_name=display_name,
+            content_type=content_type,
+        )
+        try:
+            self.guideline_rag_service.index_guideline(guideline)
+        except Exception:
+            try:
+                self.guideline_rag_service.delete_source(guideline.source_id)
+            except Exception:
+                pass
+            self.guideline_service.delete_guideline(guideline.source_id)
+            raise
+        return guideline
+
+    def delete_guideline(self, source_id: str) -> bool:
+        deleted = self.guideline_service.delete_guideline(source_id)
+        if not deleted:
+            return False
+        try:
+            self.guideline_rag_service.delete_source(source_id)
         except Exception:
             pass
         return True
