@@ -164,28 +164,6 @@ export interface RagQueryRequest {
   source_filter?: string[];
 }
 
-export type PreprocessOpType =
-  | "drop_missing"
-  | "impute"
-  | "drop_columns"
-  | "rename_columns"
-  | "scale"
-  | "derived_column";
-
-export interface PreprocessOperation {
-  op: PreprocessOpType;
-  params: Record<string, unknown>;
-}
-
-export interface PreprocessApplyRequest {
-  dataset_id: number;
-  operations: PreprocessOperation[];
-}
-
-export interface PreprocessApplyResponse {
-  dataset_id: number;
-}
-
 export interface ReportCreateRequest {
   session_id: number;
   analysis_results?: Record<string, unknown>[];
@@ -253,14 +231,6 @@ export function deleteChatSession(sessionId: number): Promise<void> {
 /** POST /rag/query */
 export function queryRag(req: RagQueryRequest): Promise<RagResponse> {
   return apiRequest<RagResponse>("/rag/query", {
-    method: "POST",
-    body: JSON.stringify(req),
-  });
-}
-
-/** POST /preprocess/apply */
-export function applyPreprocess(req: PreprocessApplyRequest): Promise<PreprocessApplyResponse> {
-  return apiRequest<PreprocessApplyResponse>("/preprocess/apply", {
     method: "POST",
     body: JSON.stringify(req),
   });
