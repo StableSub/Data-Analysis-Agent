@@ -1156,10 +1156,14 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
               recommendation: insight.preprocess_recommendation
                 ? {
                     column: insight.preprocess_recommendation.operations[0]?.target_columns[0] ?? "",
+                    columnType: "categorical" as const,
                     strategy: insight.preprocess_recommendation.operations[0]?.op ?? "",
                     fillValue: "",
                     missingCount: 0,
                     missingPercent: 0,
+                    rationale: "",
+                    domainWarning: null,
+                    alternativeStrategies: [],
                   }
                 : null,
             };

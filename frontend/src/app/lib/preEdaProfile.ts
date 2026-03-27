@@ -61,12 +61,27 @@ export interface ColumnRoleSummary {
   uniqueCount: number;
 }
 
+export interface PreprocessStrategy {
+  id: string;
+  label: string;
+  description: string;
+  fillValue: string;
+  expectedImpact: string;
+}
+
 export interface PreprocessRecommendation {
   column: string;
+  columnType: "numeric" | "categorical" | "datetime" | "boolean";
   strategy: string;
   fillValue: string;
   missingCount: number;
   missingPercent: number;
+  /** AI가 이 전략을 추천한 이유 */
+  rationale: string;
+  /** 도메인 컨텍스트 경고 (센서 오류, 패턴 등) */
+  domainWarning: string | null;
+  /** 대안 전략 목록 (추천 전략 포함) */
+  alternativeStrategies: PreprocessStrategy[];
 }
 
 export interface PreEdaProfile {
@@ -434,6 +449,151 @@ function createFallbackProfile(file: File, uploadedAt: string): PreEdaProfile {
   };
 }
 
+function buildRecommendation(
+  topMissing: MissingColumnSummary | null,
+  numericColumns: string[],
+  categoricalColumns: string[],
+  datetimeColumns: string[],
+  booleanColumns: string[],
+  numericVectors: Map<string, Array<number | null>>,
+  nonMissingByColumn: Map<string, string[]>,
+  numericColumnStats: NumericColumnStat[],
+): PreprocessRecommendation | null {
+  if (!topMissing || topMissing.missingRate < 0.003) {
+    return null;
+  }
+
+  const col = topMissing.column;
+  const isNumeric = numericColumns.includes(col);
+  const isCategorical = categoricalColumns.includes(col);
+  const isDatetime = datetimeColumns.includes(col);
+  const isBoolean = booleanColumns.includes(col);
+
+  const columnType: PreprocessRecommendation["columnType"] = isNumeric
+    ? "numeric"
+    : isCategorical
+      ? "categorical"
+      : isDatetime
+        ? "datetime"
+        : isBoolean
+          ? "boolean"
+          : "categorical";
+
+  const missingPercent = Number((topMissing.missingRate * 100).toFixed(2));
+  const alternatives: PreprocessStrategy[] = [];
+
+  if (isNumeric) {
+    const numValues = (numericVectors.get(col) ?? []).filter(
+      (v): v is number => v !== null,
+    );
+    const medianVal = formatMetric(quantile(numValues, 0.5));
+    const stat = numericColumnStats.find((s) => s.column === col);
+    const meanVal = stat ? formatMetric(stat.mean) : medianVal;
+
+    alternatives.push(
+      {
+        id: "median",
+        label: "중앙값(Median) 대체",
+        description: "이상치에 강건한 대표값으로 결측을 채웁니다.",
+        fillValue: medianVal,
+        expectedImpact: `분포 왜곡 최소화, ${topMissing.missingCount.toLocaleString()}건 복구`,
+      },
+      {
+        id: "mean",
+        label: "평균값(Mean) 대체",
+        description: "정규 분포에 가까울 때 효과적이지만 이상치에 민감합니다.",
+        fillValue: meanVal,
+        expectedImpact: `전체 평균 유지, 이상치 있으면 편향 가능`,
+      },
+      {
+        id: "drop_rows",
+        label: "결측 행 제거",
+        description: "결측이 포함된 행을 삭제합니다. 데이터 손실 발생.",
+        fillValue: "-",
+        expectedImpact: `${topMissing.missingCount.toLocaleString()}행 삭제 (${missingPercent}% 손실)`,
+      },
+      {
+        id: "drop_column",
+        label: "컬럼 제거",
+        description: "결측률이 높으면 컬럼 자체를 제거하는 것이 나을 수 있습니다.",
+        fillValue: "-",
+        expectedImpact: `분석 대상에서 ${col} 컬럼 완전 제외`,
+      },
+    );
+
+    const recommendedStrategy = alternatives[0]!;
+
+    // Domain warning: check if values have suspicious patterns (e.g. sensor -999)
+    const suspiciousValues = numValues.filter(
+      (v) => v === -999 || v === -9999 || v === 9999 || v === -1,
+    );
+    const domainWarning =
+      suspiciousValues.length > 0
+        ? `${col} 컬럼에 센서 오류로 의심되는 값(${suspiciousValues[0]})이 ${suspiciousValues.length}건 감지되었습니다. 결측 외 추가 클리닝이 필요할 수 있습니다.`
+        : null;
+
+    return {
+      column: col,
+      columnType,
+      strategy: recommendedStrategy.label,
+      fillValue: recommendedStrategy.fillValue,
+      missingCount: topMissing.missingCount,
+      missingPercent,
+      rationale: `${col} 컬럼은 numeric 타입으로, 중앙값 대체가 이상치 영향을 최소화하면서 분포를 보존합니다. 결측률 ${missingPercent}%는 행 삭제 시 데이터 손실이 크므로 대체를 권장합니다.`,
+      domainWarning,
+      alternativeStrategies: alternatives,
+    };
+  }
+
+  // Categorical / other types
+  const modeVal = mostCommon(nonMissingByColumn.get(col) ?? []);
+
+  alternatives.push(
+    {
+      id: "mode",
+      label: "최빈값(Mode) 대체",
+      description: "가장 자주 나타나는 값으로 결측을 채웁니다.",
+      fillValue: modeVal,
+      expectedImpact: `최빈값 "${modeVal}"로 ${topMissing.missingCount.toLocaleString()}건 복구`,
+    },
+    {
+      id: "unknown",
+      label: '"Unknown" 대체',
+      description: '결측을 별도 범주("Unknown")로 취급합니다.',
+      fillValue: "Unknown",
+      expectedImpact: `새 범주 추가, 원래 분포에 영향 없음`,
+    },
+    {
+      id: "drop_rows",
+      label: "결측 행 제거",
+      description: "결측이 포함된 행을 삭제합니다.",
+      fillValue: "-",
+      expectedImpact: `${topMissing.missingCount.toLocaleString()}행 삭제 (${missingPercent}% 손실)`,
+    },
+    {
+      id: "drop_column",
+      label: "컬럼 제거",
+      description: "결측률이 높으면 컬럼 자체를 제거합니다.",
+      fillValue: "-",
+      expectedImpact: `분석 대상에서 ${col} 컬럼 완전 제외`,
+    },
+  );
+
+  const recommendedStrategy = alternatives[0]!;
+
+  return {
+    column: col,
+    columnType,
+    strategy: recommendedStrategy.label,
+    fillValue: recommendedStrategy.fillValue,
+    missingCount: topMissing.missingCount,
+    missingPercent,
+    rationale: `${col} 컬럼은 categorical 타입으로, 최빈값 대체가 기존 분포를 가장 잘 유지합니다. 결측률 ${missingPercent}%는 적당한 수준이므로 대체 후 분석을 이어가는 것을 권장합니다.`,
+    domainWarning: null,
+    alternativeStrategies: alternatives,
+  };
+}
+
 export async function buildPreEdaProfile(file: File): Promise<PreEdaProfile | null> {
   const uploadedAt = new Date().toISOString();
   const text = await file.text();
@@ -651,27 +811,16 @@ export async function buildPreEdaProfile(file: File): Promise<PreEdaProfile | nu
     .sort((a, b) => b.outlierCount - a.outlierCount);
 
   const topMissing = missingColumns[0];
-  const recommendation =
-    topMissing && topMissing.missingRate >= 0.003
-      ? {
-          column: topMissing.column,
-          strategy: numericColumns.includes(topMissing.column)
-            ? "median imputation"
-            : "mode imputation",
-          fillValue: numericColumns.includes(topMissing.column)
-            ? formatMetric(
-                quantile(
-                  (numericVectors.get(topMissing.column) ?? []).filter(
-                    (value): value is number => value !== null,
-                  ),
-                  0.5,
-                ),
-              )
-            : mostCommon(nonMissingByColumn.get(topMissing.column) ?? []),
-          missingCount: topMissing.missingCount,
-          missingPercent: Number((topMissing.missingRate * 100).toFixed(2)),
-        }
-      : null;
+  const recommendation = buildRecommendation(
+    topMissing ?? null,
+    numericColumns,
+    categoricalColumns,
+    datetimeColumns,
+    booleanColumns,
+    numericVectors,
+    nonMissingByColumn,
+    numericColumnStats,
+  );
 
   const topCorrelation = correlationTopPairs[0];
   const topOutlier = outlierSummaries.find((item) => item.outlierCount > 0) ?? null;

@@ -179,6 +179,18 @@ export default function Workbench() {
   const hasUploadedDatasets = uploadedDatasets.length > 0;
   const selectedDataset =
     uploadedDatasets.find((item) => item.sourceId === selectedSourceId) ?? null;
+  const preprocessApproveStartsAnalysis =
+    pendingApproval?.stage === "preprocess" && state === "needs-user";
+  const preprocessBoardActionMode =
+    selectedDataset?.preprocessApproved
+      ? "approved"
+      : preprocessApproveStartsAnalysis
+        ? "run"
+        : "prepare";
+  const canApprovePreprocessFromBoard =
+    Boolean(selectedPreEdaProfile?.recommendation)
+    && !selectedDataset?.preprocessApproved
+    && (!pendingApproval || pendingApproval.stage === "preprocess");
 
   // UI-only local state
   type CanvasView = "current" | "pre-eda" | "deep-eda" | "report";
@@ -196,6 +208,18 @@ export default function Workbench() {
       setCanvasView("current");
     }
   }, [state]);
+
+  // Wrap handleApprove to also reset canvas view so user sees the transition
+  const handleApproveAndReturn = useCallback(() => {
+    pipeline.handleApprove();
+    if (preprocessApproveStartsAnalysis) {
+      setCanvasView("current");
+      return;
+    }
+
+    setCanvasView("deep-eda");
+    toast.success("전처리 추천을 승인했습니다. 질문을 입력하면 Deep EDA를 시작합니다.");
+  }, [pipeline, preprocessApproveStartsAnalysis]);
 
   // Show NEW dot on Agent tab when tool calls arrive
   useEffect(() => {
@@ -860,7 +884,8 @@ export default function Workbench() {
                 <PreEdaBoard
                   profile={selectedPreEdaProfile}
                   summarySections={preEdaSummarySections}
-                  onApprovePreprocess={selectedPreEdaProfile?.recommendation ? pipeline.handleApprove : undefined}
+                  onApprovePreprocess={canApprovePreprocessFromBoard ? handleApproveAndReturn : undefined}
+                  approveActionMode={preprocessBoardActionMode}
                 />
               ) : (
                 <AssistantReportMessage
@@ -951,7 +976,8 @@ export default function Workbench() {
                 <PreEdaBoard
                   profile={selectedPreEdaProfile}
                   summarySections={preEdaSummarySections}
-                  onApprovePreprocess={selectedPreEdaProfile?.recommendation ? pipeline.handleApprove : undefined}
+                  onApprovePreprocess={canApprovePreprocessFromBoard ? handleApproveAndReturn : undefined}
+                  approveActionMode={preprocessBoardActionMode}
                 />
               ) : (
                 <AssistantReportMessage

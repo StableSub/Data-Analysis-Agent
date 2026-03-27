@@ -1,6 +1,17 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
-import type { PreEdaProfile } from "../../lib/preEdaProfile";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  Code2,
+  Lightbulb,
+  ShieldAlert,
+  Sparkles,
+} from "lucide-react";
+import { cn } from "../../../lib/utils";
+import type { DistributionBin, PreEdaProfile, PreprocessStrategy } from "../../lib/preEdaProfile";
 import {
   AssistantReportMessage,
   type ReportSection,
@@ -16,6 +27,7 @@ interface PreEdaBoardProps {
   summarySections: ReportSection[];
   /** 전처리 추천 승인 버튼 클릭 시 호출 */
   onApprovePreprocess?: () => void;
+  approveActionMode?: "prepare" | "run" | "approved";
 }
 
 function formatPercent(value: number): string {
@@ -110,7 +122,384 @@ function MetricTile({ label, value }: { label: string; value: string }) {
   );
 }
 
-export function PreEdaBoard({ profile, summarySections, onApprovePreprocess }: PreEdaBoardProps) {
+/** Generate a Python code snippet for the selected strategy */
+function buildCodePreview(
+  column: string,
+  strategyId: string,
+  fillValue: string,
+): string {
+  switch (strategyId) {
+    case "median":
+      return `df["${column}"].fillna(df["${column}"].median(), inplace=True)`;
+    case "mean":
+      return `df["${column}"].fillna(df["${column}"].mean(), inplace=True)`;
+    case "mode":
+      return `df["${column}"].fillna(df["${column}"].mode()[0], inplace=True)`;
+    case "unknown":
+    case "custom":
+      return `df["${column}"].fillna("${fillValue}", inplace=True)`;
+    case "drop_rows":
+      return `df.dropna(subset=["${column}"], inplace=True)`;
+    case "drop_column":
+      return `df.drop(columns=["${column}"], inplace=True)`;
+    default:
+      return `df["${column}"].fillna(${JSON.stringify(fillValue)}, inplace=True)`;
+  }
+}
+
+/** Simulate what distribution bins would look like after applying the strategy */
+function simulatePreviewBins(
+  originalBins: DistributionBin[],
+  strategyId: string,
+  fillValue: string,
+  missingCount: number,
+): DistributionBin[] {
+  if (strategyId === "drop_rows" || strategyId === "drop_column") {
+    // Just return original bins (rows removed don't change existing distribution shape)
+    return originalBins.map((b) => ({ ...b }));
+  }
+
+  // For fill strategies, add missingCount to the matching bin or create a new one
+  const bins = originalBins.map((b) => ({ ...b }));
+
+  const targetLabel = strategyId === "median" || strategyId === "mean"
+    ? null // numeric — distribute into nearest bin
+    : fillValue;
+
+  if (targetLabel) {
+    const existing = bins.find((b) => b.label === targetLabel);
+    if (existing) {
+      existing.value += missingCount;
+    } else {
+      bins.push({ label: targetLabel, value: missingCount });
+    }
+  } else {
+    // Numeric: spread into middle bin as approximation
+    const midIdx = Math.floor(bins.length / 2);
+    const midBin = bins[midIdx];
+    if (midBin) {
+      midBin.value += missingCount;
+    }
+  }
+
+  return bins;
+}
+
+function PreprocessRecommendationCard({
+  recommendation,
+  profile,
+  onApprovePreprocess,
+  approveActionMode = "prepare",
+}: {
+  recommendation: PreEdaProfile["recommendation"];
+  profile: PreEdaProfile;
+  onApprovePreprocess?: () => void;
+  approveActionMode?: "prepare" | "run" | "approved";
+}) {
+  const [selectedStrategyId, setSelectedStrategyId] = useState<string | null>(null);
+  const [showPreview, setShowPreview] = useState(false);
+  const startsAnalysisOnApprove = approveActionMode === "run";
+  const isApproved = approveActionMode === "approved";
+
+  // Resolve currently selected strategy
+  const alts = recommendation?.alternativeStrategies ?? [];
+  const activeStrategy: PreprocessStrategy | null = useMemo(() => {
+    if (!recommendation || alts.length === 0) return null;
+    if (selectedStrategyId) {
+      const found = alts.find((s) => s.id === selectedStrategyId);
+      return found ?? alts[0] ?? null;
+    }
+    return alts[0] ?? null;
+  }, [recommendation, alts, selectedStrategyId]);
+
+  // Find the distribution for the target column (for preview)
+  const targetDistribution = useMemo(() => {
+    if (!recommendation) return null;
+    return profile.distributions.find((d) => d.column === recommendation.column) ?? null;
+  }, [recommendation, profile.distributions]);
+
+  // Simulated preview bins
+  const previewBins = useMemo(() => {
+    if (!targetDistribution || !activeStrategy || !recommendation) return [];
+    return simulatePreviewBins(
+      targetDistribution.bins,
+      activeStrategy.id,
+      activeStrategy.fillValue,
+      recommendation.missingCount,
+    );
+  }, [targetDistribution, activeStrategy, recommendation]);
+
+  const chartConfig = useMemo(
+    () => ({
+      value: {
+        label: "Count",
+        color: "hsl(var(--chart-1, 173 58% 39%))",
+      },
+    }),
+    [],
+  );
+
+  if (!recommendation) {
+    return (
+      <div className="grid gap-4 xl:grid-cols-12">
+        <CardShell status="success" className="xl:col-span-12">
+          <CardHeader
+            title="전처리 추천"
+            meta="PREPROCESS"
+            statusLabel="Clean"
+            statusVariant="success"
+            className="px-3.5 py-2.5"
+          />
+          <CardBody className="p-3">
+            <div className="flex items-center gap-2.5 rounded-xl border border-[var(--genui-success)]/20 bg-[var(--genui-success)]/5 px-4 py-3.5">
+              <CheckCircle2 className="w-5 h-5 text-[var(--genui-success)] shrink-0" />
+              <p className="text-sm text-[var(--genui-text)]">
+                결측률이 낮아 전처리 없이 바로 질문할 수 있습니다.
+              </p>
+            </div>
+          </CardBody>
+        </CardShell>
+      </div>
+    );
+  }
+
+  const columnTypeLabel =
+    (recommendation.columnType ?? "categorical") === "numeric" ? "수치형" :
+    (recommendation.columnType ?? "categorical") === "categorical" ? "범주형" :
+    (recommendation.columnType ?? "categorical") === "datetime" ? "날짜형" : "불리언";
+
+  return (
+    <div className="grid gap-4 xl:grid-cols-12">
+      <CardShell status="needs-user" className="xl:col-span-12">
+        <CardHeader
+          title="전처리 추천"
+          meta="AI RECOMMENDATION"
+          statusLabel="Review"
+          statusVariant="needs-user"
+          className="px-3.5 py-2.5"
+        />
+        <CardBody className="space-y-3 p-3">
+
+          {/* Step 1: Issue Summary Header */}
+          <div className="rounded-xl border border-[var(--genui-needs-user)]/25 bg-[var(--genui-needs-user)]/6 px-4 py-3.5">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="w-5 h-5 text-[var(--genui-warning)] shrink-0 mt-0.5" />
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-semibold text-[var(--genui-text)]">
+                  <span className="font-mono text-[var(--genui-needs-user)]">{recommendation.column}</span>
+                  {" "}컬럼에 결측이 감지되었습니다
+                </p>
+                <p className="mt-1 text-sm text-[var(--genui-muted)]">
+                  {recommendation.missingCount.toLocaleString()}건 ({recommendation.missingPercent}%) · {columnTypeLabel} 컬럼
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Domain Warning (if any) */}
+          {recommendation.domainWarning && (
+            <div className="flex items-start gap-2.5 rounded-lg border border-[var(--genui-warning)]/30 bg-[var(--genui-warning)]/8 px-3.5 py-3">
+              <ShieldAlert className="w-4 h-4 text-[var(--genui-warning)] shrink-0 mt-0.5" />
+              <p className="text-xs leading-relaxed text-[var(--genui-text)]">
+                {recommendation.domainWarning}
+              </p>
+            </div>
+          )}
+
+          {/* Step 2: AI Rationale */}
+          {recommendation.rationale && (
+            <div className="rounded-lg border border-[var(--genui-border)] bg-[var(--genui-surface)] px-3.5 py-3">
+              <div className="flex items-center gap-2 mb-2">
+                <Lightbulb className="w-3.5 h-3.5 text-[var(--genui-running)]" />
+                <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--genui-muted)]">
+                  AI 추천 근거
+                </span>
+              </div>
+              <p className="text-sm leading-relaxed text-[var(--genui-text)]">
+                {recommendation.rationale}
+              </p>
+            </div>
+          )}
+
+          {/* Step 3: Strategy Selection */}
+          {alts.length > 0 && (
+            <div>
+              <div className="flex items-center gap-2 mb-2 px-0.5">
+                <Sparkles className="w-3.5 h-3.5 text-[var(--genui-muted)]" />
+                <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--genui-muted)]">
+                  전처리 전략 선택
+                </span>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {alts.map((strategy, index) => {
+                  const isSelected = activeStrategy?.id === strategy.id;
+                  const isRecommended = index === 0;
+                  return (
+                    <button
+                      key={strategy.id}
+                      type="button"
+                      onClick={() => setSelectedStrategyId(strategy.id)}
+                      className={cn(
+                        "relative text-left rounded-xl border px-3.5 py-3 transition-all duration-200",
+                        isSelected
+                          ? "border-[var(--genui-running)] bg-[var(--genui-running)]/8 ring-1 ring-[var(--genui-running)]/30"
+                          : "border-[var(--genui-border)] bg-[var(--genui-panel)] hover:border-[var(--genui-muted)] hover:bg-[var(--genui-surface)]",
+                      )}
+                    >
+                      {isRecommended && (
+                        <span className="absolute -top-2 right-3 rounded-full bg-[var(--genui-running)] px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-white">
+                          추천
+                        </span>
+                      )}
+                      <p className="text-sm font-semibold text-[var(--genui-text)]">
+                        {strategy.label}
+                      </p>
+                      <p className="mt-0.5 text-xs text-[var(--genui-muted)] leading-relaxed">
+                        {strategy.description}
+                      </p>
+                      {strategy.fillValue !== "-" && (
+                        <p className="mt-1.5 text-xs text-[var(--genui-muted)]">
+                          대체값: <span className="font-mono font-semibold text-[var(--genui-text)]">{strategy.fillValue}</span>
+                        </p>
+                      )}
+                      <p className="mt-1 text-[11px] text-[var(--genui-muted)]">
+                        <ChevronRight className="inline w-3 h-3 -mt-px" />
+                        {" "}{strategy.expectedImpact}
+                      </p>
+                    </button>
+                  );
+                })}
+
+              </div>
+            </div>
+          )}
+
+          {/* Code Preview Tooltip */}
+          {activeStrategy && (
+            <div className="rounded-lg border border-[var(--genui-border)] bg-[var(--genui-surface)] px-3.5 py-2.5">
+              <div className="flex items-center gap-2">
+                <Code2 className="w-3.5 h-3.5 text-[var(--genui-muted)]" />
+                <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--genui-muted)]">
+                  적용될 코드
+                </span>
+              </div>
+              <pre className="mt-1.5 overflow-x-auto rounded-md bg-[var(--genui-panel)] border border-[var(--genui-border)] px-3 py-2 text-xs font-mono text-[var(--genui-text)] leading-relaxed">
+                {buildCodePreview(recommendation.column, activeStrategy.id, activeStrategy.fillValue)}
+              </pre>
+            </div>
+          )}
+
+          {/* Interactive Preview — Mini Histogram */}
+          {targetDistribution && activeStrategy && activeStrategy.id !== "drop_column" && (
+            <div>
+              <button
+                type="button"
+                onClick={() => setShowPreview((v) => !v)}
+                className="flex items-center gap-1.5 text-xs font-medium text-[var(--genui-muted)] hover:text-[var(--genui-text)] transition-colors mb-2"
+              >
+                <ChevronDown className={cn(
+                  "w-3.5 h-3.5 transition-transform duration-200",
+                  showPreview ? "rotate-0" : "-rotate-90",
+                )} />
+                전처리 후 예상 분포 미리보기
+              </button>
+              {showPreview && (
+                <div className="grid gap-3 sm:grid-cols-2 animate-in fade-in slide-in-from-top-1 duration-200">
+                  {/* Before */}
+                  <div className="rounded-lg border border-[var(--genui-border)] bg-[var(--genui-surface)] p-2.5">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--genui-muted)] mb-1.5 px-1">
+                      Before (현재)
+                    </p>
+                    <ChartContainer config={chartConfig} className="h-[120px] w-full aspect-auto">
+                      <BarChart data={targetDistribution.bins} margin={{ top: 4, right: 4, left: 0, bottom: 4 }} barCategoryGap="14%">
+                        <CartesianGrid vertical={false} strokeDasharray="3 3" opacity={0.3} />
+                        <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fontSize: 9, fill: "var(--genui-muted)" }} interval={0} minTickGap={4} />
+                        <YAxis allowDecimals={false} tickLine={false} axisLine={false} width={28} tick={{ fontSize: 9, fill: "var(--genui-muted)" }} />
+                        <Bar dataKey="value" fill="var(--color-value)" radius={[4, 4, 0, 0]} maxBarSize={28} opacity={0.6} />
+                      </BarChart>
+                    </ChartContainer>
+                  </div>
+                  {/* After */}
+                  <div className="rounded-lg border border-[var(--genui-running)]/30 bg-[var(--genui-running)]/4 p-2.5">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--genui-running)] mb-1.5 px-1">
+                      After (예상)
+                    </p>
+                    <ChartContainer config={chartConfig} className="h-[120px] w-full aspect-auto">
+                      <BarChart data={previewBins} margin={{ top: 4, right: 4, left: 0, bottom: 4 }} barCategoryGap="14%">
+                        <CartesianGrid vertical={false} strokeDasharray="3 3" opacity={0.3} />
+                        <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fontSize: 9, fill: "var(--genui-muted)" }} interval={0} minTickGap={4} />
+                        <YAxis allowDecimals={false} tickLine={false} axisLine={false} width={28} tick={{ fontSize: 9, fill: "var(--genui-muted)" }} />
+                        <Bar dataKey="value" fill="var(--genui-running)" radius={[4, 4, 0, 0]} maxBarSize={28} />
+                      </BarChart>
+                    </ChartContainer>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Step 4: Action Bar */}
+          {(onApprovePreprocess || isApproved) && (
+            <div className="flex items-center justify-between gap-3 rounded-xl border border-[var(--genui-border)] bg-[var(--genui-surface)] px-4 py-3">
+              <div className="min-w-0">
+                {isApproved ? (
+                  <>
+                    <p className="text-sm font-semibold text-[var(--genui-success)]">
+                      전처리 추천이 승인되었습니다
+                    </p>
+                    <p className="mt-0.5 text-xs text-[var(--genui-muted)]">
+                      질문을 입력하면 승인된 전략을 반영해 Deep EDA를 이어갑니다
+                    </p>
+                  </>
+                ) : activeStrategy ? (
+                  <>
+                    <p className="text-sm text-[var(--genui-text)]">
+                      선택된 전략: <span className="font-semibold">{activeStrategy.label}</span>
+                    </p>
+                    <p className="text-xs text-[var(--genui-muted)] mt-0.5">
+                      {activeStrategy.fillValue !== "-" && activeStrategy.fillValue !== "(미입력)"
+                        ? startsAnalysisOnApprove
+                          ? <>대체값 <span className="font-mono">{activeStrategy.fillValue}</span> 적용 후 Deep EDA를 시작합니다</>
+                          : <>대체값 <span className="font-mono">{activeStrategy.fillValue}</span> 적용을 승인하고, 이후 질문을 입력하면 Deep EDA를 시작합니다</>
+                        : startsAnalysisOnApprove
+                          ? "이 전략을 적용한 뒤 Deep EDA를 시작합니다"
+                          : "이 전략을 승인하면 이후 질문을 입력할 때 Deep EDA를 시작합니다"}
+                    </p>
+                  </>
+                ) : (
+                  <p className="text-sm text-[var(--genui-text)]">
+                    전략: <span className="font-semibold">{recommendation.strategy}</span>
+                    {recommendation.fillValue !== "-" && (
+                      <span className="text-[var(--genui-muted)]"> · 대체값 <span className="font-mono">{recommendation.fillValue}</span></span>
+                    )}
+                  </p>
+                )}
+              </div>
+              {onApprovePreprocess && (
+                <button
+                  type="button"
+                  onClick={onApprovePreprocess}
+                  className="shrink-0 flex items-center gap-2 rounded-lg bg-[var(--genui-running)] px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:opacity-90 active:scale-[0.98] transition-all"
+                >
+                  {startsAnalysisOnApprove ? "승인하고 분석 시작" : "승인하고 계속"}
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+          )}
+
+        </CardBody>
+      </CardShell>
+    </div>
+  );
+}
+
+export function PreEdaBoard({
+  profile,
+  summarySections,
+  onApprovePreprocess,
+  approveActionMode = "prepare",
+}: PreEdaBoardProps) {
   const previewColumns = profile.columns.slice(0, 5);
   const distributionOptions = profile.distributions;
   const [selectedDistributionColumn, setSelectedDistributionColumn] = useState(
@@ -494,54 +883,12 @@ export function PreEdaBoard({ profile, summarySections, onApprovePreprocess }: P
         </CardShell>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-12">
-        <CardShell
-          status={profile.recommendation ? "needs-user" : "success"}
-          className="xl:col-span-12"
-        >
-          <CardHeader
-            title="전처리 추천"
-            meta="PREPROCESS"
-            statusLabel={profile.recommendation ? "Review" : "Optional"}
-            statusVariant={profile.recommendation ? "needs-user" : "success"}
-            className="px-3.5 py-2.5"
-          />
-          <CardBody className="space-y-2.5 p-3">
-            {profile.recommendation ? (
-              <>
-                <div className="rounded-lg border border-[var(--genui-needs-user)]/30 bg-[var(--genui-needs-user)]/8 px-3 py-2.5">
-                  <p className="text-sm font-semibold text-[var(--genui-text)]">
-                    {profile.recommendation.column}
-                  </p>
-                  <p className="mt-1 text-sm text-[var(--genui-text)]">
-                    결측 {profile.recommendation.missingCount.toLocaleString()}건(
-                    {profile.recommendation.missingPercent.toFixed(2)}%)이 있어 전처리가 필요합니다.
-                  </p>
-                </div>
-                <div className="flex items-center justify-between gap-3">
-                  <ul className="space-y-1 text-sm text-[var(--genui-text)]">
-                    <li>전략: {profile.recommendation.strategy}</li>
-                    <li>기본 제안값: {profile.recommendation.fillValue}</li>
-                  </ul>
-                  {onApprovePreprocess && (
-                    <button
-                      type="button"
-                      onClick={onApprovePreprocess}
-                      className="shrink-0 rounded-lg bg-[var(--genui-running)] px-4 py-2 text-sm font-semibold text-white shadow-sm hover:opacity-90 transition-opacity"
-                    >
-                      승인하고 분석 시작
-                    </button>
-                  )}
-                </div>
-              </>
-            ) : (
-              <div className="rounded-xl border border-[var(--genui-border)] bg-[var(--genui-surface)] px-4 py-4 text-sm text-[var(--genui-text)]">
-                전처리 없이 바로 질문할 수 있습니다.
-              </div>
-            )}
-          </CardBody>
-        </CardShell>
-      </div>
+      <PreprocessRecommendationCard
+        recommendation={profile.recommendation}
+        profile={profile}
+        onApprovePreprocess={onApprovePreprocess}
+        approveActionMode={approveActionMode}
+      />
     </div>
   );
 }
