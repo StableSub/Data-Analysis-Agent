@@ -68,12 +68,6 @@ export interface ChatHistoryResponse {
   messages: ChatHistoryMessage[];
 }
 
-export interface ReportResponse {
-  report_id: string;
-  session_id: number;
-  summary_text: string;
-}
-
 export interface PendingApprovalColumnSummary {
   column: string;
   missing_rate: number;
@@ -145,13 +139,6 @@ export interface PendingApprovalResponse {
   pending_approval: PendingApprovalPayload;
 }
 
-export interface ReportCreateRequest {
-  session_id: number;
-  analysis_results?: Record<string, unknown>[];
-  visualizations?: Record<string, unknown>[];
-  insights?: unknown[];
-}
-
 export interface ManualVizRequest {
   source_id: string;
   chart_type: "bar" | "line" | "pie" | "scatter" | "heatmap";
@@ -209,32 +196,11 @@ export function deleteChatSession(sessionId: number): Promise<void> {
   });
 }
 
-/** POST /report/ */
-export function createReport(req: ReportCreateRequest): Promise<ReportResponse> {
-  return apiRequest<ReportResponse>("/report/", {
-    method: "POST",
-    body: JSON.stringify(req),
-  });
-}
-
 /** POST /vizualization/manual (note: backend uses "vizualization") */
 export function createManualViz(req: ManualVizRequest): Promise<ManualVizResponse> {
   return apiRequest<ManualVizResponse>("/vizualization/manual", {
     method: "POST",
     body: JSON.stringify(req),
-  });
-}
-
-/** POST /export/csv — returns raw Blob for download */
-export function exportCsv(resultId: string): Promise<Blob> {
-  const url = `${API_BASE}/export/csv`;
-  return fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ result_id: resultId }),
-  }).then((res) => {
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return res.blob();
   });
 }
 
