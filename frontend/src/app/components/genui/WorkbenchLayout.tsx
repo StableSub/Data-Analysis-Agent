@@ -12,6 +12,7 @@ interface LayoutProps {
   leftPanel: React.ReactNode;
   mainContent: React.ReactNode;
   rightPanel: React.ReactNode;
+  contentScrollRef?: React.Ref<HTMLDivElement>;
 
   /** Session title row content (h-12 global header) */
   header: React.ReactNode;
@@ -39,6 +40,7 @@ export function WorkbenchLayout({
   leftPanel,
   mainContent,
   rightPanel,
+  contentScrollRef,
   header,
   centerSubHeader,
   bottomBar,
@@ -109,7 +111,10 @@ export function WorkbenchLayout({
           </div>
 
           {/* Scrollable content */}
-          <div className="flex-1 overflow-y-auto relative p-4 scroll-smooth">
+          <div
+            ref={contentScrollRef}
+            className="flex-1 overflow-y-auto relative p-4 scroll-smooth"
+          >
             {mainContent}
           </div>
 
@@ -131,7 +136,7 @@ export function WorkbenchLayout({
         </main>
 
         {/* ── Right: Details / Agent panel (fixed) ── */}
-        <aside className="w-[360px] 2xl:w-[380px] flex-shrink-0 border-l border-[var(--genui-border)] bg-[var(--genui-panel)] flex flex-col z-10 relative shadow-sm hidden lg:flex">
+        <aside className="w-[360px] 2xl:w-[380px] min-h-0 flex-shrink-0 overflow-hidden border-l border-[var(--genui-border)] bg-[var(--genui-panel)] flex flex-col z-10 relative shadow-sm hidden lg:flex">
           {rightPanel}
         </aside>
       </div>

@@ -210,6 +210,17 @@ function formatMetric(value: number): string {
   return value.toFixed(3).replace(/\.?0+$/, "");
 }
 
+function formatDistributionBound(value: number): string {
+  if (!Number.isFinite(value)) {
+    return "0";
+  }
+
+  return value.toLocaleString(undefined, {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  });
+}
+
 function toRoundedMetric(value: number): number {
   return Number(formatMetric(value));
 }
@@ -304,22 +315,28 @@ function mostCommon(values: string[]): string {
   return topValue || "N/A";
 }
 
-function buildCategoricalDistribution(values: string[], limit = 10): DistributionBin[] {
+function buildCategoricalDistribution(values: string[], limit?: number): DistributionBin[] {
   const counts = new Map<string, number>();
   values.forEach((value) => {
     counts.set(value, (counts.get(value) ?? 0) + 1);
   });
 
-  return [...counts.entries()]
+  const sortedEntries = [...counts.entries()]
     .sort((a, b) => {
       if (b[1] !== a[1]) {
         return b[1] - a[1];
       }
       return a[0].localeCompare(b[0]);
-    })
-    .slice(0, limit)
+    });
+
+  const visibleEntries =
+    typeof limit === "number"
+      ? sortedEntries.slice(0, limit)
+      : sortedEntries;
+
+  return visibleEntries
     .map(([label, value]) => ({
-      label: label.length > 18 ? `${label.slice(0, 18)}…` : label,
+      label,
       value,
     }));
 }
@@ -351,7 +368,7 @@ function buildNumericDistribution(values: number[], bucketCount = 8): Distributi
     const start = minValue + step * index;
     const end = index === bucketCount - 1 ? maxValue : minValue + step * (index + 1);
     return {
-      label: `${formatMetric(start)}-${formatMetric(end)}`,
+      label: `${formatDistributionBound(start)}-${formatDistributionBound(end)}`,
       value,
     };
   });

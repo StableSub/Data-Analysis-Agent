@@ -137,7 +137,7 @@ export function RightPanelTabs({
   };
 
   return (
-    <div className={cn("flex flex-col h-full overflow-hidden", className)}>
+    <div className={cn("flex h-full min-h-0 flex-col overflow-hidden", className)}>
 
       {/* ── Top tab bar — h-10 to align with Left History + Center Route bars ── */}
       <div className="h-10 flex-shrink-0 flex items-end px-3 gap-0 border-b border-[var(--genui-border)] bg-[var(--genui-panel)]">
@@ -155,12 +155,12 @@ export function RightPanelTabs({
       </div>
 
       {/* ── Tab content ── */}
-      <div className="flex-1 overflow-hidden bg-[var(--genui-surface)] relative flex flex-col">
+      <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-[var(--genui-surface)]">
 
         {/* Details pane */}
         <div
           className={cn(
-            "absolute inset-0 overflow-y-auto transition-opacity duration-200",
+            "absolute inset-0 min-h-0 overflow-y-auto transition-opacity duration-200",
             activeTab === "details" ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
           )}
         >
@@ -170,7 +170,7 @@ export function RightPanelTabs({
         {/* Agent pane */}
         <div
           className={cn(
-            "absolute inset-0 flex flex-col transition-opacity duration-200",
+            "absolute inset-0 flex min-h-0 flex-col transition-opacity duration-200",
             activeTab === "agent" ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
           )}
         >
@@ -182,11 +182,11 @@ export function RightPanelTabs({
           />
 
           {/* Sub-tab content */}
-          <div className="flex-1 overflow-hidden relative">
+          <div className="relative flex min-h-0 flex-1 overflow-hidden">
             {/* Tools sub-pane */}
             <div
               className={cn(
-                "absolute inset-0 overflow-hidden transition-opacity duration-150",
+                "absolute inset-0 min-h-0 overflow-hidden transition-opacity duration-150",
                 agentSubTab === "tools" ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
               )}
             >
@@ -196,7 +196,7 @@ export function RightPanelTabs({
             {/* MCP sub-pane */}
             <div
               className={cn(
-                "absolute inset-0 overflow-y-auto transition-opacity duration-150",
+                "absolute inset-0 min-h-0 overflow-y-auto transition-opacity duration-150",
                 agentSubTab === "mcp" ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
               )}
             >

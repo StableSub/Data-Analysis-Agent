@@ -199,8 +199,10 @@ export default function Workbench() {
   const [rightTab, setRightTab] = useState<RightTabId>("details");
   const [copilotHasNew, setCopilotHasNew] = useState(false);
   const detailsPanelRef = useRef<HTMLDivElement>(null);
+  const canvasScrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const initializedRef = useRef(false);
+  const lastAutoOpenedPreEdaSourceRef = useRef<string | null>(null);
 
   // Reset canvas view when pipeline state transitions forward
   useEffect(() => {
@@ -208,6 +210,38 @@ export default function Workbench() {
       setCanvasView("current");
     }
   }, [state]);
+
+  useEffect(() => {
+    if (!selectedSourceId || state !== "ready" || !selectedPreEdaProfile) {
+      if (!selectedSourceId) {
+        lastAutoOpenedPreEdaSourceRef.current = null;
+      }
+      return;
+    }
+
+    if (chatHistory.length > 0) {
+      return;
+    }
+
+    if (lastAutoOpenedPreEdaSourceRef.current === selectedSourceId) {
+      return;
+    }
+
+    lastAutoOpenedPreEdaSourceRef.current = selectedSourceId;
+    setCanvasView("pre-eda");
+  }, [selectedSourceId, selectedPreEdaProfile, state, chatHistory.length]);
+
+  useEffect(() => {
+    if (canvasView === "current") {
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      canvasScrollRef.current?.scrollTo({ top: 0, behavior: "auto" });
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [canvasView]);
 
   // Wrap handleApprove to also reset canvas view so user sees the transition
   const handleApproveAndReturn = useCallback(() => {
@@ -779,7 +813,8 @@ export default function Workbench() {
   const MainContent = (
     <div
       className={cn(
-        "mx-auto w-full space-y-4 pb-28 pt-4 px-2 xl:px-3",
+        "mx-auto w-full space-y-4 pb-28 px-2 xl:px-3",
+        canvasView === "current" ? "pt-4" : "pt-2",
         canvasView === "pre-eda"
           ? "max-w-[1360px] 2xl:max-w-[1460px]"
           : state === "empty" || state === "uploading"
@@ -797,14 +832,6 @@ export default function Workbench() {
         className="hidden"
         onChange={handleFileSelected}
       />
-
-      {state !== "empty" && state !== "uploading" && (
-        <div className="flex justify-center">
-          <div className="max-w-[480px] truncate rounded-full border border-[var(--genui-border)] bg-[var(--genui-panel)] px-6 py-3 text-sm font-semibold text-[var(--genui-text)] shadow-[0_10px_30px_rgba(15,23,42,0.12)]">
-            {sessionDisplayTitle}
-          </div>
-        </div>
-      )}
 
       {state === "empty" && (
         <div className="flex flex-col items-center justify-center min-h-[50vh] animate-in fade-in zoom-in-95 duration-500">
@@ -1119,7 +1146,10 @@ export default function Workbench() {
       onTabChange={handleTabChange}
       agentHasNew={copilotHasNew}
       detailsContent={
-        <div ref={detailsPanelRef} className="h-full overflow-y-auto p-4 space-y-4">
+        <div
+          ref={detailsPanelRef}
+          className="h-full min-h-0 overflow-y-auto overscroll-contain p-4 pr-3 space-y-4"
+        >
           {highlightDetails && (
             <div className="mx-4 mt-3 mb-0 px-3 py-2 rounded-lg border border-[var(--genui-error)]/40 bg-[var(--genui-error)]/5 flex items-center gap-2 animate-in fade-in duration-200">
               <span className="text-[10px] font-semibold text-[var(--genui-error)] animate-pulse">
@@ -1554,6 +1584,7 @@ export default function Workbench() {
       leftPanel={LeftPanel}
       mainContent={MainContent}
       rightPanel={RightPanel}
+      contentScrollRef={canvasScrollRef}
       centerSubHeader={CenterSubHeader}
       bottomBar={BottomBar}
       gateBar={GateBarComponent}

@@ -50,6 +50,17 @@ function formatMetric(value: number): string {
   return value.toFixed(3).replace(/\.?0+$/, "");
 }
 
+function formatDistributionBound(value: number): string {
+  if (!Number.isFinite(value)) {
+    return "-";
+  }
+
+  return value.toLocaleString(undefined, {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  });
+}
+
 function formatDistributionLabel(label: string): string {
   if (!label.includes("-")) {
     return label;
@@ -63,7 +74,37 @@ function formatDistributionLabel(label: string): string {
     return label;
   }
 
-  return `${formatMetric(start)}~${formatMetric(end)}`;
+  return `${formatDistributionBound(start)}~${formatDistributionBound(end)}`;
+}
+
+function formatBarChartAxisLabel(label: string): string {
+  return label.length > 5 ? `${label.slice(0, 5)}...` : label;
+}
+
+function formatDistributionAxisLabel(label: string, kind: "numeric" | "categorical"): string {
+  const formatted = formatDistributionLabel(label);
+  return kind === "categorical" ? formatBarChartAxisLabel(formatted) : formatted;
+}
+
+const DISTRIBUTION_VISIBLE_BAR_COUNT = 8;
+const DISTRIBUTION_BAR_SLOT_WIDTH = 72;
+const DISTRIBUTION_BAR_MAX_WIDTH = 30;
+const PREVIEW_DISTRIBUTION_BAR_MAX_WIDTH = 19;
+
+function getDistributionChartMinWidth(kind: "numeric" | "categorical", count: number): number | undefined {
+  if (kind !== "categorical") {
+    return undefined;
+  }
+
+  return Math.max(count, DISTRIBUTION_VISIBLE_BAR_COUNT) * DISTRIBUTION_BAR_SLOT_WIDTH;
+}
+
+function getDistributionBarMaxWidth(kind: "numeric" | "categorical", compact = false): number | undefined {
+  if (kind !== "categorical") {
+    return undefined;
+  }
+
+  return compact ? PREVIEW_DISTRIBUTION_BAR_MAX_WIDTH : DISTRIBUTION_BAR_MAX_WIDTH;
 }
 
 interface DistributionTooltipEntry {
@@ -89,7 +130,13 @@ function DistributionTooltipContent({
   }
 
   const value = payload[0]?.value;
-  const displayLabel = typeof label === "string" ? formatDistributionLabel(label) : "-";
+  const payloadLabel = payload[0]?.payload?.label;
+  const displayLabel =
+    typeof payloadLabel === "string"
+      ? formatDistributionLabel(payloadLabel)
+      : typeof label === "string"
+        ? formatDistributionLabel(label)
+        : "-";
   const displayValue =
     typeof value === "number"
       ? value.toLocaleString()
@@ -115,7 +162,7 @@ function MetricTile({ label, value }: { label: string; value: string }) {
       <p className="text-[9px] font-semibold uppercase tracking-[0.16em] text-[var(--genui-muted)]">
         {label}
       </p>
-      <p className="mt-1.5 text-[24px] leading-none font-semibold text-[var(--genui-text)]">
+      <p className="mt-1.5 text-[14px] leading-none font-semibold text-[var(--genui-text)]">
         {value}
       </p>
     </div>
@@ -410,28 +457,71 @@ function PreprocessRecommendationCard({
                     <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--genui-muted)] mb-1.5 px-1">
                       Before (현재)
                     </p>
-                    <ChartContainer config={chartConfig} className="h-[120px] w-full aspect-auto">
-                      <BarChart data={targetDistribution.bins} margin={{ top: 4, right: 4, left: 0, bottom: 4 }} barCategoryGap="14%">
-                        <CartesianGrid vertical={false} strokeDasharray="3 3" opacity={0.3} />
-                        <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fontSize: 9, fill: "var(--genui-muted)" }} interval={0} minTickGap={4} />
-                        <YAxis allowDecimals={false} tickLine={false} axisLine={false} width={28} tick={{ fontSize: 9, fill: "var(--genui-muted)" }} />
-                        <Bar dataKey="value" fill="var(--color-value)" radius={[4, 4, 0, 0]} maxBarSize={28} opacity={0.6} />
-                      </BarChart>
-                    </ChartContainer>
+                    <div className={cn(targetDistribution.kind === "categorical" && "overflow-x-auto")}>
+                      <ChartContainer
+                        config={chartConfig}
+                        className={cn("h-[120px] aspect-auto", targetDistribution.kind === "categorical" ? "w-auto min-w-full" : "w-full")}
+                        style={{
+                          minWidth: getDistributionChartMinWidth(targetDistribution.kind, targetDistribution.bins.length),
+                        }}
+                      >
+                        <BarChart data={targetDistribution.bins} margin={{ top: 4, right: 4, left: 0, bottom: 4 }} barCategoryGap="14%">
+                          <CartesianGrid vertical={false} strokeDasharray="3 3" opacity={0.3} />
+                          <XAxis
+                            dataKey="label"
+                            tickLine={false}
+                            axisLine={false}
+                            tick={{ fontSize: 8, fill: "var(--genui-muted)" }}
+                            interval={0}
+                            minTickGap={4}
+                            tickFormatter={(label) => formatDistributionAxisLabel(String(label), targetDistribution.kind)}
+                          />
+                          <YAxis allowDecimals={false} tickLine={false} axisLine={false} width={36} tick={{ fontSize: 9, fill: "var(--genui-muted)" }} />
+                          <Bar
+                            dataKey="value"
+                            fill="var(--color-value)"
+                            radius={[4, 4, 0, 0]}
+                            maxBarSize={getDistributionBarMaxWidth(targetDistribution.kind, true)}
+                            opacity={0.6}
+                          />
+                        </BarChart>
+                      </ChartContainer>
+                    </div>
                   </div>
                   {/* After */}
                   <div className="rounded-lg border border-[var(--genui-running)]/30 bg-[var(--genui-running)]/4 p-2.5">
                     <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--genui-running)] mb-1.5 px-1">
                       After (예상)
                     </p>
-                    <ChartContainer config={chartConfig} className="h-[120px] w-full aspect-auto">
-                      <BarChart data={previewBins} margin={{ top: 4, right: 4, left: 0, bottom: 4 }} barCategoryGap="14%">
-                        <CartesianGrid vertical={false} strokeDasharray="3 3" opacity={0.3} />
-                        <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fontSize: 9, fill: "var(--genui-muted)" }} interval={0} minTickGap={4} />
-                        <YAxis allowDecimals={false} tickLine={false} axisLine={false} width={28} tick={{ fontSize: 9, fill: "var(--genui-muted)" }} />
-                        <Bar dataKey="value" fill="var(--genui-running)" radius={[4, 4, 0, 0]} maxBarSize={28} />
-                      </BarChart>
-                    </ChartContainer>
+                    <div className={cn(targetDistribution.kind === "categorical" && "overflow-x-auto")}>
+                      <ChartContainer
+                        config={chartConfig}
+                        className={cn("h-[120px] aspect-auto", targetDistribution.kind === "categorical" ? "w-auto min-w-full" : "w-full")}
+                        style={{
+                          minWidth: getDistributionChartMinWidth(targetDistribution.kind, previewBins.length),
+                        }}
+                      >
+                        <BarChart data={previewBins} margin={{ top: 4, right: 4, left: 0, bottom: 4 }} barCategoryGap="14%">
+                          <CartesianGrid vertical={false} strokeDasharray="3 3" opacity={0.3} />
+                          <XAxis
+                            dataKey="label"
+                            tickLine={false}
+                            axisLine={false}
+                            tick={{ fontSize: 8, fill: "var(--genui-muted)" }}
+                            interval={0}
+                            minTickGap={4}
+                            tickFormatter={(label) => formatDistributionAxisLabel(String(label), targetDistribution.kind)}
+                          />
+                          <YAxis allowDecimals={false} tickLine={false} axisLine={false} width={36} tick={{ fontSize: 9, fill: "var(--genui-muted)" }} />
+                          <Bar
+                            dataKey="value"
+                            fill="var(--genui-running)"
+                            radius={[4, 4, 0, 0]}
+                            maxBarSize={getDistributionBarMaxWidth(targetDistribution.kind, true)}
+                          />
+                        </BarChart>
+                      </ChartContainer>
+                    </div>
                   </div>
                 </div>
               )}
@@ -749,50 +839,58 @@ export function PreEdaBoard({
           <CardBody className="space-y-2.5 p-3">
             {selectedDistribution ? (
               <>
-                <ChartContainer
-                  config={chartConfig}
-                  className="h-[220px] w-full aspect-auto rounded-lg border border-[var(--genui-border)] bg-[var(--genui-surface)] px-2 py-2 [&_.recharts-tooltip-cursor]:opacity-0 [&_.recharts-rectangle.recharts-tooltip-cursor]:fill-transparent [&_.recharts-rectangle.recharts-tooltip-cursor]:stroke-transparent"
-                >
-                  <BarChart
-                    data={selectedDistribution.bins}
-                    margin={{ top: 8, right: 8, left: 0, bottom: 4 }}
-                    barCategoryGap="18%"
+                <div className={cn(selectedDistribution.kind === "categorical" && "overflow-x-auto")}>
+                  <ChartContainer
+                    config={chartConfig}
+                    className={cn(
+                      "h-[220px] aspect-auto rounded-lg border border-[var(--genui-border)] bg-[var(--genui-surface)] px-2 py-2 [&_.recharts-tooltip-cursor]:opacity-0 [&_.recharts-rectangle.recharts-tooltip-cursor]:fill-transparent [&_.recharts-rectangle.recharts-tooltip-cursor]:stroke-transparent",
+                      selectedDistribution.kind === "categorical" ? "w-auto min-w-full" : "w-full",
+                    )}
+                    style={{
+                      minWidth: getDistributionChartMinWidth(selectedDistribution.kind, selectedDistribution.bins.length),
+                    }}
                   >
-                    <CartesianGrid vertical={false} strokeDasharray="3 3" opacity={0.35} />
-                    <XAxis
-                      dataKey="label"
-                      tickLine={false}
-                      axisLine={false}
-                      interval={0}
-                      minTickGap={8}
-                      tickMargin={10}
-                      tickFormatter={formatDistributionLabel}
-                      tick={{ fontSize: 11, fill: "var(--genui-muted)" }}
-                    />
-                    <YAxis
-                      allowDecimals={false}
-                      tickLine={false}
-                      axisLine={false}
-                      width={36}
-                      tick={{ fontSize: 11, fill: "var(--genui-muted)" }}
-                    />
-                    <ChartTooltip
-                      cursor={false}
-                      shared={false}
-                      content={<DistributionTooltipContent />}
-                    />
-                    <Bar
-                      dataKey="value"
-                      fill="var(--color-value)"
-                      radius={[6, 6, 0, 0]}
-                      maxBarSize={44}
-                    />
-                  </BarChart>
-                </ChartContainer>
+                    <BarChart
+                      data={selectedDistribution.bins}
+                      margin={{ top: 8, right: 8, left: 0, bottom: 4 }}
+                      barCategoryGap="18%"
+                    >
+                      <CartesianGrid vertical={false} strokeDasharray="3 3" opacity={0.35} />
+                      <XAxis
+                        dataKey="label"
+                        tickLine={false}
+                        axisLine={false}
+                        interval={0}
+                        minTickGap={8}
+                        tickMargin={10}
+                        tickFormatter={(label) => formatDistributionAxisLabel(String(label), selectedDistribution.kind)}
+                        tick={{ fontSize: 9, fill: "var(--genui-muted)" }}
+                      />
+                      <YAxis
+                        allowDecimals={false}
+                        tickLine={false}
+                        axisLine={false}
+                        width={44}
+                        tick={{ fontSize: 11, fill: "var(--genui-muted)" }}
+                      />
+                      <ChartTooltip
+                        cursor={false}
+                        shared={false}
+                        content={<DistributionTooltipContent />}
+                      />
+                      <Bar
+                        dataKey="value"
+                        fill="var(--color-value)"
+                        radius={[6, 6, 0, 0]}
+                        maxBarSize={getDistributionBarMaxWidth(selectedDistribution.kind)}
+                      />
+                    </BarChart>
+                  </ChartContainer>
+                </div>
                 <p className="text-xs text-[var(--genui-muted)]">
                   {selectedDistribution.kind === "numeric"
                     ? "numeric 컬럼은 binning 후 histogram으로 표시합니다."
-                    : "categorical / boolean / group key 컬럼은 value counts 기준 상위 항목을 표시합니다."}
+                    : "categorical / boolean / group key 컬럼은 value counts 전체 항목을 가로 스크롤로 탐색할 수 있습니다."}
                 </p>
               </>
             ) : (
