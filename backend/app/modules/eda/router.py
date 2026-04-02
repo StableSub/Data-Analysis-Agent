@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from .dependencies import get_eda_service
 from .schemas import (
     EDAColumnTypesResponse,
+    EDACorrelationsResponse,
     EDAProfileResponse,
     EDAQualityResponse,
     EDAStatsResponse,
@@ -81,3 +82,17 @@ def get_eda_stats(
             detail="데이터셋을 찾을 수 없거나 기본 통계를 생성할 수 없습니다.",
         )
     return stats
+
+
+@router.get("/{source_id}/correlations/top", response_model=EDACorrelationsResponse)
+def get_eda_top_correlations(
+    source_id: str,
+    service: EDAService = Depends(get_eda_service),
+):
+    correlations = service.get_top_correlations(source_id, limit=3)
+    if correlations is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="데이터셋을 찾을 수 없거나 상관관계를 생성할 수 없습니다.",
+        )
+    return correlations

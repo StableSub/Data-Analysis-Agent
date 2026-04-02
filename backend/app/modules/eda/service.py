@@ -5,6 +5,8 @@ import pandas as pd
 from .schemas import (
     EDAColumnTypeItem,
     EDAColumnTypesResponse,
+    EDACorrelationItem,
+    EDACorrelationsResponse,
     EDAProfileResponse,
     EDAQualityColumn,
     EDAQualityResponse,
@@ -168,4 +170,54 @@ class EDAService:
             column_count=len(df.columns),
             numeric_column_count=len(stats_columns),
             columns=stats_columns,
+        )
+
+    def get_top_correlations(self, source_id: str, *, limit: int = 3) -> EDACorrelationsResponse | None:
+        profile = self.profile_service.build_profile(source_id)
+        if not profile.available:
+            return None
+
+        dataset = self.dataset_repository.get_by_source_id(source_id)
+        if dataset is None or not dataset.storage_path:
+            return None
+
+        file_path = Path(dataset.storage_path)
+        if not file_path.exists() or not file_path.is_file():
+            return None
+
+        numeric_columns = [column for column in profile.numeric_columns if column]
+        if len(numeric_columns) < 2:
+            return EDACorrelationsResponse(source_id=source_id, pair_count=0, pairs=[])
+
+        df = self.reader.read_csv(dataset.storage_path, usecols=numeric_columns)
+        if df.empty:
+            return EDACorrelationsResponse(source_id=source_id, pair_count=0, pairs=[])
+
+        numeric_df = df.apply(pd.to_numeric, errors="coerce")
+        corr_matrix = numeric_df.corr(method="pearson", numeric_only=True)
+        correlation_pairs: list[tuple[float, EDACorrelationItem]] = []
+        columns = list(corr_matrix.columns)
+        for index, column_1 in enumerate(columns):
+            for column_2 in columns[index + 1 :]:
+                value = corr_matrix.loc[column_1, column_2]
+                if pd.isna(value):
+                    continue
+                corr_value = round(float(value), 4)
+                correlation_pairs.append(
+                    (
+                        abs(corr_value),
+                        EDACorrelationItem(
+                            column_1=str(column_1),
+                            column_2=str(column_2),
+                            correlation=corr_value,
+                        ),
+                    )
+                )
+
+        correlation_pairs.sort(key=lambda item: item[0], reverse=True)
+        pairs = [item for _, item in correlation_pairs[:limit]]
+        return EDACorrelationsResponse(
+            source_id=source_id,
+            pair_count=len(pairs),
+            pairs=pairs,
         )

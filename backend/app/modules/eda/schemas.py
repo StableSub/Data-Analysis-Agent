@@ -75,6 +75,18 @@ class EDAStatsResponse(BaseModel):
     columns: list[EDAStatsColumn] = Field(default_factory=list)
 
 
+class EDACorrelationItem(BaseModel):
+    column_1: str
+    column_2: str
+    correlation: float
+
+
+class EDACorrelationsResponse(BaseModel):
+    source_id: str
+    pair_count: int = 0
+    pairs: list[EDACorrelationItem] = Field(default_factory=list)
+
+
 class EDAProfileResponse(BaseModel):
     source_id: str
     available: bool
