@@ -28,6 +28,7 @@ class DatasetProfile(BaseModel):
     source_id: str
     available: bool
     row_count: int = 0
+    sample_row_count: int = 0
     column_count: int = 0
     columns: list[str] = Field(default_factory=list)
     dtypes: dict[str, str] = Field(default_factory=dict)
@@ -39,4 +40,6 @@ class DatasetProfile(BaseModel):
     boolean_columns: list[str] = Field(default_factory=list)
     identifier_columns: list[str] = Field(default_factory=list)
     group_key_columns: list[str] = Field(default_factory=list)
+    type_columns: dict[str, list[str]] = Field(default_factory=dict)
+    logical_types: dict[str, ColumnProfileType] = Field(default_factory=dict)
     column_profiles: list[ColumnProfile] = Field(default_factory=list)

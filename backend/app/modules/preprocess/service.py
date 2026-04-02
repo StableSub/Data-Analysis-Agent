@@ -93,6 +93,14 @@ class PreprocessService:
     def build_dataset_profile(self, source_id: str) -> Dict[str, Any]:
         profile = self.profile_service.build_profile(source_id)
         profile_data = profile.model_dump()
+        profile_data["type_columns"] = {
+            "numerical": profile.numeric_columns,
+            "categorical": profile.categorical_columns,
+            "datetime": profile.datetime_columns,
+            "boolean": profile.boolean_columns,
+            "identifier": profile.identifier_columns,
+            "group_key": profile.group_key_columns,
+        }
         profile_data["sample_values"] = {
             str(column): [row.get(str(column)) for row in profile.sample_rows]
             for column in profile.columns

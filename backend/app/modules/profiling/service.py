@@ -115,6 +115,7 @@ class DatasetProfileService:
             source_id=source_id,
             available=True,
             row_count=len(sample_df),
+            sample_row_count=min(len(sample_df), 3),
             column_count=len(sample_df.columns),
             columns=[str(column) for column in sample_df.columns.tolist()],
             dtypes={str(column): str(dtype) for column, dtype in sample_df.dtypes.items()},
@@ -126,6 +127,18 @@ class DatasetProfileService:
             boolean_columns=boolean_columns,
             identifier_columns=identifier_columns,
             group_key_columns=group_key_columns,
+            type_columns={
+                "numerical": numeric_columns,
+                "categorical": categorical_columns,
+                "datetime": datetime_columns,
+                "boolean": boolean_columns,
+                "identifier": identifier_columns,
+                "group_key": group_key_columns,
+            },
+            logical_types={
+                profile.name: profile.inferred_type
+                for profile in column_profiles
+            },
             column_profiles=column_profiles,
         )
 
