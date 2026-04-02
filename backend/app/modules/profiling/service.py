@@ -241,7 +241,8 @@ class DatasetProfileService:
         if non_null.empty:
             return False
 
-        parsed = pd.to_datetime(non_null, errors="coerce")
+        sample = non_null.astype(str).head(100)
+        parsed = pd.to_datetime(sample, errors="coerce", format="mixed")
         return parsed.notna().mean() >= 0.7
 
     @staticmethod
