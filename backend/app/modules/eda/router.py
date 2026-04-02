@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from .dependencies import get_eda_service
 from .schemas import (
+    EDAAISummaryResponse,
     EDAColumnTypesResponse,
     EDACorrelationsResponse,
     EDADistributionResponse,
@@ -163,3 +164,18 @@ def get_eda_preprocess_recommendations(
             detail="데이터셋을 찾을 수 없거나 전처리 추천을 생성할 수 없습니다.",
         )
     return recommendations
+
+
+@router.get("/{source_id}/ai-summary", response_model=EDAAISummaryResponse)
+def get_eda_ai_summary(
+    source_id: str,
+    model_id: str | None = Query(default=None, description="Optional model override"),
+    service: EDAService = Depends(get_eda_service),
+):
+    summary = service.get_ai_summary(source_id, model_id=model_id)
+    if summary is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="데이터셋을 찾을 수 없거나 AI 요약을 생성할 수 없습니다.",
+        )
+    return summary

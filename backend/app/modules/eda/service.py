@@ -2,7 +2,9 @@ from pathlib import Path
 
 import pandas as pd
 
+from .ai import generate_eda_ai_summary
 from .schemas import (
+    EDAAISummaryResponse,
     EDAColumnTypeItem,
     EDAColumnTypesResponse,
     EDACorrelationItem,
@@ -63,10 +65,12 @@ class EDAService:
         profile_service: DatasetProfileService,
         dataset_repository: DataSourceRepository,
         reader: DatasetReader,
+        default_model: str = "gpt-5-nano",
     ) -> None:
         self.profile_service = profile_service
         self.dataset_repository = dataset_repository
         self.reader = reader
+        self.default_model = default_model
 
     def get_profile(self, source_id: str) -> EDAProfileResponse:
         profile = self.profile_service.build_profile(source_id)
@@ -535,4 +539,66 @@ class EDAService:
             source_id=source_id,
             recommendation_count=len(recommendations),
             recommendations=recommendations,
+        )
+
+    def build_ai_summary_payload(self, source_id: str) -> dict[str, object] | None:
+        summary = self.get_summary(source_id)
+        quality = self.get_quality(source_id)
+        column_types = self.get_column_types(source_id)
+        stats = self.get_stats(source_id)
+        correlations = self.get_top_correlations(source_id, limit=3)
+        outliers = self.get_outliers(source_id)
+        recommendations = self.get_preprocess_recommendations(source_id)
+
+        if (
+            summary is None
+            or quality is None
+            or column_types is None
+            or stats is None
+            or correlations is None
+            or outliers is None
+            or recommendations is None
+        ):
+            return None
+
+        return {
+            "source_id": source_id,
+            "summary": summary.model_dump(),
+            "quality": quality.model_dump(),
+            "column_types": {
+                "column_count": column_types.column_count,
+                "type_columns": column_types.type_columns,
+                "columns": [item.model_dump() for item in column_types.columns[:10]],
+            },
+            "stats": {
+                "numeric_column_count": stats.numeric_column_count,
+                "columns": [item.model_dump() for item in stats.columns[:10]],
+            },
+            "top_correlations": correlations.model_dump(),
+            "outliers": {
+                "numeric_column_count": outliers.numeric_column_count,
+                "columns": [item.model_dump() for item in outliers.columns[:10]],
+            },
+            "preprocess_recommendations": recommendations.model_dump(),
+        }
+
+    def get_ai_summary(
+        self,
+        source_id: str,
+        *,
+        model_id: str | None = None,
+    ) -> EDAAISummaryResponse | None:
+        payload = self.build_ai_summary_payload(source_id)
+        if payload is None:
+            return None
+
+        summary_text = generate_eda_ai_summary(
+            payload=payload,
+            model_id=model_id,
+            default_model=self.default_model,
+        )
+        return EDAAISummaryResponse(
+            source_id=source_id,
+            summary=summary_text,
+            payload=payload,
         )
