@@ -12,7 +12,7 @@ from .schemas import (
     EDAStatsResponse,
     EDASummaryResponse,
 )
-from .service import EDAService
+from .service import EDAInvalidRequestError, EDAService, EDAUnsupportedRequestError
 
 router = APIRouter(prefix="/eda", tags=["eda"])
 
@@ -123,16 +123,27 @@ def get_eda_distribution(
     top_n: int = Query(10, ge=1, le=20, description="범주형 상위 노출 개수"),
     service: EDAService = Depends(get_eda_service),
 ):
-    distribution = service.get_distribution(
-        source_id,
-        column=column,
-        bins=bins,
-        top_n=top_n,
-    )
+    try:
+        distribution = service.get_distribution(
+            source_id,
+            column=column,
+            bins=bins,
+            top_n=top_n,
+        )
+    except EDAInvalidRequestError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    except EDAUnsupportedRequestError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
     if distribution is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="데이터셋 또는 컬럼을 찾을 수 없거나 분포 데이터를 생성할 수 없습니다.",
+            detail="데이터셋을 찾을 수 없거나 분포 데이터를 생성할 수 없습니다.",
         )
     return distribution
 

@@ -26,6 +26,18 @@ from ..datasets.service import DatasetReader
 from ..profiling.service import DatasetProfileService
 
 
+class EDANotFoundError(LookupError):
+    """Raised when a requested EDA resource does not exist."""
+
+
+class EDAInvalidRequestError(ValueError):
+    """Raised when the request shape is invalid for an EDA endpoint."""
+
+
+class EDAUnsupportedRequestError(ValueError):
+    """Raised when the request targets an unsupported EDA operation."""
+
+
 def _safe_float(value: object, ndigits: int = 4) -> float | None:
     if pd.isna(value):
         return None
@@ -304,8 +316,10 @@ class EDAService:
         top_n: int = 10,
     ) -> EDADistributionResponse | None:
         profile = self.profile_service.build_profile(source_id)
-        if not profile.available or column not in profile.columns:
+        if not profile.available:
             return None
+        if column not in profile.columns:
+            raise EDAInvalidRequestError(f"Unknown column: {column}")
 
         dataset = self.dataset_repository.get_by_source_id(source_id)
         if dataset is None or not dataset.storage_path:
@@ -316,8 +330,10 @@ class EDAService:
             return None
 
         inferred_type = profile.logical_types.get(column)
-        if inferred_type is None or inferred_type == "identifier":
-            return None
+        if inferred_type is None:
+            raise EDAInvalidRequestError(f"Unknown column type for: {column}")
+        if inferred_type == "identifier":
+            raise EDAUnsupportedRequestError("Identifier columns are not supported for distribution charts.")
 
         df = self.reader.read_csv(dataset.storage_path, usecols=[column])
         if df.empty:
