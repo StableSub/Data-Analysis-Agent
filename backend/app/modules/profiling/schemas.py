@@ -3,14 +3,24 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
-ColumnProfileType = Literal["numerical", "categorical", "datetime"]
+ColumnProfileType = Literal[
+    "numerical",
+    "categorical",
+    "identifier",
+    "datetime",
+    "boolean",
+    "group_key",
+]
 
 
 class ColumnProfile(BaseModel):
     name: str
     raw_dtype: str
     inferred_type: ColumnProfileType
+    null_count: int = 0
     missing_rate: float = Field(ge=0.0, le=1.0)
+    unique_count: int = 0
+    unique_ratio: float = Field(ge=0.0, le=1.0)
     sample_values: list[object] = Field(default_factory=list)
 
 
@@ -26,4 +36,7 @@ class DatasetProfile(BaseModel):
     numeric_columns: list[str] = Field(default_factory=list)
     datetime_columns: list[str] = Field(default_factory=list)
     categorical_columns: list[str] = Field(default_factory=list)
+    boolean_columns: list[str] = Field(default_factory=list)
+    identifier_columns: list[str] = Field(default_factory=list)
+    group_key_columns: list[str] = Field(default_factory=list)
     column_profiles: list[ColumnProfile] = Field(default_factory=list)

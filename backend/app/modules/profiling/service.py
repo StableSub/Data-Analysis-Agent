@@ -4,7 +4,40 @@ import pandas as pd
 
 from ..datasets.repository import DataSourceRepository
 from ..datasets.service import DatasetReader
-from .schemas import ColumnProfile, DatasetProfile
+from .schemas import ColumnProfile, ColumnProfileType, DatasetProfile
+
+BOOLEAN_TOKENS = {
+    "0",
+    "1",
+    "false",
+    "true",
+    "n",
+    "no",
+    "y",
+    "yes",
+    "f",
+    "t",
+}
+
+IDENTIFIER_NAME_TOKENS = ("id", "uuid", "key", "code")
+GROUP_KEY_NAME_TOKENS = (
+    "store",
+    "shop",
+    "branch",
+    "region",
+    "country",
+    "city",
+    "state",
+    "category",
+    "segment",
+    "group",
+    "team",
+    "department",
+    "channel",
+    "product",
+    "brand",
+    "cluster",
+)
 
 
 class DatasetProfileService:
@@ -32,40 +65,48 @@ class DatasetProfileService:
             return DatasetProfile(source_id=source_id, available=False)
 
         sample_df = self.reader.read_csv(dataset.storage_path, nrows=sample_rows)
-        numeric_columns = [str(column) for column in sample_df.select_dtypes(include="number").columns]
-        datetime_columns = [
-            str(column)
-            for column in sample_df.columns
-            if (
-                pd.to_datetime(sample_df[column], errors="coerce").notna().mean() >= 0.7
-                and str(column) not in numeric_columns
-            )
-        ]
-        categorical_columns = [
-            str(column)
-            for column in sample_df.columns
-            if str(column) not in numeric_columns and str(column) not in datetime_columns
-        ]
         missing_rates = sample_df.isna().mean().round(3).to_dict()
+        row_count = len(sample_df)
 
+        numeric_columns: list[str] = []
+        datetime_columns: list[str] = []
+        categorical_columns: list[str] = []
+        boolean_columns: list[str] = []
+        identifier_columns: list[str] = []
+        group_key_columns: list[str] = []
         column_profiles: list[ColumnProfile] = []
         for column in sample_df.columns:
             column_name = str(column)
-            if column_name in numeric_columns:
-                inferred_type = "numerical"
-            elif column_name in datetime_columns:
-                inferred_type = "datetime"
-            else:
-                inferred_type = "categorical"
+            series = sample_df[column]
+            non_null_series = series.dropna()
+            inferred_type = self._infer_column_type(column_name=column_name, series=series, row_count=row_count)
 
-            series = sample_df[column].dropna().head(3)
-            sample_values = [self._serialize_value(value) for value in series.tolist()]
+            if inferred_type == "numerical":
+                numeric_columns.append(column_name)
+            elif inferred_type == "datetime":
+                datetime_columns.append(column_name)
+            elif inferred_type == "boolean":
+                boolean_columns.append(column_name)
+                categorical_columns.append(column_name)
+            elif inferred_type == "identifier":
+                identifier_columns.append(column_name)
+            elif inferred_type == "group_key":
+                group_key_columns.append(column_name)
+                categorical_columns.append(column_name)
+            else:
+                categorical_columns.append(column_name)
+
+            sample_values = [self._serialize_value(value) for value in non_null_series.head(3).tolist()]
+            unique_count = int(non_null_series.nunique(dropna=True))
             column_profiles.append(
                 ColumnProfile(
                     name=column_name,
-                    raw_dtype=str(sample_df[column].dtype),
+                    raw_dtype=str(series.dtype),
                     inferred_type=inferred_type,
+                    null_count=int(series.isna().sum()),
                     missing_rate=float(missing_rates.get(column, 0.0)),
+                    unique_count=unique_count,
+                    unique_ratio=self._safe_ratio(unique_count, len(non_null_series)),
                     sample_values=sample_values,
                 )
             )
@@ -82,6 +123,9 @@ class DatasetProfileService:
             numeric_columns=numeric_columns,
             datetime_columns=datetime_columns,
             categorical_columns=categorical_columns,
+            boolean_columns=boolean_columns,
+            identifier_columns=identifier_columns,
+            group_key_columns=group_key_columns,
             column_profiles=column_profiles,
         )
 
@@ -104,3 +148,113 @@ class DatasetProfileService:
         if hasattr(value, "item"):
             return value.item()
         return value
+
+    def _infer_column_type(
+        self,
+        *,
+        column_name: str,
+        series: pd.Series,
+        row_count: int,
+    ) -> ColumnProfileType:
+        if self._is_boolean_column(series):
+            return "boolean"
+        if self._is_identifier_column(column_name=column_name, series=series, row_count=row_count):
+            return "identifier"
+        if self._is_datetime_column(series):
+            return "datetime"
+        if self._is_numeric_column(series):
+            return "numerical"
+        if self._is_group_key_column(column_name=column_name, series=series, row_count=row_count):
+            return "group_key"
+        return "categorical"
+
+    @staticmethod
+    def _is_numeric_column(series: pd.Series) -> bool:
+        if pd.api.types.is_bool_dtype(series):
+            return False
+        if pd.api.types.is_numeric_dtype(series):
+            return True
+
+        non_null = series.dropna()
+        if non_null.empty:
+            return False
+
+        converted = pd.to_numeric(non_null, errors="coerce")
+        return converted.notna().mean() >= 0.9
+
+    @staticmethod
+    def _is_datetime_column(series: pd.Series) -> bool:
+        if pd.api.types.is_numeric_dtype(series) or pd.api.types.is_bool_dtype(series):
+            return False
+
+        non_null = series.dropna()
+        if non_null.empty:
+            return False
+
+        parsed = pd.to_datetime(non_null, errors="coerce")
+        return parsed.notna().mean() >= 0.7
+
+    @staticmethod
+    def _is_boolean_column(series: pd.Series) -> bool:
+        if pd.api.types.is_bool_dtype(series):
+            return True
+
+        non_null = series.dropna()
+        if non_null.empty:
+            return False
+
+        normalized_values = {
+            str(value).strip().lower()
+            for value in non_null.tolist()
+            if str(value).strip()
+        }
+        return 0 < len(normalized_values) <= 2 and normalized_values.issubset(BOOLEAN_TOKENS)
+
+    @staticmethod
+    def _is_identifier_column(
+        *,
+        column_name: str,
+        series: pd.Series,
+        row_count: int,
+    ) -> bool:
+        non_null = series.dropna()
+        if non_null.empty or row_count == 0:
+            return False
+
+        unique_count = int(non_null.nunique(dropna=True))
+        unique_ratio = DatasetProfileService._safe_ratio(unique_count, len(non_null))
+        normalized_name = column_name.strip().lower()
+        name_suggests_identifier = any(
+            normalized_name == token
+            or normalized_name.endswith(f"_{token}")
+            or normalized_name.startswith(f"{token}_")
+            for token in IDENTIFIER_NAME_TOKENS
+        )
+        return unique_ratio >= 0.98 or (name_suggests_identifier and unique_ratio >= 0.85)
+
+    @staticmethod
+    def _is_group_key_column(
+        *,
+        column_name: str,
+        series: pd.Series,
+        row_count: int,
+    ) -> bool:
+        non_null = series.dropna()
+        if non_null.empty or row_count == 0:
+            return False
+
+        unique_count = int(non_null.nunique(dropna=True))
+        unique_ratio = DatasetProfileService._safe_ratio(unique_count, len(non_null))
+        normalized_name = column_name.strip().lower()
+        name_suggests_group = any(token in normalized_name for token in GROUP_KEY_NAME_TOKENS)
+
+        if unique_count <= 1:
+            return False
+
+        return name_suggests_group and 0.01 <= unique_ratio <= 0.5
+
+    @staticmethod
+    def _safe_ratio(numerator: int, denominator: int) -> float:
+        if denominator <= 0:
+            return 0.0
+        return round(float(numerator) / float(denominator), 4)
