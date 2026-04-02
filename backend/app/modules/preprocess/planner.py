@@ -15,7 +15,8 @@ PROMPTS = PromptRegistry(
         "plan.system": (
             "너는 전처리 플래너다. "
             "PreprocessPlan 스키마 형식으로만 반환하고 "
-            "지원 연산은 drop_missing, impute, drop_columns, rename_columns, scale, derived_column다. "
+            "지원 연산은 drop_missing, impute, drop_columns, rename_columns, scale, derived_column, parse_datetime, outlier, encode_categorical다. "
+            "dataset_profile에 preprocess_recommendations가 있으면 우선 참고하되, 사용자 요청과 데이터 상태에 맞게 조정하라. "
             "전처리가 불필요하면 operations는 빈 배열로 반환하라. "
             "operations는 op+파라미터로 구성하며 "
             "planner_comment에는 판단 근거를 1~2문장으로 남겨라."
@@ -138,6 +139,14 @@ def build_preprocess_review_payload(
         ]
 
     planner_comment = plan.planner_comment.strip()
+    recommendations_raw = dataset_profile.get("preprocess_recommendations")
+    top_recommendations: list[dict[str, Any]] = []
+    if isinstance(recommendations_raw, list):
+        top_recommendations = [
+            item
+            for item in recommendations_raw
+            if isinstance(item, dict)
+        ][:5]
     summary = (
         planner_comment
         or reason_summary.strip()
@@ -155,6 +164,7 @@ def build_preprocess_review_payload(
             "operations": [operation.model_dump() for operation in plan.operations],
             "planner_comment": planner_comment,
             "top_missing_columns": top_missing_columns,
+            "top_recommendations": top_recommendations,
             "affected_columns": _collect_affected_columns(plan.operations),
             "row_count": int(row_count) if isinstance(row_count, int) else None,
         },

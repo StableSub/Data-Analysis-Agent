@@ -11,11 +11,13 @@ from sqlalchemy.orm import Session
 
 from ..core.db import get_db
 from ..modules.datasets.service import build_data_source_repository, build_dataset_reader
+from ..modules.eda.dependencies import build_eda_service
 from ..modules.preprocess.dependencies import (
     build_preprocess_processor,
     build_preprocess_service,
 )
 from ..modules.preprocess.service import PreprocessService
+from ..modules.profiling.dependencies import build_dataset_profile_service
 from ..modules.rag.dependencies import build_rag_repository, build_rag_service
 from ..modules.rag.service import RagService
 from ..modules.reports.dependencies import build_report_repository, build_report_service
@@ -43,10 +45,21 @@ def get_workflow_checkpointer() -> InMemorySaver:
 def build_orchestration_services(*, db: Session, agent: Any) -> WorkflowServices:
     dataset_repository = build_data_source_repository(db)
     dataset_reader = build_dataset_reader()
+    profile_service = build_dataset_profile_service(
+        repository=dataset_repository,
+        reader=dataset_reader,
+    )
+    eda_service = build_eda_service(
+        profile_service=profile_service,
+        dataset_repository=dataset_repository,
+        reader=dataset_reader,
+    )
     preprocess_service = build_preprocess_service(
         repository=dataset_repository,
         reader=dataset_reader,
         processor=build_preprocess_processor(),
+        profile_service=profile_service,
+        eda_service=eda_service,
     )
     rag_service = build_rag_service(
         repository=build_rag_repository(db),
