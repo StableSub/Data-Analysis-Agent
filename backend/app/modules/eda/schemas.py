@@ -37,6 +37,25 @@ class EDAQualityResponse(BaseModel):
     columns: list[EDAQualityColumn] = Field(default_factory=list)
 
 
+class EDAColumnTypeItem(BaseModel):
+    column: str
+    raw_dtype: str
+    inferred_type: ColumnProfileType
+    null_count: int = 0
+    null_ratio: float = Field(default=0.0, ge=0.0, le=1.0)
+    unique_count: int = 0
+    unique_ratio: float = Field(default=0.0, ge=0.0, le=1.0)
+    sample_values: list[object] = Field(default_factory=list)
+
+
+class EDAColumnTypesResponse(BaseModel):
+    source_id: str
+    column_count: int = 0
+    type_columns: dict[str, list[str]] = Field(default_factory=dict)
+    logical_types: dict[str, ColumnProfileType] = Field(default_factory=dict)
+    columns: list[EDAColumnTypeItem] = Field(default_factory=list)
+
+
 class EDAProfileResponse(BaseModel):
     source_id: str
     available: bool

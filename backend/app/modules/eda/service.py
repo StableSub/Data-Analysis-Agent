@@ -1,4 +1,6 @@
 from .schemas import (
+    EDAColumnTypeItem,
+    EDAColumnTypesResponse,
     EDAProfileResponse,
     EDAQualityColumn,
     EDAQualityResponse,
@@ -67,4 +69,29 @@ class EDAService:
             missing_ratio=missing_ratio,
             top_missing_columns=[item for item in quality_columns if item.null_count > 0][:5],
             columns=quality_columns,
+        )
+
+    def get_column_types(self, source_id: str) -> EDAColumnTypesResponse | None:
+        profile = self.profile_service.build_profile(source_id)
+        if not profile.available:
+            return None
+
+        return EDAColumnTypesResponse(
+            source_id=profile.source_id,
+            column_count=profile.column_count,
+            type_columns=profile.type_columns,
+            logical_types=profile.logical_types,
+            columns=[
+                EDAColumnTypeItem(
+                    column=column_profile.name,
+                    raw_dtype=column_profile.raw_dtype,
+                    inferred_type=column_profile.inferred_type,
+                    null_count=column_profile.null_count,
+                    null_ratio=column_profile.missing_rate,
+                    unique_count=column_profile.unique_count,
+                    unique_ratio=column_profile.unique_ratio,
+                    sample_values=column_profile.sample_values,
+                )
+                for column_profile in profile.column_profiles
+            ],
         )

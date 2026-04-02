@@ -1,7 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from .dependencies import get_eda_service
-from .schemas import EDAProfileResponse, EDAQualityResponse, EDASummaryResponse
+from .schemas import (
+    EDAColumnTypesResponse,
+    EDAProfileResponse,
+    EDAQualityResponse,
+    EDASummaryResponse,
+)
 from .service import EDAService
 
 router = APIRouter(prefix="/eda", tags=["eda"])
@@ -47,3 +52,17 @@ def get_eda_quality(
             detail="데이터셋을 찾을 수 없거나 품질 정보를 생성할 수 없습니다.",
         )
     return quality
+
+
+@router.get("/{source_id}/columns/types", response_model=EDAColumnTypesResponse)
+def get_eda_column_types(
+    source_id: str,
+    service: EDAService = Depends(get_eda_service),
+):
+    column_types = service.get_column_types(source_id)
+    if column_types is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="데이터셋을 찾을 수 없거나 컬럼 타입 정보를 생성할 수 없습니다.",
+        )
+    return column_types
