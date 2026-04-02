@@ -4,7 +4,6 @@ from typing import Any, Dict
 
 from langgraph.graph import END, START, StateGraph
 
-from ..modules.analysis.schemas import AnalysisExecutionResult
 from .ai import answer_data_question, answer_general_question
 from .intake_router import build_intake_router_workflow
 from .state import MainWorkflowState
@@ -14,6 +13,17 @@ from .workflows.preprocess import build_preprocess_workflow
 from .workflows.rag import build_rag_workflow
 from .workflows.report import build_report_workflow
 from .workflows.visualization import build_visualization_workflow
+
+
+def _as_dict(value: Any) -> Dict[str, Any] | None:
+    if isinstance(value, dict):
+        return value
+    model_dump = getattr(value, "model_dump", None)
+    if callable(model_dump):
+        dumped = model_dump()
+        if isinstance(dumped, dict):
+            return dumped
+    return None
 
 
 def build_main_workflow(
@@ -128,6 +138,15 @@ def build_main_workflow(
             }
         }
 
+    def clarification_terminal(state: MainWorkflowState) -> Dict[str, Any]:
+        clarification_question = str(state.get("clarification_question", "")).strip()
+        return {
+            "output": {
+                "type": "clarification",
+                "content": clarification_question,
+            }
+        }
+
     def merge_context_node(state: MainWorkflowState) -> Dict[str, Any]:
         merged_context: Dict[str, Any] = {"applied_steps": []}
 
@@ -184,14 +203,18 @@ def build_main_workflow(
             if isinstance(summary, str) and summary.strip():
                 merged_context["applied_steps"].append("insight")
 
-        analysis_result = state.get("analysis_result")
-        if isinstance(analysis_result, AnalysisExecutionResult):
-            merged_context["analysis_result"] = analysis_result.model_dump()
-            if analysis_result.execution_status == "success":
+        analysis_plan = _as_dict(state.get("analysis_plan"))
+        if analysis_plan is not None:
+            merged_context["analysis_plan"] = analysis_plan
+
+        analysis_result = _as_dict(state.get("analysis_result"))
+        if analysis_result is not None:
+            merged_context["analysis_result"] = analysis_result
+            if analysis_result.get("execution_status") == "success":
                 merged_context["applied_steps"].append("analysis")
 
-        visualization_result = state.get("visualization_result")
-        if isinstance(visualization_result, dict):
+        visualization_result = _as_dict(state.get("visualization_result"))
+        if visualization_result is not None:
             merged_context["visualization_result"] = visualization_result
             if visualization_result.get("status") == "generated":
                 merged_context["applied_steps"].append("visualization")
@@ -200,23 +223,26 @@ def build_main_workflow(
 
     def data_qa_terminal(state: MainWorkflowState) -> Dict[str, Any]:
         merged_context = state.get("merged_context")
+        merged_context_dict = merged_context if isinstance(merged_context, dict) else {}
+
         answer = answer_data_question(
             user_input=str(state.get("user_input", "")),
-            merged_context=merged_context if isinstance(merged_context, dict) else {},
+            merged_context=merged_context_dict,
             model_id=state.get("model_id"),
             default_model=default_model,
         )
+        answer_text = str(answer or "").strip()
         return {
-            "data_qa_result": {"content": answer},
             "output": {
                 "type": "data_qa",
-                "content": answer,
+                "content": answer_text,
             },
         }
 
     graph = StateGraph(MainWorkflowState)
     graph.add_node("intake_flow", intake_graph)
     graph.add_node("general_question_terminal", general_question_terminal)
+    graph.add_node("clarification_terminal", clarification_terminal)
     graph.add_node("preprocess_flow", preprocess_graph)
     graph.add_node("analysis_flow", analysis_graph)
     graph.add_node("rag_flow", rag_graph)
@@ -251,7 +277,7 @@ def build_main_workflow(
             "guideline": "guideline_flow",
             "visualization": "visualization_flow",
             "merge_context": "merge_context",
-            "clarification": END,
+            "clarification": "clarification_terminal",
             "fail": END,
         },
     )
@@ -291,5 +317,6 @@ def build_main_workflow(
     graph.add_edge("report_flow", END)
     graph.add_edge("data_qa_terminal", END)
     graph.add_edge("general_question_terminal", END)
+    graph.add_edge("clarification_terminal", END)
 
     return graph.compile(checkpointer=checkpointer)

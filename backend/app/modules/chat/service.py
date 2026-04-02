@@ -59,7 +59,9 @@ class ChatService:
                 session_id=session_id_value,
                 run_id=run_id if isinstance(run_id, str) else None,
                 thought_steps=thought_steps if isinstance(thought_steps, list) else [],
-                pending_approval=pending_approval if isinstance(pending_approval, dict) else None,
+                pending_approval=(
+                    pending_approval if isinstance(pending_approval, dict) else None
+                ),
             )
 
         if done_payload is None:
@@ -73,7 +75,11 @@ class ChatService:
         return ChatResponse(
             answer=str(answer) if isinstance(answer, str) else "",
             session_id=session_id_value,
-            run_id=done_payload.get("run_id") if isinstance(done_payload.get("run_id"), str) else None,
+            run_id=(
+                done_payload.get("run_id")
+                if isinstance(done_payload.get("run_id"), str)
+                else None
+            ),
             thought_steps=thought_steps if isinstance(thought_steps, list) else [],
         )
 
@@ -86,7 +92,11 @@ class ChatService:
         source_id: Optional[str] = None,
     ) -> AsyncIterator[Dict[str, Any]]:
         session = self._get_or_create_session(session_id=session_id, title=question)
-        dataset = self.data_source_repository.get_by_source_id(source_id) if source_id else None
+        dataset = (
+            self.data_source_repository.get_by_source_id(source_id)
+            if source_id
+            else None
+        )
 
         self._append_message(session=session, role="user", content=question)
         run_id = uuid.uuid4().hex
@@ -171,7 +181,9 @@ class ChatService:
     def _get_session(self, session_id: int) -> Optional[ChatSession]:
         return self.repository.get_session(session_id)
 
-    def _get_or_create_session(self, *, session_id: int | None, title: str) -> ChatSession:
+    def _get_or_create_session(
+        self, *, session_id: int | None, title: str
+    ) -> ChatSession:
         session = self.repository.get_session(session_id) if session_id else None
         if session is None:
             session = self.repository.create_session(title=title[:60])
@@ -194,6 +206,7 @@ class ChatService:
         preprocess_result: Dict[str, Any] | None = None
         visualization_result: Dict[str, Any] | None = None
         output_type: str | None = None
+        output_payload: Dict[str, Any] | None = None
 
         async for event in agent_stream:
             event_type = event.get("type")
@@ -207,7 +220,9 @@ class ChatService:
                 if isinstance(pending_approval, dict):
                     final_steps = event.get("thought_steps")
                     if isinstance(final_steps, list):
-                        thought_steps = [step for step in final_steps if isinstance(step, dict)]
+                        thought_steps = [
+                            step for step in final_steps if isinstance(step, dict)
+                        ]
                     yield {
                         "event": "approval_required",
                         "data": {
@@ -229,7 +244,9 @@ class ChatService:
                     answer_parts = [final_answer]
                 final_steps = event.get("thought_steps")
                 if isinstance(final_steps, list):
-                    thought_steps = [step for step in final_steps if isinstance(step, dict)]
+                    thought_steps = [
+                        step for step in final_steps if isinstance(step, dict)
+                    ]
                 event_preprocess = event.get("preprocess_result")
                 if isinstance(event_preprocess, dict):
                     preprocess_result = event_preprocess
@@ -239,13 +256,18 @@ class ChatService:
                 event_output_type = event.get("output_type")
                 if isinstance(event_output_type, str) and event_output_type:
                     output_type = event_output_type
+                event_output = event.get("output")
+                if isinstance(event_output, dict):
+                    output_payload = event_output
 
         final_answer = "".join(answer_parts).strip()
         if not final_answer:
             final_answer = "응답을 생성하지 못했습니다."
 
         if append_assistant_message:
-            self._append_message(session=session, role="assistant", content=final_answer)
+            self._append_message(
+                session=session, role="assistant", content=final_answer
+            )
 
         done_data: Dict[str, Any] = {
             "answer": final_answer,
@@ -258,4 +280,6 @@ class ChatService:
             done_data["visualization_result"] = visualization_result
         if output_type:
             done_data["output_type"] = output_type
+        if isinstance(output_payload, dict):
+            done_data["output"] = output_payload
         yield {"event": "done", "data": done_data}

@@ -155,6 +155,7 @@ class VisualizationGraphState(AgentState, total=False):
     handoff: HandoffPayload
     preprocess_result: PreprocessResultPayload
     rag_result: RagResultPayload
+    analysis_plan: AnalysisPlan
     analysis_result: AnalysisExecutionResult
     guideline_result: GuidelineResultPayload
     insight: Dict[str, Any]
@@ -193,16 +194,9 @@ class MainWorkflowState(AgentState, total=False):
     guideline_result: GuidelineResultPayload
     insight: Dict[str, Any]
 
-    question_understanding: QuestionUnderstanding
-    column_grounding: ColumnGroundingResult
-    analysis_plan_draft: AnalysisPlanDraft
     analysis_plan: AnalysisPlan
-    generated_code: str
-    validated_code: str
-    sandbox_result: SandboxExecutionResult
     analysis_result: AnalysisExecutionResult
     analysis_error: AnalysisError
-    retry_count: int
     final_status: FinalStatus
 
     visualization_plan: Dict[str, Any]
@@ -211,7 +205,6 @@ class MainWorkflowState(AgentState, total=False):
     merged_context: Dict[str, Any]
     report_draft: Dict[str, Any]
     report_result: Dict[str, Any]
-    data_qa_result: Dict[str, Any]
 
     output: OutputPayload
 
