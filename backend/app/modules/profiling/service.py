@@ -171,12 +171,12 @@ class DatasetProfileService:
     ) -> ColumnProfileType:
         if self._is_boolean_column(series):
             return "boolean"
-        if self._is_identifier_column(column_name=column_name, series=series, row_count=row_count):
-            return "identifier"
         if self._is_datetime_column(series):
             return "datetime"
         if self._is_numeric_column(series):
             return "numerical"
+        if self._is_identifier_column(column_name=column_name, series=series, row_count=row_count):
+            return "identifier"
         if self._is_group_key_column(column_name=column_name, series=series, row_count=row_count):
             return "group_key"
         return "categorical"
@@ -235,6 +235,9 @@ class DatasetProfileService:
             return False
 
         unique_count = int(non_null.nunique(dropna=True))
+        if unique_count <= 1:
+            return False
+
         unique_ratio = DatasetProfileService._safe_ratio(unique_count, len(non_null))
         normalized_name = column_name.strip().lower()
         name_suggests_identifier = any(
