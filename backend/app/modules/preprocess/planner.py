@@ -174,7 +174,15 @@ def build_preprocess_review_payload(
 def _collect_affected_columns(operations: list[PreprocessOperation]) -> list[str]:
     columns: list[str] = []
     for operation in operations:
-        if operation.op in {"drop_missing", "impute", "drop_columns", "scale"}:
+        if operation.op in {
+            "drop_missing",
+            "impute",
+            "drop_columns",
+            "scale",
+            "parse_datetime",
+            "outlier",
+            "encode_categorical",
+        }:
             columns.extend(operation.columns)
         elif operation.op == "rename_columns":
             columns.extend(operation.rename_from)
