@@ -65,6 +65,7 @@ class DatasetProfileService:
             return DatasetProfile(source_id=source_id, available=False)
 
         sample_df = self.reader.read_csv(dataset.storage_path, nrows=sample_rows)
+        total_row_count = self._count_total_rows(dataset.storage_path)
         missing_rates = sample_df.isna().mean().round(3).to_dict()
         row_count = len(sample_df)
 
@@ -114,7 +115,7 @@ class DatasetProfileService:
         return DatasetProfile(
             source_id=source_id,
             available=True,
-            row_count=len(sample_df),
+            row_count=total_row_count,
             sample_row_count=min(len(sample_df), 3),
             column_count=len(sample_df.columns),
             columns=[str(column) for column in sample_df.columns.tolist()],
@@ -141,6 +142,18 @@ class DatasetProfileService:
             },
             column_profiles=column_profiles,
         )
+
+    @staticmethod
+    def _count_total_rows(storage_path: str, *, chunksize: int = 10000) -> int:
+        total_rows = 0
+        for chunk in pd.read_csv(
+            storage_path,
+            encoding="utf-8",
+            sep=",",
+            chunksize=chunksize,
+        ):
+            total_rows += len(chunk)
+        return total_rows
 
     @staticmethod
     def _build_sample_rows(df: pd.DataFrame, *, limit: int = 3) -> list[dict[str, object]]:
