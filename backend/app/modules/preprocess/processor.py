@@ -55,9 +55,11 @@ class PreprocessProcessor:
                     if column not in out.columns:
                         raise ValueError(f"Column not found: {column}")
                     if operation.method == "mean":
-                        out[column] = out[column].fillna(out[column].mean(numeric_only=True))
+                        fill_value = self._numeric_impute_value(out[column], method="mean", column=column)
+                        out[column] = out[column].fillna(fill_value)
                     elif operation.method == "median":
-                        out[column] = out[column].fillna(out[column].median(numeric_only=True))
+                        fill_value = self._numeric_impute_value(out[column], method="median", column=column)
+                        out[column] = out[column].fillna(fill_value)
                     elif operation.method == "mode":
                         mode_values = out[column].mode(dropna=True)
                         out[column] = out[column].fillna(
@@ -172,3 +174,22 @@ class PreprocessProcessor:
 
             raise ValueError(f"Unknown operation: {operation.op}")
         return out
+
+    @staticmethod
+    def _numeric_impute_value(series: pd.Series, *, method: str, column: str) -> float:
+        numeric_series = pd.to_numeric(series, errors="coerce")
+        if numeric_series.notna().sum() == 0:
+            raise ValueError(
+                f"impute.method '{method}' requires a numeric column: {column}"
+            )
+
+        if method == "mean":
+            value = numeric_series.mean()
+        else:
+            value = numeric_series.median()
+
+        if pd.isna(value):
+            raise ValueError(
+                f"impute.method '{method}' requires a numeric column: {column}"
+            )
+        return float(value)
