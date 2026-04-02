@@ -120,7 +120,6 @@ class EDAService:
             source_id=profile.source_id,
             column_count=profile.column_count,
             type_columns=profile.type_columns,
-            logical_types=profile.logical_types,
             columns=[
                 EDAColumnTypeItem(
                     column=column_profile.name,
@@ -203,11 +202,11 @@ class EDAService:
 
         numeric_columns = [column for column in profile.numeric_columns if column]
         if len(numeric_columns) < 2:
-            return EDACorrelationsResponse(source_id=source_id, pair_count=0, pairs=[])
+            return EDACorrelationsResponse(source_id=source_id, pairs=[])
 
         df = self.reader.read_csv(dataset.storage_path, usecols=numeric_columns)
         if df.empty:
-            return EDACorrelationsResponse(source_id=source_id, pair_count=0, pairs=[])
+            return EDACorrelationsResponse(source_id=source_id, pairs=[])
 
         numeric_df = df.apply(pd.to_numeric, errors="coerce")
         corr_matrix = numeric_df.corr(method="pearson", numeric_only=True)
@@ -234,7 +233,6 @@ class EDAService:
         pairs = [item for _, item in correlation_pairs[:limit]]
         return EDACorrelationsResponse(
             source_id=source_id,
-            pair_count=len(pairs),
             pairs=pairs,
         )
 

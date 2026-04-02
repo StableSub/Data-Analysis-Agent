@@ -54,7 +54,6 @@ class EDAColumnTypesResponse(BaseModel):
     source_id: str
     column_count: int = 0
     type_columns: dict[str, list[str]] = Field(default_factory=dict)
-    logical_types: dict[str, ColumnProfileType] = Field(default_factory=dict)
     columns: list[EDAColumnTypeItem] = Field(default_factory=list)
 
 
@@ -85,7 +84,6 @@ class EDACorrelationItem(BaseModel):
 
 class EDACorrelationsResponse(BaseModel):
     source_id: str
-    pair_count: int = 0
     pairs: list[EDACorrelationItem] = Field(default_factory=list)
 
 
