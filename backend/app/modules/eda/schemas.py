@@ -20,6 +20,23 @@ class EDASummaryResponse(BaseModel):
     columns: list[str] = Field(default_factory=list)
 
 
+class EDAQualityColumn(BaseModel):
+    column: str
+    inferred_type: ColumnProfileType
+    null_count: int = 0
+    null_ratio: float = Field(default=0.0, ge=0.0, le=1.0)
+
+
+class EDAQualityResponse(BaseModel):
+    source_id: str
+    row_count: int = 0
+    column_count: int = 0
+    missing_total: int = 0
+    missing_ratio: float = Field(default=0.0, ge=0.0, le=1.0)
+    top_missing_columns: list[EDAQualityColumn] = Field(default_factory=list)
+    columns: list[EDAQualityColumn] = Field(default_factory=list)
+
+
 class EDAProfileResponse(BaseModel):
     source_id: str
     available: bool

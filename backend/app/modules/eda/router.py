@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from .dependencies import get_eda_service
-from .schemas import EDAProfileResponse, EDASummaryResponse
+from .schemas import EDAProfileResponse, EDAQualityResponse, EDASummaryResponse
 from .service import EDAService
 
 router = APIRouter(prefix="/eda", tags=["eda"])
@@ -33,3 +33,17 @@ def get_eda_summary(
             detail="데이터셋을 찾을 수 없거나 요약을 생성할 수 없습니다.",
         )
     return summary
+
+
+@router.get("/{source_id}/quality", response_model=EDAQualityResponse)
+def get_eda_quality(
+    source_id: str,
+    service: EDAService = Depends(get_eda_service),
+):
+    quality = service.get_quality(source_id)
+    if quality is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="데이터셋을 찾을 수 없거나 품질 정보를 생성할 수 없습니다.",
+        )
+    return quality
