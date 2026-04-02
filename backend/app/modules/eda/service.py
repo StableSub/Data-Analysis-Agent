@@ -592,13 +592,17 @@ class EDAService:
         if payload is None:
             return None
 
-        summary_text = generate_eda_ai_summary(
+        summary_content = generate_eda_ai_summary(
             payload=payload,
             model_id=model_id,
             default_model=self.default_model,
         )
         return EDAAISummaryResponse(
             source_id=source_id,
-            summary=summary_text,
-            payload=payload,
+            structure_summary=str(summary_content.get("structure_summary", "")).strip(),
+            quality_issues=[str(item) for item in summary_content.get("quality_issues", [])],
+            key_insights=[str(item) for item in summary_content.get("key_insights", [])],
+            preprocess_recommendations=[
+                str(item) for item in summary_content.get("preprocess_recommendations", [])
+            ],
         )

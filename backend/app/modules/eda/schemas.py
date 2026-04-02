@@ -146,8 +146,10 @@ class EDAPreprocessRecommendationsResponse(BaseModel):
 
 class EDAAISummaryResponse(BaseModel):
     source_id: str
-    summary: str
-    payload: dict[str, object] = Field(default_factory=dict)
+    structure_summary: str = ""
+    quality_issues: list[str] = Field(default_factory=list)
+    key_insights: list[str] = Field(default_factory=list)
+    preprocess_recommendations: list[str] = Field(default_factory=list)
 
 
 class EDAProfileResponse(BaseModel):
