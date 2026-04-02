@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from .dependencies import get_eda_service
 from .schemas import (
     EDAColumnTypesResponse,
     EDACorrelationsResponse,
+    EDADistributionResponse,
     EDAOutliersResponse,
     EDAProfileResponse,
     EDAQualityResponse,
@@ -111,3 +112,25 @@ def get_eda_outliers(
             detail="데이터셋을 찾을 수 없거나 이상치 정보를 생성할 수 없습니다.",
         )
     return outliers
+
+
+@router.get("/{source_id}/distribution", response_model=EDADistributionResponse)
+def get_eda_distribution(
+    source_id: str,
+    column: str = Query(..., description="분포를 조회할 컬럼명"),
+    bins: int = Query(10, ge=1, le=50, description="히스토그램 bin 개수"),
+    top_n: int = Query(10, ge=1, le=20, description="범주형 상위 노출 개수"),
+    service: EDAService = Depends(get_eda_service),
+):
+    distribution = service.get_distribution(
+        source_id,
+        column=column,
+        bins=bins,
+        top_n=top_n,
+    )
+    if distribution is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="데이터셋 또는 컬럼을 찾을 수 없거나 분포 데이터를 생성할 수 없습니다.",
+        )
+    return distribution

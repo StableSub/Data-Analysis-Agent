@@ -104,6 +104,22 @@ class EDAOutliersResponse(BaseModel):
     columns: list[EDAOutlierColumn] = Field(default_factory=list)
 
 
+class EDADistributionBin(BaseModel):
+    label: str
+    value: int
+    lower: float | None = None
+    upper: float | None = None
+
+
+class EDADistributionResponse(BaseModel):
+    source_id: str
+    column: str
+    inferred_type: ColumnProfileType
+    chart_type: str
+    total_count: int = 0
+    bins: list[EDADistributionBin] = Field(default_factory=list)
+
+
 class EDAProfileResponse(BaseModel):
     source_id: str
     available: bool

@@ -7,6 +7,8 @@ from .schemas import (
     EDAColumnTypesResponse,
     EDACorrelationItem,
     EDACorrelationsResponse,
+    EDADistributionBin,
+    EDADistributionResponse,
     EDAOutlierColumn,
     EDAOutliersResponse,
     EDAProfileResponse,
@@ -26,6 +28,16 @@ def _safe_float(value: object, ndigits: int = 4) -> float | None:
     if pd.isna(value):
         return None
     return round(float(value), ndigits)
+
+
+def _serialize_label_value(value: object) -> str:
+    if pd.isna(value):
+        return "null"
+    if isinstance(value, pd.Timestamp):
+        return value.isoformat()
+    if hasattr(value, "item"):
+        value = value.item()
+    return str(value)
 
 
 class EDAService:
@@ -281,4 +293,112 @@ class EDAService:
             source_id=source_id,
             numeric_column_count=len(numeric_columns),
             columns=outlier_columns,
+        )
+
+    def get_distribution(
+        self,
+        source_id: str,
+        *,
+        column: str,
+        bins: int = 10,
+        top_n: int = 10,
+    ) -> EDADistributionResponse | None:
+        profile = self.profile_service.build_profile(source_id)
+        if not profile.available or column not in profile.columns:
+            return None
+
+        dataset = self.dataset_repository.get_by_source_id(source_id)
+        if dataset is None or not dataset.storage_path:
+            return None
+
+        file_path = Path(dataset.storage_path)
+        if not file_path.exists() or not file_path.is_file():
+            return None
+
+        inferred_type = profile.logical_types.get(column)
+        if inferred_type is None or inferred_type == "identifier":
+            return None
+
+        df = self.reader.read_csv(dataset.storage_path, usecols=[column])
+        if df.empty:
+            return EDADistributionResponse(
+                source_id=source_id,
+                column=column,
+                inferred_type=inferred_type,
+                chart_type="histogram" if inferred_type == "numerical" else "bar",
+                total_count=0,
+                bins=[],
+            )
+
+        series = df[column]
+        if inferred_type == "numerical":
+            numeric_series = pd.to_numeric(series, errors="coerce").dropna()
+            if numeric_series.empty:
+                return EDADistributionResponse(
+                    source_id=source_id,
+                    column=column,
+                    inferred_type=inferred_type,
+                    chart_type="histogram",
+                    total_count=0,
+                    bins=[],
+                )
+
+            if numeric_series.nunique() == 1:
+                value = float(numeric_series.iloc[0])
+                distribution_bins = [
+                    EDADistributionBin(
+                        label=str(_safe_float(value)),
+                        value=int(len(numeric_series)),
+                        lower=_safe_float(value),
+                        upper=_safe_float(value),
+                    )
+                ]
+            else:
+                cut_result, edges = pd.cut(
+                    numeric_series,
+                    bins=max(1, bins),
+                    include_lowest=True,
+                    retbins=True,
+                    duplicates="drop",
+                )
+                bin_counts = cut_result.value_counts(sort=False)
+                distribution_bins = []
+                for interval, count in bin_counts.items():
+                    if pd.isna(interval):
+                        continue
+                    distribution_bins.append(
+                        EDADistributionBin(
+                            label=str(interval),
+                            value=int(count),
+                            lower=_safe_float(interval.left),
+                            upper=_safe_float(interval.right),
+                        )
+                    )
+
+            return EDADistributionResponse(
+                source_id=source_id,
+                column=column,
+                inferred_type=inferred_type,
+                chart_type="histogram",
+                total_count=int(len(numeric_series)),
+                bins=distribution_bins,
+            )
+
+        value_counts = (
+            series.fillna("null")
+            .map(_serialize_label_value)
+            .value_counts(dropna=False)
+            .head(max(1, top_n))
+        )
+        distribution_bins = [
+            EDADistributionBin(label=str(label), value=int(count))
+            for label, count in value_counts.items()
+        ]
+        return EDADistributionResponse(
+            source_id=source_id,
+            column=column,
+            inferred_type=inferred_type,
+            chart_type="bar",
+            total_count=int(series.notna().sum()),
+            bins=distribution_bins,
         )
