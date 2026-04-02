@@ -2,6 +2,24 @@ from ..profiling.schemas import ColumnProfile, ColumnProfileType
 from pydantic import BaseModel, Field
 
 
+class EDASummaryCounts(BaseModel):
+    numerical: int = 0
+    categorical: int = 0
+    datetime: int = 0
+    boolean: int = 0
+    identifier: int = 0
+    group_key: int = 0
+
+
+class EDASummaryResponse(BaseModel):
+    source_id: str
+    row_count: int = 0
+    column_count: int = 0
+    sample_row_count: int = 0
+    type_counts: EDASummaryCounts = Field(default_factory=EDASummaryCounts)
+    columns: list[str] = Field(default_factory=list)
+
+
 class EDAProfileResponse(BaseModel):
     source_id: str
     available: bool
