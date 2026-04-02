@@ -65,8 +65,14 @@ class DatasetProfileService:
             return DatasetProfile(source_id=source_id, available=False)
 
         sample_df = self.reader.read_csv(dataset.storage_path, nrows=sample_rows)
-        total_row_count = self._count_total_rows(dataset.storage_path)
-        missing_rates = sample_df.isna().mean().round(3).to_dict()
+        (
+            total_row_count,
+            full_missing_counts,
+            missing_rates,
+        ) = self._compute_missing_statistics(
+            dataset.storage_path,
+            columns=[str(column) for column in sample_df.columns.tolist()],
+        )
         row_count = len(sample_df)
 
         numeric_columns: list[str] = []
@@ -104,7 +110,7 @@ class DatasetProfileService:
                     name=column_name,
                     raw_dtype=str(series.dtype),
                     inferred_type=inferred_type,
-                    null_count=int(series.isna().sum()),
+                    null_count=int(full_missing_counts.get(column_name, 0)),
                     missing_rate=float(missing_rates.get(column, 0.0)),
                     unique_count=unique_count,
                     unique_ratio=self._safe_ratio(unique_count, len(non_null_series)),
@@ -144,16 +150,34 @@ class DatasetProfileService:
         )
 
     @staticmethod
-    def _count_total_rows(storage_path: str, *, chunksize: int = 10000) -> int:
+    def _compute_missing_statistics(
+        storage_path: str,
+        *,
+        columns: list[str],
+        chunksize: int = 10000,
+    ) -> tuple[int, dict[str, int], dict[str, float]]:
+        if not columns:
+            return 0, {}, {}
+
         total_rows = 0
+        missing_counts = {column: 0 for column in columns}
         for chunk in pd.read_csv(
             storage_path,
             encoding="utf-8",
             sep=",",
             chunksize=chunksize,
+            usecols=columns,
         ):
             total_rows += len(chunk)
-        return total_rows
+            null_counts = chunk.isna().sum()
+            for column in columns:
+                missing_counts[column] += int(null_counts.get(column, 0))
+
+        missing_rates = {
+            column: round(float(count) / float(total_rows), 3) if total_rows > 0 else 0.0
+            for column, count in missing_counts.items()
+        }
+        return total_rows, missing_counts, missing_rates
 
     @staticmethod
     def _build_sample_rows(df: pd.DataFrame, *, limit: int = 3) -> list[dict[str, object]]:
