@@ -7,6 +7,8 @@ from .schemas import (
     EDAColumnTypesResponse,
     EDACorrelationItem,
     EDACorrelationsResponse,
+    EDAOutlierColumn,
+    EDAOutliersResponse,
     EDAProfileResponse,
     EDAQualityColumn,
     EDAQualityResponse,
@@ -220,4 +222,63 @@ class EDAService:
             source_id=source_id,
             pair_count=len(pairs),
             pairs=pairs,
+        )
+
+    def get_outliers(self, source_id: str) -> EDAOutliersResponse | None:
+        profile = self.profile_service.build_profile(source_id)
+        if not profile.available:
+            return None
+
+        dataset = self.dataset_repository.get_by_source_id(source_id)
+        if dataset is None or not dataset.storage_path:
+            return None
+
+        file_path = Path(dataset.storage_path)
+        if not file_path.exists() or not file_path.is_file():
+            return None
+
+        numeric_columns = [column for column in profile.numeric_columns if column]
+        if not numeric_columns:
+            return EDAOutliersResponse(source_id=source_id, numeric_column_count=0, columns=[])
+
+        df = self.reader.read_csv(dataset.storage_path, usecols=numeric_columns)
+        if df.empty:
+            return EDAOutliersResponse(source_id=source_id, numeric_column_count=0, columns=[])
+
+        outlier_columns: list[EDAOutlierColumn] = []
+        for column in numeric_columns:
+            series = pd.to_numeric(df[column], errors="coerce").dropna()
+            if series.empty:
+                outlier_columns.append(EDAOutlierColumn(column=column))
+                continue
+
+            q1 = series.quantile(0.25)
+            q3 = series.quantile(0.75)
+            iqr = q3 - q1
+            lower_bound = q1 - 1.5 * iqr
+            upper_bound = q3 + 1.5 * iqr
+            outlier_mask = (series < lower_bound) | (series > upper_bound)
+            outlier_count = int(outlier_mask.sum())
+            outlier_ratio = round(float(outlier_count) / float(len(series)), 4) if len(series) else 0.0
+            outlier_columns.append(
+                EDAOutlierColumn(
+                    column=column,
+                    outlier_count=outlier_count,
+                    outlier_ratio=outlier_ratio,
+                    q1=_safe_float(q1),
+                    q3=_safe_float(q3),
+                    iqr=_safe_float(iqr),
+                    lower_bound=_safe_float(lower_bound),
+                    upper_bound=_safe_float(upper_bound),
+                )
+            )
+
+        outlier_columns.sort(
+            key=lambda item: (item.outlier_count, item.outlier_ratio),
+            reverse=True,
+        )
+        return EDAOutliersResponse(
+            source_id=source_id,
+            numeric_column_count=len(numeric_columns),
+            columns=outlier_columns,
         )

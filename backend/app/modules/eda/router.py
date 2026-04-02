@@ -4,6 +4,7 @@ from .dependencies import get_eda_service
 from .schemas import (
     EDAColumnTypesResponse,
     EDACorrelationsResponse,
+    EDAOutliersResponse,
     EDAProfileResponse,
     EDAQualityResponse,
     EDAStatsResponse,
@@ -96,3 +97,17 @@ def get_eda_top_correlations(
             detail="데이터셋을 찾을 수 없거나 상관관계를 생성할 수 없습니다.",
         )
     return correlations
+
+
+@router.get("/{source_id}/outliers", response_model=EDAOutliersResponse)
+def get_eda_outliers(
+    source_id: str,
+    service: EDAService = Depends(get_eda_service),
+):
+    outliers = service.get_outliers(source_id)
+    if outliers is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="데이터셋을 찾을 수 없거나 이상치 정보를 생성할 수 없습니다.",
+        )
+    return outliers

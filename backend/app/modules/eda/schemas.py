@@ -87,6 +87,23 @@ class EDACorrelationsResponse(BaseModel):
     pairs: list[EDACorrelationItem] = Field(default_factory=list)
 
 
+class EDAOutlierColumn(BaseModel):
+    column: str
+    outlier_count: int = 0
+    outlier_ratio: float = Field(default=0.0, ge=0.0, le=1.0)
+    q1: float | None = None
+    q3: float | None = None
+    iqr: float | None = None
+    lower_bound: float | None = None
+    upper_bound: float | None = None
+
+
+class EDAOutliersResponse(BaseModel):
+    source_id: str
+    numeric_column_count: int = 0
+    columns: list[EDAOutlierColumn] = Field(default_factory=list)
+
+
 class EDAProfileResponse(BaseModel):
     source_id: str
     available: bool
