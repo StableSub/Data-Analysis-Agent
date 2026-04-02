@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 from typing import Any, Dict
 
 from langgraph.graph import END, START, StateGraph
@@ -20,8 +19,6 @@ from backend.app.orchestration.utils import resolve_target_source_id
 MAX_SAMPLE_ROWS = 2000
 MAX_POINTS = 120
 
-logger = logging.getLogger(__name__)
-
 
 def build_visualization_workflow(
     *,
@@ -32,12 +29,6 @@ def build_visualization_workflow(
         analysis_result = state.get("analysis_result")
         analysis_plan = state.get("analysis_plan")
         source_id = resolve_target_source_id(state)
-        logger.warning(
-            "visualization_planner_node:start source_id=%r has_analysis_result=%r has_analysis_plan=%r",
-            source_id,
-            bool(analysis_result),
-            bool(analysis_plan),
-        )
         if analysis_result and analysis_plan:
             build_method = getattr(
                 visualization_service, "build_from_analysis_result", None
@@ -47,12 +38,6 @@ def build_visualization_workflow(
                     source_id=source_id or "",
                     analysis_plan=analysis_plan,
                     analysis_result=analysis_result,
-                )
-                logger.warning(
-                    "visualization_planner_node:end status=%r summary=%r chart=%r",
-                    visualization_result.get("status"),
-                    visualization_result.get("summary"),
-                    visualization_result.get("chart_data") or visualization_result.get("chart"),
                 )
                 return {
                     "visualization_plan": {
@@ -71,13 +56,6 @@ def build_visualization_workflow(
             default_model=default_model,
             visualization_service=visualization_service,
             max_sample_rows=MAX_SAMPLE_ROWS,
-        )
-        logger.warning(
-            "visualization_planner_node:end planned status=%r chart_type=%r x_key=%r y_key=%r",
-            plan.status,
-            plan.chart_type,
-            plan.x_key,
-            plan.y_key,
         )
         return {"visualization_plan": plan.model_dump()}
 
