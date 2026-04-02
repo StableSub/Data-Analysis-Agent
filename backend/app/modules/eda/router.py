@@ -166,8 +166,8 @@ def get_eda_preprocess_recommendations(
     return recommendations
 
 
-@router.get("/{source_id}/ai-summary", response_model=EDAAISummaryResponse)
-def get_eda_ai_summary(
+@router.get("/{source_id}/insights", response_model=EDAAISummaryResponse)
+def get_eda_insights(
     source_id: str,
     model_id: str | None = Query(default=None, description="Optional model override"),
     service: EDAService = Depends(get_eda_service),
