@@ -194,7 +194,12 @@ class PreprocessProcessor:
 
     @staticmethod
     def _numeric_series_or_raise(series: pd.Series, *, operation: str, column: str) -> pd.Series:
+        non_null = series.dropna()
+        if non_null.empty:
+            raise ValueError(f"{operation} requires a numeric column: {column}")
+
         numeric_series = pd.to_numeric(series, errors="coerce")
-        if numeric_series.notna().sum() == 0:
+        numeric_ratio = float(numeric_series.dropna().shape[0]) / float(non_null.shape[0])
+        if numeric_ratio < 0.98:
             raise ValueError(f"{operation} requires a numeric column: {column}")
         return numeric_series
