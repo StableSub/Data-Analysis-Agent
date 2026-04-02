@@ -400,7 +400,7 @@ class EDAService:
                 column=column,
                 inferred_type=inferred_type,
                 chart_type="histogram",
-                total_count=int(len(numeric_series)),
+                total_count=sum(item.value for item in distribution_bins),
                 bins=distribution_bins,
             )
 
@@ -419,7 +419,7 @@ class EDAService:
             column=column,
             inferred_type=inferred_type,
             chart_type="bar",
-            total_count=int(series.notna().sum()),
+            total_count=sum(item.value for item in distribution_bins),
             bins=distribution_bins,
         )
 
