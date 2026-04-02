@@ -5,6 +5,7 @@ from .schemas import (
     EDAColumnTypesResponse,
     EDAProfileResponse,
     EDAQualityResponse,
+    EDAStatsResponse,
     EDASummaryResponse,
 )
 from .service import EDAService
@@ -66,3 +67,17 @@ def get_eda_column_types(
             detail="데이터셋을 찾을 수 없거나 컬럼 타입 정보를 생성할 수 없습니다.",
         )
     return column_types
+
+
+@router.get("/{source_id}/stats", response_model=EDAStatsResponse)
+def get_eda_stats(
+    source_id: str,
+    service: EDAService = Depends(get_eda_service),
+):
+    stats = service.get_stats(source_id)
+    if stats is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="데이터셋을 찾을 수 없거나 기본 통계를 생성할 수 없습니다.",
+        )
+    return stats

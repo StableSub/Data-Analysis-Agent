@@ -56,6 +56,25 @@ class EDAColumnTypesResponse(BaseModel):
     columns: list[EDAColumnTypeItem] = Field(default_factory=list)
 
 
+class EDAStatsColumn(BaseModel):
+    column: str
+    mean: float | None = None
+    min: float | None = None
+    max: float | None = None
+    median: float | None = None
+    std: float | None = None
+    q1: float | None = None
+    q3: float | None = None
+
+
+class EDAStatsResponse(BaseModel):
+    source_id: str
+    row_count: int = 0
+    column_count: int = 0
+    numeric_column_count: int = 0
+    columns: list[EDAStatsColumn] = Field(default_factory=list)
+
+
 class EDAProfileResponse(BaseModel):
     source_id: str
     available: bool
