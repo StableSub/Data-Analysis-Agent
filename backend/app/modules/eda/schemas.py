@@ -1,3 +1,5 @@
+from typing import Literal
+
 from ..profiling.schemas import ColumnProfile, ColumnProfileType
 from pydantic import BaseModel, Field
 
@@ -118,6 +120,30 @@ class EDADistributionResponse(BaseModel):
     chart_type: str
     total_count: int = 0
     bins: list[EDADistributionBin] = Field(default_factory=list)
+
+
+EDARecommendationType = Literal[
+    "drop_column_candidate",
+    "impute_missing",
+    "handle_outliers",
+    "exclude_identifier",
+    "parse_datetime",
+]
+EDARecommendationPriority = Literal["high", "medium", "low"]
+
+
+class EDAPreprocessRecommendation(BaseModel):
+    column: str
+    recommendation_type: EDARecommendationType
+    priority: EDARecommendationPriority
+    reason: str
+    suggested_operation: dict[str, object] = Field(default_factory=dict)
+
+
+class EDAPreprocessRecommendationsResponse(BaseModel):
+    source_id: str
+    recommendation_count: int = 0
+    recommendations: list[EDAPreprocessRecommendation] = Field(default_factory=list)
 
 
 class EDAProfileResponse(BaseModel):

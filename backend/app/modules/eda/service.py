@@ -9,6 +9,8 @@ from .schemas import (
     EDACorrelationsResponse,
     EDADistributionBin,
     EDADistributionResponse,
+    EDAPreprocessRecommendation,
+    EDAPreprocessRecommendationsResponse,
     EDAOutlierColumn,
     EDAOutliersResponse,
     EDAProfileResponse,
@@ -401,4 +403,122 @@ class EDAService:
             chart_type="bar",
             total_count=int(series.notna().sum()),
             bins=distribution_bins,
+        )
+
+    def get_preprocess_recommendations(
+        self,
+        source_id: str,
+    ) -> EDAPreprocessRecommendationsResponse | None:
+        profile = self.profile_service.build_profile(source_id)
+        if not profile.available:
+            return None
+
+        quality = self.get_quality(source_id)
+        outliers = self.get_outliers(source_id)
+        if quality is None or outliers is None:
+            return None
+
+        outlier_map = {item.column: item for item in outliers.columns}
+        recommendations: list[EDAPreprocessRecommendation] = []
+        dropped_columns: set[str] = set()
+
+        for column in profile.identifier_columns:
+            recommendations.append(
+                EDAPreprocessRecommendation(
+                    column=column,
+                    recommendation_type="exclude_identifier",
+                    priority="medium",
+                    reason="거의 유일값으로 구성된 식별자 컬럼으로 분석 대상에서 제외하는 것이 좋습니다.",
+                    suggested_operation={"op": "drop_columns", "columns": [column]},
+                )
+            )
+
+        for column in profile.datetime_columns:
+            recommendations.append(
+                EDAPreprocessRecommendation(
+                    column=column,
+                    recommendation_type="parse_datetime",
+                    priority="medium",
+                    reason="날짜/시간 컬럼으로 분류되어 전처리 단계에서 datetime 파싱을 권장합니다.",
+                    suggested_operation={"op": "parse_datetime", "columns": [column], "format": None},
+                )
+            )
+
+        for column_profile in profile.column_profiles:
+            column = column_profile.name
+            null_ratio = column_profile.missing_rate
+            inferred_type = column_profile.inferred_type
+
+            if null_ratio >= 0.7:
+                dropped_columns.add(column)
+                recommendations.append(
+                    EDAPreprocessRecommendation(
+                        column=column,
+                        recommendation_type="drop_column_candidate",
+                        priority="high",
+                        reason=f"결측 비율이 {null_ratio:.1%}로 매우 높아 컬럼 삭제를 우선 검토하는 것이 좋습니다.",
+                        suggested_operation={"op": "drop_columns", "columns": [column]},
+                    )
+                )
+                continue
+
+            if null_ratio <= 0:
+                continue
+
+            if inferred_type == "numerical":
+                recommendations.append(
+                    EDAPreprocessRecommendation(
+                        column=column,
+                        recommendation_type="impute_missing",
+                        priority="medium",
+                        reason=f"수치형 컬럼이며 결측 비율이 {null_ratio:.1%}이므로 중앙값 대체를 추천합니다.",
+                        suggested_operation={"op": "impute", "columns": [column], "method": "median"},
+                    )
+                )
+            elif inferred_type in {"categorical", "boolean", "group_key"}:
+                recommendations.append(
+                    EDAPreprocessRecommendation(
+                        column=column,
+                        recommendation_type="impute_missing",
+                        priority="medium",
+                        reason=f"범주형 성격의 컬럼이며 결측 비율이 {null_ratio:.1%}이므로 최빈값 대체를 추천합니다.",
+                        suggested_operation={"op": "impute", "columns": [column], "method": "mode"},
+                    )
+                )
+
+        for column, outlier_info in outlier_map.items():
+            if column in dropped_columns:
+                continue
+            if outlier_info.outlier_ratio < 0.05:
+                continue
+            recommendations.append(
+                EDAPreprocessRecommendation(
+                    column=column,
+                    recommendation_type="handle_outliers",
+                    priority="medium",
+                    reason=(
+                        f"IQR 기준 이상치 비율이 {outlier_info.outlier_ratio:.1%}로 높아 "
+                        "클리핑 또는 제거를 검토하는 것이 좋습니다."
+                    ),
+                    suggested_operation={
+                        "op": "outlier",
+                        "columns": [column],
+                        "method": "iqr",
+                        "strategy": "clip",
+                        "iqr_multiplier": 1.5,
+                    },
+                )
+            )
+
+        recommendations.sort(
+            key=lambda item: (
+                {"high": 0, "medium": 1, "low": 2}[item.priority],
+                item.column,
+                item.recommendation_type,
+            )
+        )
+        return EDAPreprocessRecommendationsResponse(
+            source_id=source_id,
+            recommendation_count=len(recommendations),
+            recommendations=recommendations,
         )

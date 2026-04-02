@@ -5,6 +5,7 @@ from .schemas import (
     EDAColumnTypesResponse,
     EDACorrelationsResponse,
     EDADistributionResponse,
+    EDAPreprocessRecommendationsResponse,
     EDAOutliersResponse,
     EDAProfileResponse,
     EDAQualityResponse,
@@ -134,3 +135,20 @@ def get_eda_distribution(
             detail="데이터셋 또는 컬럼을 찾을 수 없거나 분포 데이터를 생성할 수 없습니다.",
         )
     return distribution
+
+
+@router.get(
+    "/{source_id}/preprocess-recommendations",
+    response_model=EDAPreprocessRecommendationsResponse,
+)
+def get_eda_preprocess_recommendations(
+    source_id: str,
+    service: EDAService = Depends(get_eda_service),
+):
+    recommendations = service.get_preprocess_recommendations(source_id)
+    if recommendations is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="데이터셋을 찾을 수 없거나 전처리 추천을 생성할 수 없습니다.",
+        )
+    return recommendations
