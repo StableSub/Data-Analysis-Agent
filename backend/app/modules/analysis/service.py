@@ -49,28 +49,37 @@ class AnalysisService:
         self.visualization_service = visualization_service
         self.max_retries = max_retries
 
+    # dataset 샘플을 읽어 컬럼/타입 기준의 MetadataSnapshot을 만든다.
     def build_dataset_metadata(self, source_id: str) -> MetadataSnapshot:
         dataset = self._get_dataset(source_id)
         if dataset is None:
             raise FileNotFoundError(f"dataset not found: {source_id}")
 
         sample_df = self.dataset_reader.read_csv(dataset.storage_path, nrows=2000)
-        numeric_columns = [str(column) for column in sample_df.select_dtypes(include="number").columns.tolist()]
+        numeric_columns = [
+            str(column)
+            for column in sample_df.select_dtypes(include="number").columns.tolist()
+        ]
         datetime_columns = self._infer_datetime_columns(sample_df, numeric_columns)
         categorical_columns = [
             str(column)
             for column in sample_df.columns
-            if str(column) not in numeric_columns and str(column) not in datetime_columns
+            if str(column) not in numeric_columns
+            and str(column) not in datetime_columns
         ]
         return MetadataSnapshot(
             columns=[str(column) for column in sample_df.columns.tolist()],
-            dtypes={str(column): str(dtype) for column, dtype in sample_df.dtypes.items()},
+            dtypes={
+                str(column): str(dtype) for column, dtype in sample_df.dtypes.items()
+            },
             numeric_columns=numeric_columns,
             datetime_columns=datetime_columns,
             categorical_columns=categorical_columns,
             row_count=len(sample_df),
         )
 
+    # analysis 전체 상위 흐름을 조합한다.
+    # 질문 해석, plan 생성/검증, 코드 생성/실행, 시각화 연계를 순서대로 수행한다.
     def run(
         self,
         *,
@@ -94,7 +103,6 @@ class AnalysisService:
                 question_understanding=question_understanding,
                 dataset_meta=dataset_meta,
             )
-
         column_grounding = self.processor.ground_columns(
             question_understanding=question_understanding,
             dataset_meta=dataset_meta,
@@ -189,6 +197,7 @@ class AnalysisService:
             "visualization_output": visualization_output,
         }
 
+    # 코드 생성 -> 코드 검증 -> snadbox 실행 -> 결과 검증을 수행하고 실패 시 제한된 횟수만큼 code repair를 재시도한다.
     def _run_code_generation_loop(
         self,
         *,
@@ -206,15 +215,16 @@ class AnalysisService:
             error_stage="code_generation",
             error_message="analysis execution did not start",
         )
-
         for attempt in range(self.max_retries + 1):
             try:
+                # 첫 시도에서는 plan 기반으로 신규 분석 코드를 생성한다.
                 if attempt == 0:
                     generated_code = self.run_service.generate_analysis_code(
                         question=question,
                         analysis_plan=analysis_plan,
                         model_id=model_id,
                     )
+                # 실패 이후에는 이전 코드와 에러를 반영해 코드만 수정한다.
                 else:
                     generated_code = self.run_service.repair_analysis_code(
                         question=question,
@@ -223,7 +233,6 @@ class AnalysisService:
                         analysis_error=analysis_error,
                         model_id=model_id,
                     )
-
                 validated_code = self.processor.validate_generated_code(
                     generated_code=generated_code,
                     analysis_plan=analysis_plan,
@@ -273,6 +282,7 @@ class AnalysisService:
             "final_status": "fail",
         }
 
+    # 질문이나 plan 초안이 모호할 때 needs_clarification 응답 payload를 만든다.
     def _build_clarification_response(
         self,
         *,
@@ -296,6 +306,7 @@ class AnalysisService:
             "visualization_output": None,
         }
 
+    # analysis 결과를 visualization 입력으로 넘겨 후처리 결과를 만든다.
     def _build_visualization_output(
         self,
         *,
@@ -305,7 +316,9 @@ class AnalysisService:
     ) -> Any | None:
         if self.visualization_service is None:
             return None
-        build_method = getattr(self.visualization_service, "build_from_analysis_result", None)
+        build_method = getattr(
+            self.visualization_service, "build_from_analysis_result", None
+        )
         if callable(build_method):
             return build_method(
                 source_id=source_id,
@@ -314,6 +327,7 @@ class AnalysisService:
             )
         return None
 
+    # 결과 저장소가 준비되어 있으면 analysis 결과를 저장하고 result id를 반환한다.
     def _persist_result(
         self,
         *,
@@ -342,7 +356,7 @@ class AnalysisService:
         db = getattr(self.results_repository, "db", None)
         if db is None:
             return None
-
+        # 최소 실행 결과를 JSON 형태로 저장한다.
         record = AnalysisResultModel(
             id=str(uuid.uuid4()),
             data_json={

@@ -23,7 +23,7 @@ from .schemas import (
     VisualizationHint,
 )
 
-_ALLOWED_IMPORT_ROOTS = {"json", "math", "statistics", "pandas", "numpy"}
+_ALLOWED_IMPORT_ROOTS = {"json", "math", "statistics", "datetime", "pandas", "numpy"}
 _FORBIDDEN_CALLS = {
     "open",
     "exec",
@@ -44,9 +44,11 @@ _TIME_AXIS_BY_GRAIN = {
 _IDENTIFIER_RE = re.compile(r"[^a-zA-Z0-9_]+")
 
 
+# 분석 계획과 실행 결과를 검증 및 정규화
 class AnalysisProcessor:
     """Analysis deterministic validation and normalization layer."""
 
+    # 질문에서 추출한 용어를 실제 데이터셋 컬럼명에 연결한다.
     def ground_columns(
         self,
         question_understanding: QuestionUnderstanding | dict[str, Any],
@@ -58,12 +60,14 @@ class AnalysisProcessor:
         resolved: dict[str, str] = {}
         unresolved: list[str] = []
 
+        # metric/group/filter/time 관련 용어를 컬럼 후보로 수집한다.
         terms = list(understanding.metric_keywords) + list(understanding.group_keywords)
         if understanding.time_context and understanding.time_context.time_column:
             terms.append(understanding.time_context.time_column)
         for condition in understanding.filter_conditions:
             terms.append(condition.column)
 
+        # 질문 용어와 실제 컬럼명을 가능한 범위에서 매칭한다.
         seen: set[str] = set()
         for term in terms:
             cleaned = str(term or "").strip()
@@ -76,6 +80,7 @@ class AnalysisProcessor:
             else:
                 unresolved.append(cleaned)
 
+        # 시간 컬럼이 명시되지 않았다면 기본 datetime 컬럼을 보완한다.
         if understanding.time_context and not understanding.time_context.time_column:
             default_time = self._resolve_default_time_column(metadata)
             if default_time:
@@ -90,6 +95,7 @@ class AnalysisProcessor:
             confidence=confidence,
         )
 
+    # LLM이 생성한 초안을 검증하여 실행 가능한 최종 AnalysisPlan으로 변환한다.
     def validate_and_finalize_plan(
         self,
         plan_draft: AnalysisPlanDraft | dict[str, Any],
@@ -101,13 +107,16 @@ class AnalysisProcessor:
         grounding = self._ensure_column_grounding(column_grounding)
 
         if draft.ambiguity_status != "clear":
-            raise ValueError(draft.clarification_message or "analysis plan draft is ambiguous")
+            raise ValueError(
+                draft.clarification_message or "analysis plan draft is ambiguous"
+            )
         if not draft.metrics:
             raise ValueError("analysis plan draft requires at least one metric")
 
         resolved_columns = grounding.resolved_columns if grounding else {}
         derived_names = {column.name for column in draft.derived_columns}
 
+        # 필터, 그룹, metric, 시간 조건을 각각 정규화한다.
         filters = [
             self._normalize_filter(condition, metadata, resolved_columns, derived_names)
             for condition in draft.filters
@@ -134,12 +143,20 @@ class AnalysisProcessor:
             resolved_columns,
         )
 
+        visualization_hint = self._build_visualization_hint(
+            draft=draft,
+            group_by=group_by,
+            metrics=metrics,
+            time_context=time_context,
+        )
+        # 분석 수행에 필요한 필수 컬럼과 기대 출력 형식을 계산한다.
         required_columns = self._build_required_columns(
             filters=filters,
             group_by=group_by,
             metrics=metrics,
             derived_columns=derived_columns,
             time_context=time_context,
+            visualization_hint=visualization_hint,
             derived_names=derived_names,
         )
         if not required_columns:
@@ -150,14 +167,10 @@ class AnalysisProcessor:
             group_by=group_by,
             metrics=metrics,
             time_context=time_context,
-        )
-        visualization_hint = self._build_visualization_hint(
-            draft=draft,
-            group_by=group_by,
-            metrics=metrics,
-            time_context=time_context,
+            visualization_hint=visualization_hint,
         )
 
+        # 최종 AnalysisPlan 반환
         return AnalysisPlan(
             analysis_type=draft.analysis_type,
             objective=draft.objective,
@@ -176,6 +189,7 @@ class AnalysisProcessor:
             codegen_strategy="llm_codegen",
         )
 
+    # 생성된 코드가 안전하고 실행 계약에 맞는지 사전 검사한다.
     def validate_generated_code(
         self,
         generated_code: str,
@@ -193,6 +207,7 @@ class AnalysisProcessor:
 
         has_print = False
         for node in ast.walk(tree):
+            # 허용되지 않은 import와 위험한 함수 호출을 차단한다.
             if isinstance(node, ast.Import):
                 for alias in node.names:
                     root = alias.name.split(".")[0]
@@ -213,16 +228,23 @@ class AnalysisProcessor:
         if not has_print:
             raise ValueError("generated code must print a single JSON payload")
 
+        # 결과 JSON 출력을 위한 필수 키가 코드에 포함되어 있는지 확인한다.
         missing_keys = [key for key in _OUTPUT_KEYS if key not in code]
         if missing_keys:
-            raise ValueError(f"generated code is missing output keys: {', '.join(missing_keys)}")
+            raise ValueError(
+                f"generated code is missing output keys: {', '.join(missing_keys)}"
+            )
 
+        # 분석 계획에서 요구한 컬럼이 코드에 반영되었는지 점검한다.
         for required_column in plan.required_columns:
             if required_column not in code:
-                raise ValueError(f"generated code does not reference required column: {required_column}")
+                raise ValueError(
+                    f"generated code does not reference required column: {required_column}"
+                )
 
         return code
 
+    # sandbox 실행 결과를 검증하여 성공/실패 상태로 정리한다.
     def validate_execution_result(
         self,
         sandbox_result: SandboxExecutionResult | dict[str, Any],
@@ -231,13 +253,17 @@ class AnalysisProcessor:
         plan = self._ensure_plan(analysis_plan)
         result = self._ensure_sandbox_result(sandbox_result)
 
+        # 실행 자체가 실패했거나 JSON 출력이 없으면 즉시 실패 처리한다.
         if not result.ok or result.stdout_json is None:
             return AnalysisExecutionResult(
                 execution_status="fail",
                 error_stage="sandbox_execution",
-                error_message=result.message or result.error_type or "analysis execution failed",
+                error_message=result.message
+                or result.error_type
+                or "analysis execution failed",
             )
 
+        # 출력 payload가 AnalysisPlan의 결과 계약을 만족하는지 검사한다.
         payload = result.stdout_json
         error = self._validate_output_payload(payload, plan)
         if error is not None:
@@ -256,6 +282,7 @@ class AnalysisProcessor:
         )
         return self.normalize_empty_result(execution_result, plan)
 
+    # 결과가 빈 테이블일 때 정책에 따라 처리합니다.
     def normalize_empty_result(
         self,
         execution_result: AnalysisExecutionResult | dict[str, Any],
@@ -277,10 +304,13 @@ class AnalysisProcessor:
                 error_message="analysis returned no rows",
             )
         if plan.empty_result_policy == "success_with_empty_summary":
-            summary = result.summary or "조건에 맞는 데이터가 없어 빈 결과를 반환했습니다."
+            summary = (
+                result.summary or "조건에 맞는 데이터가 없어 빈 결과를 반환했습니다."
+            )
             return result.model_copy(update={"summary": summary})
         return result.model_copy(update={"summary": result.summary or ""})
 
+    # 표준 AnalysisError를 만드는 헬퍼
     def build_error(
         self,
         stage: ErrorStage,
@@ -292,11 +322,16 @@ class AnalysisProcessor:
 
     def _validate_output_payload(self, payload: Any, plan: AnalysisPlan) -> str | None:
         if payload.used_columns:
-            unexpected_columns = sorted(set(payload.used_columns) - set(plan.used_columns))
+            unexpected_columns = sorted(
+                set(payload.used_columns) - set(plan.used_columns)
+            )
             if unexpected_columns:
                 return f"used_columns contains non-approved columns: {', '.join(unexpected_columns)}"
 
-        if plan.expected_output.require_summary and not str(payload.summary or "").strip():
+        if (
+            plan.expected_output.require_summary
+            and not str(payload.summary or "").strip()
+        ):
             return "summary is required"
         if plan.expected_output.require_table and payload.table is None:
             return "table is required"
@@ -307,7 +342,9 @@ class AnalysisProcessor:
         if len(table) < plan.expected_output.minimum_rows and not (
             plan.expected_output.allow_empty_table and len(table) == 0
         ):
-            return f"table must contain at least {plan.expected_output.minimum_rows} rows"
+            return (
+                f"table must contain at least {plan.expected_output.minimum_rows} rows"
+            )
 
         if not table:
             return None
@@ -319,9 +356,8 @@ class AnalysisProcessor:
             if column not in columns
         ]
         if missing_table_columns:
-            return (
-                "table is missing expected columns: "
-                + ", ".join(missing_table_columns)
+            return "table is missing expected columns: " + ", ".join(
+                missing_table_columns
             )
 
         if plan.expected_output.require_time_axis:
@@ -333,15 +369,20 @@ class AnalysisProcessor:
             group_columns = [
                 column
                 for column in plan.group_by
-                if column != (plan.time_context.time_column if plan.time_context else None)
+                if column
+                != (plan.time_context.time_column if plan.time_context else None)
             ]
             if not any(column in columns for column in group_columns):
                 return "group axis column is missing"
 
-        if plan.expected_output.require_outlier_info and "outliers" not in payload.raw_metrics:
+        if (
+            plan.expected_output.require_outlier_info
+            and "outliers" not in payload.raw_metrics
+        ):
             return "outlier information is required"
         return None
 
+    # plan에서 실제 필요한 source column을 계산한다.
     def _build_required_columns(
         self,
         *,
@@ -350,6 +391,7 @@ class AnalysisProcessor:
         metrics: list[MetricSpec],
         derived_columns: list[DerivedColumnSpec],
         time_context: TimeContext | None,
+        visualization_hint: VisualizationHint | None,
         derived_names: set[str],
     ) -> list[str]:
         required: list[str] = []
@@ -367,9 +409,18 @@ class AnalysisProcessor:
             required.extend(derived.source_columns)
         if time_context and time_context.time_column:
             required.append(time_context.time_column)
+        if visualization_hint:
+            for column in (
+                visualization_hint.x,
+                visualization_hint.y,
+                visualization_hint.series,
+            ):
+                if column and column not in derived_names:
+                    required.append(column)
 
         return list(dict.fromkeys(required))
 
+    # 질문 의도에 맞는 결과 형태를 자동으로 정한다.
     def _build_expected_output(
         self,
         *,
@@ -377,15 +428,34 @@ class AnalysisProcessor:
         group_by: list[str],
         metrics: list[MetricSpec],
         time_context: TimeContext | None,
+        visualization_hint: VisualizationHint,
     ) -> ExpectedOutputSpec:
-        table_columns = list(group_by)
+        is_scatter_relationship = (
+            visualization_hint.preferred_chart == "scatter"
+            and bool(visualization_hint.x)
+            and bool(visualization_hint.y)
+        )
+
+        if is_scatter_relationship:
+            table_columns = [visualization_hint.x, visualization_hint.y]
+            if visualization_hint.series:
+                table_columns.append(visualization_hint.series)
+        else:
+            table_columns = list(group_by)
         time_axis_column = self._time_axis_output_column(time_context)
-        if time_axis_column and time_axis_column not in table_columns:
+        if (
+            not is_scatter_relationship
+            and time_axis_column
+            and time_axis_column not in table_columns
+        ):
             table_columns.append(time_axis_column)
-        table_columns.extend(metric.alias for metric in metrics)
+        if not is_scatter_relationship:
+            table_columns.extend(metric.alias for metric in metrics)
 
         normalized_objective = draft.objective.lower()
-        require_outlier_info = "outlier" in normalized_objective or "이상치" in draft.objective
+        require_outlier_info = (
+            "outlier" in normalized_objective or "이상치" in draft.objective
+        )
         group_axis_columns = [
             column
             for column in group_by
@@ -403,6 +473,7 @@ class AnalysisProcessor:
             require_outlier_info=require_outlier_info,
         )
 
+    # 시각화 힌트를 자동 보정한다.
     def _build_visualization_hint(
         self,
         *,
@@ -416,7 +487,9 @@ class AnalysisProcessor:
 
         time_axis_column = self._time_axis_output_column(time_context)
         if time_axis_column and metrics:
-            series_column = next((column for column in group_by if column != time_axis_column), None)
+            series_column = next(
+                (column for column in group_by if column != time_axis_column), None
+            )
             return VisualizationHint(
                 preferred_chart="line",
                 x=time_axis_column,
@@ -450,7 +523,10 @@ class AnalysisProcessor:
             derived_names,
         )
         if condition.operator == "between":
-            if not isinstance(condition.value, (list, tuple)) or len(condition.value) != 2:
+            if (
+                not isinstance(condition.value, (list, tuple))
+                or len(condition.value) != 2
+            ):
                 raise ValueError("between filter requires a 2-item value")
         if condition.operator in {"is_null", "not_null"}:
             return condition.model_copy(update={"column": column, "value": None})
@@ -462,11 +538,13 @@ class AnalysisProcessor:
         metadata: MetadataSnapshot,
         resolved_columns: dict[str, str],
     ) -> MetricSpec:
-        if metric.aggregation != "count" and not metric.column:
-            raise ValueError(f"metric '{metric.name}' requires a source column")
         normalized_column = None
         if metric.column:
-            normalized_column = self._resolve_column_name(metric.column, metadata, resolved_columns, set())
+            normalized_column = self._resolve_column_name(
+                metric.column, metadata, resolved_columns, set()
+            )
+        if metric.aggregation != "count" and not normalized_column:
+            raise ValueError(f"metric '{metric.name}' requires a source column")
         alias = metric.alias.strip() or metric.name.strip()
         if not alias:
             raise ValueError("metric alias must not be empty")
@@ -486,8 +564,18 @@ class AnalysisProcessor:
         ]
         if derived_column.expression_type == "datetime_part":
             part = str(derived_column.params.get("part") or "").strip()
-            if part not in {"year", "month", "day", "hour", "weekday", "week", "quarter"}:
-                raise ValueError("datetime_part derived column requires a valid params.part")
+            if part not in {
+                "year",
+                "month",
+                "day",
+                "hour",
+                "weekday",
+                "week",
+                "quarter",
+            }:
+                raise ValueError(
+                    "datetime_part derived column requires a valid params.part"
+                )
         if derived_column.expression_type == "ratio" and len(source_columns) != 2:
             raise ValueError("ratio derived column requires exactly 2 source columns")
         return derived_column.model_copy(update={"source_columns": source_columns})
@@ -521,7 +609,9 @@ class AnalysisProcessor:
 
         normalized_time_column = time_context.time_column
         if not normalized_time_column:
-            normalized_time_column = resolved_columns.get("__time__") or self._resolve_default_time_column(metadata)
+            normalized_time_column = resolved_columns.get(
+                "__time__"
+            ) or self._resolve_default_time_column(metadata)
         elif normalized_time_column:
             normalized_time_column = self._resolve_column_name(
                 normalized_time_column,
@@ -530,7 +620,9 @@ class AnalysisProcessor:
                 set(),
             )
 
-        if time_context.range_type == "absolute" and not (time_context.start or time_context.end):
+        if time_context.range_type == "absolute" and not (
+            time_context.start or time_context.end
+        ):
             raise ValueError("absolute time range requires start or end")
         if time_context.range_type == "relative" and not time_context.relative_expr:
             raise ValueError("relative time range requires relative_expr")
@@ -541,7 +633,9 @@ class AnalysisProcessor:
                 if hour is not None and not 0 <= hour <= 23:
                     raise ValueError("intraday filter hours must be between 0 and 23")
 
-        if (time_context.grain or time_context.range_type != "none" or intraday) and not normalized_time_column:
+        if (
+            time_context.grain or time_context.range_type != "none" or intraday
+        ) and not normalized_time_column:
             raise ValueError("time-based analysis requires a time column")
 
         return time_context.model_copy(update={"time_column": normalized_time_column})
@@ -616,7 +710,9 @@ class AnalysisProcessor:
             return column_grounding
         return ColumnGroundingResult.model_validate(column_grounding)
 
-    def _ensure_plan_draft(self, plan_draft: AnalysisPlanDraft | dict[str, Any]) -> AnalysisPlanDraft:
+    def _ensure_plan_draft(
+        self, plan_draft: AnalysisPlanDraft | dict[str, Any]
+    ) -> AnalysisPlanDraft:
         if isinstance(plan_draft, AnalysisPlanDraft):
             return plan_draft
         return AnalysisPlanDraft.model_validate(plan_draft)

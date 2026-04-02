@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class StrictModel(BaseModel):
@@ -87,6 +87,18 @@ class TimeContext(StrictModel):
     intraday_filter: IntradayFilter | None = None
     timezone: str | None = None
 
+    @field_validator("grain", mode="before")
+    @classmethod
+    def _normalize_grain_alias(cls, value: Any, info: Any) -> Any:
+        if value is not None:
+            return value
+        data = getattr(info, "data", None)
+        if isinstance(data, dict):
+            granularity = data.get("granularity")
+            if granularity is not None:
+                return granularity
+        return value
+
 
 class ExpectedOutputSpec(StrictModel):
     require_summary: bool = True
@@ -127,6 +139,19 @@ class QuestionUnderstanding(StrictModel):
     ambiguity_status: Literal["clear", "needs_clarification"]
     clarification_message: str = ""
 
+    @field_validator(
+        "analysis_goal",
+        "metric_keywords",
+        "group_keywords",
+        "filter_conditions",
+        mode="before",
+    )
+    @classmethod
+    def _default_list_fields(cls, value: Any) -> Any:
+        if value is None:
+            return []
+        return value
+
 
 class ColumnGroundingResult(StrictModel):
     resolved_columns: dict[str, str] = Field(default_factory=dict)
@@ -146,6 +171,22 @@ class AnalysisPlanDraft(StrictModel):
     visualization_hint: VisualizationHint = Field(default_factory=VisualizationHint)
     ambiguity_status: Literal["clear", "needs_clarification"]
     clarification_message: str = ""
+
+    @field_validator(
+        "filters", "group_by", "metrics", "derived_columns", "sort_by", mode="before"
+    )
+    @classmethod
+    def _default_list_fields(cls, value: Any) -> Any:
+        if value is None:
+            return []
+        return value
+
+    @field_validator("visualization_hint", mode="before")
+    @classmethod
+    def _default_visualization_hint(cls, value: Any) -> Any:
+        if value is None:
+            return {}
+        return value
 
 
 class AnalysisPlan(StrictModel):
@@ -227,3 +268,10 @@ FinalStatus = Literal[
     "fail",
     "needs_clarification",
 ]
+
+
+class AnalysisRunRequest(StrictModel):
+    question: str
+    source_id: str
+    session_id: str | None = None
+    model_id: str | None = None

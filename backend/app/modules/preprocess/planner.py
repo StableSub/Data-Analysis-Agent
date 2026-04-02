@@ -21,7 +21,14 @@ PROMPTS = PromptRegistry(
             "planner_comment에는 판단 근거를 1~2문장으로 남겨라."
         ),
         "decision.system": (
-            "데이터 프로파일을 보고 run_preprocess 또는 skip_preprocess를 반환하라. "
+            "질문과 데이터 프로파일을 보고 run_preprocess 또는 skip_preprocess를 반환하라. "
+            "단순 집계, 평균 계산, 그룹화, 최근 N개월 필터링, 추세 분석, 비교, 상관 분석, 시각화는 전처리가 아니라 분석이다. "
+            "timestamp/date 컬럼을 월, 주, 일 단위로 묶어 집계하는 것은 분석 단계에서 처리할 수 있으므로 전처리로 보지 마라. "
+            "월별 추세를 위해 year_month 같은 파생 컬럼을 만들 수 있더라도, 원본 datetime/timestamp 컬럼으로 분석이 가능하면 skip_preprocess를 선택하라. "
+            "관계 분석 질문은 기본적으로 원시 x/y 관측치로 처리하며, 평균이나 그룹 요약을 명시적으로 요구하지 않았다면 그 이유만으로 전처리를 실행하지 마라. "
+            "결측치 처리, 형변환, 문자열 정리, 정규화, 스케일링, 인코딩, 컬럼명 변경, 파생 컬럼 생성처럼 "
+            "데이터를 먼저 정제하거나 변환해야 할 때만 run_preprocess를 선택하라. "
+            "명시적인 전처리 요청이 없고 원본 데이터로 바로 분석이 가능하면 skip_preprocess를 선택하라. "
             "reason_summary에는 판단 근거를 1문장으로 남겨라."
         ),
     }
@@ -56,17 +63,6 @@ def build_preprocess_decision(
     model_id: str | None,
     default_model: str,
 ) -> dict[str, Any]:
-    if isinstance(handoff, dict) and "ask_preprocess" in handoff:
-        ask_preprocess = bool(handoff.get("ask_preprocess", False))
-        return {
-            "step": "run_preprocess" if ask_preprocess else "skip_preprocess",
-            "reason_summary": (
-                "사용자 요청에 따라 전처리를 수행합니다."
-                if ask_preprocess
-                else "사용자 요청에 따라 전처리를 생략합니다."
-            ),
-        }
-
     llm = LLMGateway(default_model=default_model)
     profile_json = json.dumps(dataset_profile, ensure_ascii=False)
     decision = llm.invoke_structured(
