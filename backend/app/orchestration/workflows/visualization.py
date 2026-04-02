@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict
 
 from langgraph.graph import END, START, StateGraph
@@ -19,6 +20,8 @@ from backend.app.orchestration.utils import resolve_target_source_id
 MAX_SAMPLE_ROWS = 2000
 MAX_POINTS = 120
 
+logger = logging.getLogger(__name__)
+
 
 def build_visualization_workflow(
     *,
@@ -26,8 +29,41 @@ def build_visualization_workflow(
     default_model: str = "gpt-5-nano",
 ):
     def visualization_planner_node(state: VisualizationGraphState) -> Dict[str, Any]:
+        analysis_result = state.get("analysis_result")
+        analysis_plan = state.get("analysis_plan")
+        source_id = resolve_target_source_id(state)
+        logger.warning(
+            "visualization_planner_node:start source_id=%r has_analysis_result=%r has_analysis_plan=%r",
+            source_id,
+            bool(analysis_result),
+            bool(analysis_plan),
+        )
+        if analysis_result and analysis_plan:
+            build_method = getattr(
+                visualization_service, "build_from_analysis_result", None
+            )
+            if callable(build_method):
+                visualization_result = build_method(
+                    source_id=source_id or "",
+                    analysis_plan=analysis_plan,
+                    analysis_result=analysis_result,
+                )
+                logger.warning(
+                    "visualization_planner_node:end status=%r summary=%r chart=%r",
+                    visualization_result.get("status"),
+                    visualization_result.get("summary"),
+                    visualization_result.get("chart_data") or visualization_result.get("chart"),
+                )
+                return {
+                    "visualization_plan": {
+                        "status": "analysis_generated",
+                        "source_id": source_id or "",
+                    },
+                    "visualization_result": visualization_result,
+                }
+
         plan = build_visualization_plan(
-            source_id=resolve_target_source_id(state),
+            source_id=source_id,
             user_input=str(state.get("user_input", "")),
             revision_request=state.get("revision_request"),
             dataset_profile=state.get("dataset_profile"),
@@ -36,10 +72,19 @@ def build_visualization_workflow(
             visualization_service=visualization_service,
             max_sample_rows=MAX_SAMPLE_ROWS,
         )
+        logger.warning(
+            "visualization_planner_node:end planned status=%r chart_type=%r x_key=%r y_key=%r",
+            plan.status,
+            plan.chart_type,
+            plan.x_key,
+            plan.y_key,
+        )
         return {"visualization_plan": plan.model_dump()}
 
     def route_after_planner(state: VisualizationGraphState) -> str:
         plan_dict = state.get("visualization_plan") or {}
+        if plan_dict.get("status") == "analysis_generated":
+            return "done"
         if plan_dict.get("status") == "planned":
             return "approval"
         return "execute"
@@ -140,6 +185,7 @@ def build_visualization_workflow(
         "visualization_planner",
         route_after_planner,
         {
+            "done": END,
             "approval": "approval_gate",
             "execute": "visualization_executor",
         },

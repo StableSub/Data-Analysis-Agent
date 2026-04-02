@@ -10,9 +10,18 @@ from langgraph.checkpoint.memory import InMemorySaver
 from sqlalchemy.orm import Session
 
 from ..core.db import get_db
-from ..modules.analysis.dependencies import build_analysis_service, build_results_repository
+from ..modules.analysis.dependencies import (
+    build_analysis_processor,
+    build_analysis_run_service,
+    build_analysis_sandbox,
+    build_analysis_service,
+    build_results_repository,
+)
 from ..modules.analysis.service import AnalysisService
-from ..modules.datasets.service import build_data_source_repository, build_dataset_reader
+from ..modules.datasets.service import (
+    build_data_source_repository,
+    build_dataset_reader,
+)
 from ..modules.preprocess.dependencies import (
     build_preprocess_processor,
     build_preprocess_service,
@@ -53,6 +62,9 @@ def build_orchestration_services(*, db: Session, agent: Any) -> WorkflowServices
     analysis_service = build_analysis_service(
         repository=dataset_repository,
         reader=dataset_reader,
+        processor=build_analysis_processor(),
+        run_service=build_analysis_run_service(),
+        sandbox=build_analysis_sandbox(),
         results_repository=build_results_repository(db=db),
         visualization_service=visualization_service,
     )
