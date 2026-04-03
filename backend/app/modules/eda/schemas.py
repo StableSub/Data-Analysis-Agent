@@ -117,6 +117,8 @@ class EDADistributionResponse(BaseModel):
     inferred_type: ColumnProfileType
     chart_type: str
     total_count: int = 0
+    other_count: int = 0
+    truncated: bool = False
     bins: list[EDADistributionBin] = Field(default_factory=list)
 
 

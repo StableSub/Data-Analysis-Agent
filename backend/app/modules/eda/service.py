@@ -223,6 +223,8 @@ class EDAService:
                     inferred_type=inferred_type,
                     chart_type="histogram",
                     total_count=0,
+                    other_count=0,
+                    truncated=False,
                     bins=[],
                 )
 
@@ -264,25 +266,32 @@ class EDAService:
                 inferred_type=inferred_type,
                 chart_type="histogram",
                 total_count=sum(item.value for item in distribution_bins),
+                other_count=0,
+                truncated=False,
                 bins=distribution_bins,
             )
 
-        value_counts = (
+        all_value_counts = (
             series.fillna("null")
             .map(_serialize_label_value)
             .value_counts(dropna=False)
-            .head(max(1, top_n))
         )
+        value_counts = all_value_counts.head(max(1, top_n))
         distribution_bins = [
             EDADistributionBin(label=str(label), value=int(count))
             for label, count in value_counts.items()
         ]
+        displayed_count = sum(item.value for item in distribution_bins)
+        total_count = int(all_value_counts.sum())
+        other_count = max(0, total_count - displayed_count)
         return EDADistributionResponse(
             source_id=source_id,
             column=column,
             inferred_type=inferred_type,
             chart_type="bar",
-            total_count=sum(item.value for item in distribution_bins),
+            total_count=total_count,
+            other_count=other_count,
+            truncated=other_count > 0,
             bins=distribution_bins,
         )
 
