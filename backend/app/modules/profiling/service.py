@@ -210,10 +210,10 @@ class DatasetProfileService:
             return "boolean"
         if self._is_datetime_column(series):
             return "datetime"
-        if self._is_numeric_column(series):
-            return "numerical"
         if self._is_identifier_column(column_name=column_name, series=series, row_count=row_count):
             return "identifier"
+        if self._is_numeric_column(series):
+            return "numerical"
         if self._is_group_key_column(column_name=column_name, series=series, row_count=row_count):
             return "group_key"
         return "categorical"
@@ -284,7 +284,12 @@ class DatasetProfileService:
             or normalized_name.startswith(f"{token}_")
             for token in IDENTIFIER_NAME_TOKENS
         )
-        return unique_ratio >= 0.98 or (name_suggests_identifier and unique_ratio >= 0.85)
+        is_numeric_like = DatasetProfileService._is_numeric_column(series)
+
+        if name_suggests_identifier and unique_ratio >= 0.85:
+            return True
+
+        return (not is_numeric_like) and unique_ratio >= 0.98
 
     @staticmethod
     def _is_group_key_column(
