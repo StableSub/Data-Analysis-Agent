@@ -20,3 +20,7 @@ class ManualVizRequest(BaseModel):
 class ManualVizResponse(BaseModel):
     chart_type: str
     data: List[Dict[str, Any]]
+
+
+class VisualizationFromAnalysisRequest(BaseModel):
+    analysis_result_id: str

@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
 from .core.db import Base, engine
+from .modules.analysis import router as analysis_api
 from .modules.chat import models as chat_models
 from .modules.chat import router as chats_api
 from .modules.datasets import models as dataset_models
@@ -44,6 +45,7 @@ def on_startup():
 
 app.include_router(datasets_api.router)
 app.include_router(chats_api.router)
+app.include_router(analysis_api.router)
 app.include_router(visualization_api.router)
 app.include_router(rag_router.router)
 app.include_router(export_api.router)
