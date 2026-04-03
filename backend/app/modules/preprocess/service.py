@@ -7,7 +7,6 @@ import pandas as pd
 from ..datasets.models import Dataset
 from ..datasets.repository import DataSourceRepository
 from ..datasets.service import DatasetReader
-from ..eda.service import EDAService
 from ..profiling.service import DatasetProfileService
 from .processor import PreprocessProcessor
 from .schemas import (
@@ -85,13 +84,11 @@ class PreprocessService:
         reader: DatasetReader,
         processor: PreprocessProcessor,
         profile_service: DatasetProfileService,
-        eda_service: EDAService,
     ) -> None:
         self.repository = repository
         self.reader = reader
         self.processor = processor
         self.profile_service = profile_service
-        self.eda_service = eda_service
 
     def build_dataset_profile(self, source_id: str) -> Dict[str, Any]:
         profile = self.profile_service.build_profile(source_id)
@@ -108,12 +105,6 @@ class PreprocessService:
             str(column): [row.get(str(column)) for row in profile.sample_rows]
             for column in profile.columns
         }
-        recommendations = self.eda_service.get_preprocess_recommendations(source_id)
-        profile_data["preprocess_recommendations"] = (
-            recommendations.model_dump().get("recommendations", [])
-            if recommendations is not None
-            else []
-        )
         return profile_data
 
     def apply(
