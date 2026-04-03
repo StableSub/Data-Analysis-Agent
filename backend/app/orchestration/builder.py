@@ -18,6 +18,7 @@ def build_main_workflow(
     *,
     db,
     preprocess_service,
+    eda_service,
     rag_service,
     visualization_service,
     report_service,
@@ -27,6 +28,7 @@ def build_main_workflow(
     intake_graph = build_intake_router_workflow(default_model=default_model)
     preprocess_graph = build_preprocess_workflow(
         preprocess_service=preprocess_service,
+        eda_service=eda_service,
         default_model=default_model,
     )
     rag_graph = build_rag_workflow(

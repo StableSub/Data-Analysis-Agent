@@ -289,23 +289,39 @@ class EDAService:
     def get_preprocess_recommendations(
         self,
         source_id: str,
+        *,
+        profile: DatasetProfile | None = None,
+        include_outlier_analysis: bool = True,
+        df: pd.DataFrame | None = None,
     ) -> EDAPreprocessRecommendationsResponse | None:
-        profile = self.profile_service.build_profile(source_id)
+        profile = profile or self.profile_service.build_profile(source_id)
         if not profile.available:
             return None
 
         quality = self._build_quality_response(profile)
-
-        dataset = self.dataset_repository.get_by_source_id(source_id)
-        if dataset is None or not dataset.storage_path:
+        if quality is None:
             return None
 
-        file_path = Path(dataset.storage_path)
-        if not file_path.exists() or not file_path.is_file():
-            return None
+        if include_outlier_analysis:
+            if df is None:
+                dataset = self.dataset_repository.get_by_source_id(source_id)
+                if dataset is None or not dataset.storage_path:
+                    return None
 
-        df = self.reader.read_csv(dataset.storage_path)
-        outliers = self._build_outliers_response(source_id, profile, df)
+                file_path = Path(dataset.storage_path)
+                if not file_path.exists() or not file_path.is_file():
+                    return None
+
+                df = self.reader.read_csv(dataset.storage_path)
+
+            outliers = self._build_outliers_response(source_id, profile, df)
+        else:
+            outliers = EDAOutliersResponse(
+                source_id=source_id,
+                numeric_column_count=len(profile.numeric_columns),
+                columns=[],
+            )
+
         if quality is None or outliers is None:
             return None
 

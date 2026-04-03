@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from ..core.db import get_db
 from ..modules.datasets.service import build_data_source_repository, build_dataset_reader
 from ..modules.eda.dependencies import build_eda_service
+from ..modules.eda.service import EDAService
 from ..modules.preprocess.dependencies import (
     build_preprocess_processor,
     build_preprocess_service,
@@ -32,6 +33,7 @@ if TYPE_CHECKING:
 @dataclass(frozen=True)
 class WorkflowServices:
     preprocess_service: PreprocessService
+    eda_service: EDAService
     rag_service: RagService
     visualization_service: VisualizationService
     report_service: ReportService
@@ -59,7 +61,6 @@ def build_orchestration_services(*, db: Session, agent: Any) -> WorkflowServices
         reader=dataset_reader,
         processor=build_preprocess_processor(),
         profile_service=profile_service,
-        eda_service=eda_service,
     )
     rag_service = build_rag_service(
         repository=build_rag_repository(db),
@@ -77,6 +78,7 @@ def build_orchestration_services(*, db: Session, agent: Any) -> WorkflowServices
     )
     return WorkflowServices(
         preprocess_service=preprocess_service,
+        eda_service=eda_service,
         rag_service=rag_service,
         visualization_service=visualization_service,
         report_service=report_service,
@@ -97,6 +99,7 @@ def build_agent_client(*, db: Session) -> "AgentClient":
         workflow = build_main_workflow(
             db=db,
             preprocess_service=services.preprocess_service,
+            eda_service=services.eda_service,
             rag_service=services.rag_service,
             visualization_service=services.visualization_service,
             report_service=services.report_service,
