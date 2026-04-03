@@ -103,6 +103,16 @@ class EDAService:
         if not profile.available:
             return None
 
+        numeric_columns = [column for column in profile.numeric_columns if column]
+        if not numeric_columns:
+            return EDAStatsResponse(
+                source_id=source_id,
+                row_count=profile.row_count,
+                column_count=profile.column_count,
+                numeric_column_count=0,
+                columns=[],
+            )
+
         dataset = self.dataset_repository.get_by_source_id(source_id)
         if dataset is None or not dataset.storage_path:
             return None
@@ -111,21 +121,15 @@ class EDAService:
         if not file_path.exists() or not file_path.is_file():
             return None
 
-        df = self.reader.read_csv(dataset.storage_path)
+        df = self.reader.read_csv(dataset.storage_path, usecols=numeric_columns)
         if df.empty:
             return EDAStatsResponse(
                 source_id=source_id,
-                row_count=0,
-                column_count=0,
+                row_count=profile.row_count,
+                column_count=profile.column_count,
                 numeric_column_count=0,
                 columns=[],
             )
-
-        numeric_columns = [
-            column
-            for column in profile.numeric_columns
-            if column in df.columns
-        ]
         return self._build_stats_response(source_id, profile, df)
 
     def get_top_correlations(self, source_id: str, *, limit: int = 3) -> EDACorrelationsResponse | None:
@@ -492,8 +496,8 @@ class EDAService:
 
         return EDAStatsResponse(
             source_id=source_id,
-            row_count=len(df),
-            column_count=len(df.columns),
+            row_count=profile.row_count,
+            column_count=profile.column_count,
             numeric_column_count=len(stats_columns),
             columns=stats_columns,
         )
