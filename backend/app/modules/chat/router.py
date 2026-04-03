@@ -77,7 +77,7 @@ async def get_pending_approval(
     run_id: str,
     chat_service: ChatService = Depends(get_chat_service),
 ):
-    pending = chat_service.get_pending_approval(run_id=run_id)
+    pending = await chat_service.get_pending_approval(run_id=run_id)
     if pending is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

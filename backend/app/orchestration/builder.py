@@ -6,7 +6,7 @@ from langgraph.graph import END, START, StateGraph
 
 from .ai import answer_data_question, answer_general_question
 from .intake_router import build_intake_router_workflow
-from .presentation import build_merged_context
+from .state_view import build_merged_context
 from .state import MainWorkflowState
 from .workflows.guideline import build_guideline_workflow
 from .workflows.preprocess import build_preprocess_workflow

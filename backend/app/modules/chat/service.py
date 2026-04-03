@@ -81,12 +81,12 @@ class ChatService:
         ):
             yield event
 
-    def get_pending_approval(
+    async def get_pending_approval(
         self,
         *,
         run_id: str,
     ) -> PendingApprovalResponse | None:
-        pending_approval = self.agent.get_pending_approval(run_id=run_id)
+        pending_approval = await self.agent.get_pending_approval(run_id=run_id)
         if pending_approval is None:
             return None
 

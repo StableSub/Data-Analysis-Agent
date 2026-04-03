@@ -9,7 +9,7 @@ from typing import Any, AsyncIterator, Dict
 
 from langgraph.types import Command
 
-from .presentation import build_approval_wait_step, collect_thought_steps, make_thought_step
+from .state_view import build_approval_wait_step, collect_thought_steps, make_thought_step
 
 
 class AgentClient:
@@ -17,11 +17,9 @@ class AgentClient:
         self,
         *,
         workflow_runtime_factory: Any,
-        checkpointer: Any,
         default_model: str = "gpt-5-nano",
     ) -> None:
         self.default_model = default_model
-        self._checkpointer = checkpointer
         self._workflow_runtime_factory = workflow_runtime_factory
 
     async def astream_with_trace(
@@ -34,7 +32,7 @@ class AgentClient:
         model_id: str | None = None,
         resume: Dict[str, Any] | None = None,
     ) -> AsyncIterator[Dict[str, Any]]:
-        with self._runtime() as runtime:
+        async with self._runtime() as runtime:
             workflow = getattr(runtime, "workflow", runtime)
             config = self._build_config(run_id=run_id, session_id=session_id)
             if resume is None:
@@ -118,10 +116,12 @@ class AgentClient:
     def _runtime(self):
         return self._workflow_runtime_factory()
 
-    def get_pending_approval(self, *, run_id: str) -> Dict[str, Any] | None:
-        with self._runtime() as runtime:
+    async def get_pending_approval(self, *, run_id: str) -> Dict[str, Any] | None:
+        async with self._runtime() as runtime:
             workflow = getattr(runtime, "workflow", runtime)
-            snapshot = workflow.get_state(self._build_config(run_id=run_id, session_id=None))
+            snapshot = await workflow.aget_state(
+                self._build_config(run_id=run_id, session_id=None)
+            )
 
         interrupts = getattr(snapshot, "interrupts", ())
         if not interrupts:

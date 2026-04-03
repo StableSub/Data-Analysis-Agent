@@ -1,14 +1,12 @@
 from __future__ import annotations
 
-import sqlite3
-from contextlib import contextmanager
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from fastapi import Depends
-from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from sqlalchemy.orm import Session
 
 from ..core.db import get_db
@@ -46,15 +44,6 @@ class WorkflowServices:
     guideline_rag_service: GuidelineRagService
     visualization_service: VisualizationService
     report_service: ReportService
-
-
-@lru_cache(maxsize=1)
-def get_workflow_checkpointer() -> SqliteSaver:
-    CHECKPOINT_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(str(CHECKPOINT_DB_PATH), check_same_thread=False)
-    saver = SqliteSaver(connection)
-    saver.setup()
-    return saver
 
 
 def build_orchestration_services(*, db: Session, agent: Any) -> WorkflowServices:
@@ -99,28 +88,28 @@ def build_agent_client(*, db: Session) -> "AgentClient":
     from .builder import build_main_workflow
     from .client import AgentClient
 
-    checkpointer = get_workflow_checkpointer()
     agent_box: dict[str, AgentClient] = {}
 
-    @contextmanager
-    def workflow_runtime_factory():
+    @asynccontextmanager
+    async def workflow_runtime_factory():
         agent = agent_box["agent"]
         services = build_orchestration_services(db=db, agent=agent)
-        workflow = build_main_workflow(
-            preprocess_service=services.preprocess_service,
-            rag_service=services.rag_service,
-            guideline_service=services.guideline_service,
-            guideline_rag_service=services.guideline_rag_service,
-            visualization_service=services.visualization_service,
-            report_service=services.report_service,
-            default_model=agent.default_model,
-            checkpointer=checkpointer,
-        )
-        yield workflow
+        CHECKPOINT_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        async with AsyncSqliteSaver.from_conn_string(str(CHECKPOINT_DB_PATH)) as checkpointer:
+            workflow = build_main_workflow(
+                preprocess_service=services.preprocess_service,
+                rag_service=services.rag_service,
+                guideline_service=services.guideline_service,
+                guideline_rag_service=services.guideline_rag_service,
+                visualization_service=services.visualization_service,
+                report_service=services.report_service,
+                default_model=agent.default_model,
+                checkpointer=checkpointer,
+            )
+            yield workflow
 
     agent = AgentClient(
         workflow_runtime_factory=workflow_runtime_factory,
-        checkpointer=checkpointer,
     )
     agent_box["agent"] = agent
     return agent
