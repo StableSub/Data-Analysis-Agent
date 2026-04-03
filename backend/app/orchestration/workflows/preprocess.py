@@ -57,6 +57,7 @@ def build_preprocess_workflow(
             recommendations = eda_service.get_preprocess_recommendations(
                 str(state.get("source_id") or ""),
                 profile=profile_model,
+                include_outlier_analysis=False,
             )
             dataset_profile["preprocess_recommendations"] = (
                 recommendations.model_dump().get("recommendations", [])
