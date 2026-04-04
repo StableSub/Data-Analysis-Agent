@@ -10,6 +10,9 @@ from langgraph.checkpoint.memory import InMemorySaver
 from sqlalchemy.orm import Session
 
 from ..core.db import get_db
+from ..modules.datasets.service import build_data_source_repository, build_dataset_reader
+from ..modules.eda.dependencies import build_eda_service
+from ..modules.eda.service import EDAService
 from ..modules.analysis.dependencies import (
     build_analysis_processor,
     build_analysis_run_service,
@@ -27,6 +30,7 @@ from ..modules.preprocess.dependencies import (
     build_preprocess_service,
 )
 from ..modules.preprocess.service import PreprocessService
+from ..modules.profiling.dependencies import build_dataset_profile_service
 from ..modules.rag.dependencies import build_rag_repository, build_rag_service
 from ..modules.rag.service import RagService
 from ..modules.reports.dependencies import build_report_repository, build_report_service
@@ -42,6 +46,7 @@ if TYPE_CHECKING:
 class WorkflowServices:
     analysis_service: AnalysisService
     preprocess_service: PreprocessService
+    eda_service: EDAService
     rag_service: RagService
     visualization_service: VisualizationService
     report_service: ReportService
@@ -55,6 +60,15 @@ def get_workflow_checkpointer() -> InMemorySaver:
 def build_orchestration_services(*, db: Session, agent: Any) -> WorkflowServices:
     dataset_repository = build_data_source_repository(db)
     dataset_reader = build_dataset_reader()
+    profile_service = build_dataset_profile_service(
+        repository=dataset_repository,
+        reader=dataset_reader,
+    )
+    eda_service = build_eda_service(
+        profile_service=profile_service,
+        dataset_repository=dataset_repository,
+        reader=dataset_reader,
+    )
     visualization_service = build_visualization_service(
         repository=dataset_repository,
         reader=dataset_reader,
@@ -72,6 +86,7 @@ def build_orchestration_services(*, db: Session, agent: Any) -> WorkflowServices
         repository=dataset_repository,
         reader=dataset_reader,
         processor=build_preprocess_processor(),
+        profile_service=profile_service,
     )
     rag_service = build_rag_service(
         repository=build_rag_repository(db),
@@ -86,6 +101,7 @@ def build_orchestration_services(*, db: Session, agent: Any) -> WorkflowServices
     return WorkflowServices(
         analysis_service=analysis_service,
         preprocess_service=preprocess_service,
+        eda_service=eda_service,
         rag_service=rag_service,
         visualization_service=visualization_service,
         report_service=report_service,
@@ -107,6 +123,7 @@ def build_agent_client(*, db: Session) -> "AgentClient":
             db=db,
             analysis_service=services.analysis_service,
             preprocess_service=services.preprocess_service,
+            eda_service=services.eda_service,
             rag_service=services.rag_service,
             visualization_service=services.visualization_service,
             report_service=services.report_service,
