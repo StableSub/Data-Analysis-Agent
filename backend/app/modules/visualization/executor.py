@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import subprocess
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -13,7 +14,7 @@ from pydantic import ValidationError
 from .planner import VisualizationPlan
 from .service import VisualizationService
 
-PYTHON_EXECUTABLE = "/Users/anjeongseob/.virtualenvs/ai_agent/bin/python"
+PYTHON_EXECUTABLE = sys.executable
 SCRIPT_TIMEOUT_SECONDS = 15
 
 

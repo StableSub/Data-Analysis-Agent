@@ -26,8 +26,29 @@ def build_visualization_workflow(
     default_model: str = "gpt-5-nano",
 ):
     def visualization_planner_node(state: VisualizationGraphState) -> Dict[str, Any]:
+        analysis_result = state.get("analysis_result")
+        analysis_plan = state.get("analysis_plan")
+        source_id = resolve_target_source_id(state)
+        if analysis_result and analysis_plan:
+            build_method = getattr(
+                visualization_service, "build_from_analysis_result", None
+            )
+            if callable(build_method):
+                visualization_result = build_method(
+                    source_id=source_id or "",
+                    analysis_plan=analysis_plan,
+                    analysis_result=analysis_result,
+                )
+                return {
+                    "visualization_plan": {
+                        "status": "analysis_generated",
+                        "source_id": source_id or "",
+                    },
+                    "visualization_result": visualization_result,
+                }
+
         plan = build_visualization_plan(
-            source_id=resolve_target_source_id(state),
+            source_id=source_id,
             user_input=str(state.get("user_input", "")),
             revision_request=state.get("revision_request"),
             dataset_profile=state.get("dataset_profile"),
@@ -40,6 +61,8 @@ def build_visualization_workflow(
 
     def route_after_planner(state: VisualizationGraphState) -> str:
         plan_dict = state.get("visualization_plan") or {}
+        if plan_dict.get("status") == "analysis_generated":
+            return "done"
         if plan_dict.get("status") == "planned":
             return "approval"
         return "execute"
@@ -140,6 +163,7 @@ def build_visualization_workflow(
         "visualization_planner",
         route_after_planner,
         {
+            "done": END,
             "approval": "approval_gate",
             "execute": "visualization_executor",
         },

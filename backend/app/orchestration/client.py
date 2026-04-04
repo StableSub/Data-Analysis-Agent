@@ -114,6 +114,9 @@ class AgentClient:
                 "thought_steps": thought_steps,
                 "output_type": self._extract_output_type(final_state),
             }
+            output = final_state.get("output")
+            if isinstance(output, dict):
+                done_event["output"] = output
             preprocess_result = final_state.get("preprocess_result")
             if isinstance(preprocess_result, dict):
                 done_event["preprocess_result"] = preprocess_result
@@ -195,6 +198,7 @@ class AgentClient:
             content = output.get("content")
             if isinstance(content, str) and content:
                 return content
+
         return "응답을 생성하지 못했습니다."
 
     @staticmethod
@@ -337,6 +341,45 @@ class AgentClient:
                     )
                 )
 
+        analysis_result = state.get("analysis_result")
+        if isinstance(analysis_result, dict):
+            execution_status = analysis_result.get("execution_status")
+            if execution_status == "success":
+                summary = analysis_result.get("summary")
+                if isinstance(summary, str) and summary.strip():
+                    steps.append(
+                        cls._make_step(
+                            phase="analysis",
+                            message=summary.strip(),
+                        )
+                    )
+                else:
+                    steps.append(
+                        cls._make_step(
+                            phase="analysis",
+                            message="분석 결과를 생성했습니다.",
+                        )
+                    )
+            elif execution_status == "fail":
+                error_message = analysis_result.get("error_message")
+                if isinstance(error_message, str) and error_message.strip():
+                    steps.append(
+                        cls._make_step(
+                            phase="analysis",
+                            message=f"분석 단계에서 오류가 발생했습니다: {error_message.strip()}",
+                            status="failed",
+                        )
+                    )
+
+        clarification_question = state.get("clarification_question")
+        if isinstance(clarification_question, str) and clarification_question.strip():
+            steps.append(
+                cls._make_step(
+                    phase="analysis_clarification",
+                    message=clarification_question.strip(),
+                )
+            )
+
         rag_index_status = state.get("rag_index_status")
         if isinstance(rag_index_status, dict):
             index_status = rag_index_status.get("status")
@@ -468,17 +511,6 @@ class AgentClient:
                     cls._make_step(
                         phase="report_revision",
                         message=f"리포트 수정 요청을 반영합니다: {instruction.strip()}",
-                    )
-                )
-
-        data_qa_result = state.get("data_qa_result")
-        if isinstance(data_qa_result, dict):
-            content = data_qa_result.get("content")
-            if isinstance(content, str) and content.strip():
-                steps.append(
-                    cls._make_step(
-                        phase="data_qa",
-                        message="데이터 QA 응답을 구성했습니다.",
                     )
                 )
 

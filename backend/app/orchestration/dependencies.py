@@ -13,6 +13,18 @@ from ..core.db import get_db
 from ..modules.datasets.service import build_data_source_repository, build_dataset_reader
 from ..modules.eda.dependencies import build_eda_service
 from ..modules.eda.service import EDAService
+from ..modules.analysis.dependencies import (
+    build_analysis_processor,
+    build_analysis_run_service,
+    build_analysis_sandbox,
+    build_analysis_service,
+    build_results_repository,
+)
+from ..modules.analysis.service import AnalysisService
+from ..modules.datasets.service import (
+    build_data_source_repository,
+    build_dataset_reader,
+)
 from ..modules.preprocess.dependencies import (
     build_preprocess_processor,
     build_preprocess_service,
@@ -32,6 +44,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class WorkflowServices:
+    analysis_service: AnalysisService
     preprocess_service: PreprocessService
     eda_service: EDAService
     rag_service: RagService
@@ -55,6 +68,18 @@ def build_orchestration_services(*, db: Session, agent: Any) -> WorkflowServices
         profile_service=profile_service,
         dataset_repository=dataset_repository,
         reader=dataset_reader,
+    visualization_service = build_visualization_service(
+        repository=dataset_repository,
+        reader=dataset_reader,
+    )
+    analysis_service = build_analysis_service(
+        repository=dataset_repository,
+        reader=dataset_reader,
+        processor=build_analysis_processor(),
+        run_service=build_analysis_run_service(),
+        sandbox=build_analysis_sandbox(),
+        results_repository=build_results_repository(db=db),
+        visualization_service=visualization_service,
     )
     preprocess_service = build_preprocess_service(
         repository=dataset_repository,
@@ -67,16 +92,13 @@ def build_orchestration_services(*, db: Session, agent: Any) -> WorkflowServices
         dataset_repository=dataset_repository,
         answer_agent=agent,
     )
-    visualization_service = build_visualization_service(
-        repository=dataset_repository,
-        reader=dataset_reader,
-    )
     report_service = build_report_service(
         repository=build_report_repository(db),
         dataset_repository=dataset_repository,
         reader=dataset_reader,
     )
     return WorkflowServices(
+        analysis_service=analysis_service,
         preprocess_service=preprocess_service,
         eda_service=eda_service,
         rag_service=rag_service,
@@ -98,6 +120,7 @@ def build_agent_client(*, db: Session) -> "AgentClient":
         services = build_orchestration_services(db=db, agent=agent)
         workflow = build_main_workflow(
             db=db,
+            analysis_service=services.analysis_service,
             preprocess_service=services.preprocess_service,
             eda_service=services.eda_service,
             rag_service=services.rag_service,
