@@ -68,6 +68,7 @@ def build_orchestration_services(*, db: Session, agent: Any) -> WorkflowServices
         profile_service=profile_service,
         dataset_repository=dataset_repository,
         reader=dataset_reader,
+    )
     visualization_service = build_visualization_service(
         repository=dataset_repository,
         reader=dataset_reader,
