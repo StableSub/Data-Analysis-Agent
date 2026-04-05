@@ -3,6 +3,17 @@ from __future__ import annotations
 from typing import Any, Dict
 
 
+def _as_dict(value: Any) -> Dict[str, Any] | None:
+    if isinstance(value, dict):
+        return value
+    model_dump = getattr(value, "model_dump", None)
+    if callable(model_dump):
+        dumped = model_dump()
+        if isinstance(dumped, dict):
+            return dumped
+    return None
+
+
 def build_merged_context(state: Dict[str, Any]) -> Dict[str, Any]:
     merged_context: Dict[str, Any] = {"applied_steps": []}
 
@@ -13,6 +24,7 @@ def build_merged_context(state: Dict[str, Any]) -> Dict[str, Any]:
     handoff = state.get("handoff")
     if isinstance(handoff, dict):
         merged_context["request_flags"] = {
+            "ask_analysis": bool(handoff.get("ask_analysis", False)),
             "ask_preprocess": bool(handoff.get("ask_preprocess", False)),
             "ask_visualization": bool(handoff.get("ask_visualization", False)),
             "ask_report": bool(handoff.get("ask_report", False)),
@@ -56,6 +68,16 @@ def build_merged_context(state: Dict[str, Any]) -> Dict[str, Any]:
         summary = insight.get("summary")
         if isinstance(summary, str) and summary.strip():
             merged_context["applied_steps"].append("insight")
+
+    analysis_plan = _as_dict(state.get("analysis_plan"))
+    if analysis_plan is not None:
+        merged_context["analysis_plan"] = analysis_plan
+
+    analysis_result = _as_dict(state.get("analysis_result"))
+    if analysis_result is not None:
+        merged_context["analysis_result"] = analysis_result
+        if analysis_result.get("execution_status") == "success":
+            merged_context["applied_steps"].append("analysis")
 
     visualization_result = state.get("visualization_result")
     if isinstance(visualization_result, dict):
@@ -116,6 +138,13 @@ def collect_thought_steps(state: Dict[str, Any]) -> list[Dict[str, str]]:
                 make_thought_step(
                     phase="intent",
                     message="시각화 요청이 감지되어 시각화 경로를 준비했습니다.",
+                )
+            )
+        if bool(handoff.get("ask_analysis", False)):
+            steps.append(
+                make_thought_step(
+                    phase="intent",
+                    message="분석 요청이 감지되어 분석 단계를 준비했습니다.",
                 )
             )
         if bool(handoff.get("ask_report", False)):
@@ -199,6 +228,45 @@ def collect_thought_steps(state: Dict[str, Any]) -> list[Dict[str, str]]:
                     status=preprocess_status,
                 )
             )
+
+    analysis_result = _as_dict(state.get("analysis_result"))
+    if analysis_result is not None:
+        execution_status = analysis_result.get("execution_status")
+        if execution_status == "success":
+            summary = analysis_result.get("summary")
+            if isinstance(summary, str) and summary.strip():
+                steps.append(
+                    make_thought_step(
+                        phase="analysis",
+                        message=summary.strip(),
+                    )
+                )
+            else:
+                steps.append(
+                    make_thought_step(
+                        phase="analysis",
+                        message="분석 결과를 생성했습니다.",
+                    )
+                )
+        elif execution_status == "fail":
+            error_message = analysis_result.get("error_message")
+            if isinstance(error_message, str) and error_message.strip():
+                steps.append(
+                    make_thought_step(
+                        phase="analysis",
+                        message=f"분석 단계에서 오류가 발생했습니다: {error_message.strip()}",
+                        status="failed",
+                    )
+                )
+
+    clarification_question = state.get("clarification_question")
+    if isinstance(clarification_question, str) and clarification_question.strip():
+        steps.append(
+            make_thought_step(
+                phase="analysis_clarification",
+                message=clarification_question.strip(),
+            )
+        )
 
     rag_index_status = state.get("rag_index_status")
     if isinstance(rag_index_status, dict):

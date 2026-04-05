@@ -10,6 +10,14 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from sqlalchemy.orm import Session
 
 from ..core.db import get_db
+from ..modules.analysis.dependencies import (
+    build_analysis_processor,
+    build_analysis_run_service,
+    build_analysis_sandbox,
+    build_analysis_service,
+    build_results_repository,
+)
+from ..modules.analysis.service import AnalysisService
 from ..modules.datasets.dependencies import build_dataset_reader, build_dataset_repository
 from ..modules.guidelines.dependencies import build_guideline_repository, build_guideline_service
 from ..modules.guidelines.service import GuidelineService
@@ -38,6 +46,7 @@ CHECKPOINT_DB_PATH = Path(__file__).resolve().parents[3] / "storage" / "langgrap
 
 @dataclass(frozen=True)
 class WorkflowServices:
+    analysis_service: AnalysisService
     preprocess_service: PreprocessService
     rag_service: RagService
     guideline_service: GuidelineService
@@ -49,6 +58,19 @@ class WorkflowServices:
 def build_orchestration_services(*, db: Session, agent: Any) -> WorkflowServices:
     dataset_repository = build_dataset_repository(db)
     dataset_reader = build_dataset_reader()
+    visualization_service = build_visualization_service(
+        repository=dataset_repository,
+        reader=dataset_reader,
+    )
+    analysis_service = build_analysis_service(
+        repository=dataset_repository,
+        reader=dataset_reader,
+        processor=build_analysis_processor(),
+        run_service=build_analysis_run_service(),
+        sandbox=build_analysis_sandbox(),
+        results_repository=build_results_repository(db=db),
+        visualization_service=visualization_service,
+    )
     preprocess_service = build_preprocess_service(
         repository=dataset_repository,
         reader=dataset_reader,
@@ -65,16 +87,13 @@ def build_orchestration_services(*, db: Session, agent: Any) -> WorkflowServices
     guideline_rag_service = build_guideline_rag_service(
         repository=build_guideline_rag_repository(db),
     )
-    visualization_service = build_visualization_service(
-        repository=dataset_repository,
-        reader=dataset_reader,
-    )
     report_service = build_report_service(
         repository=build_report_repository(db),
         dataset_repository=dataset_repository,
         reader=dataset_reader,
     )
     return WorkflowServices(
+        analysis_service=analysis_service,
         preprocess_service=preprocess_service,
         rag_service=rag_service,
         guideline_service=guideline_service,
@@ -97,6 +116,7 @@ def build_agent_client(*, db: Session) -> "AgentClient":
         CHECKPOINT_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
         async with AsyncSqliteSaver.from_conn_string(str(CHECKPOINT_DB_PATH)) as checkpointer:
             workflow = build_main_workflow(
+                analysis_service=services.analysis_service,
                 preprocess_service=services.preprocess_service,
                 rag_service=services.rag_service,
                 guideline_service=services.guideline_service,

@@ -60,7 +60,7 @@ class ChatService:
         stage: str,
         instruction: Optional[str] = None,
     ) -> AsyncIterator[Dict[str, Any]]:
-        session = self.repository.get_session(session_id)
+        session = self._get_session(session_id)
         if session is None:
             raise RuntimeError("세션을 찾을 수 없습니다.")
 
@@ -101,7 +101,7 @@ class ChatService:
         )
 
     def get_history(self, session_id: int) -> Optional[ChatHistoryResponse]:
-        session = self.repository.get_session(session_id)
+        session = self._get_session(session_id)
         if not session:
             return None
         messages = self.repository.get_history(session_id)
@@ -109,6 +109,9 @@ class ChatService:
 
     def delete_session(self, session_id: int) -> bool:
         return self.repository.delete_session(session_id)
+
+    def _get_session(self, session_id: int) -> Optional[ChatSession]:
+        return self.repository.get_session(session_id)
 
     def _get_or_create_session(self, *, session_id: int | None, title: str) -> ChatSession:
         session = self.repository.get_session(session_id) if session_id else None
@@ -129,6 +132,7 @@ class ChatService:
         preprocess_result: Dict[str, Any] | None = None
         visualization_result: Dict[str, Any] | None = None
         output_type: str | None = None
+        output_payload: Dict[str, Any] | None = None
 
         async for event in agent_stream:
             event_type = event.get("type")
@@ -174,6 +178,9 @@ class ChatService:
                 event_output_type = event.get("output_type")
                 if isinstance(event_output_type, str) and event_output_type:
                     output_type = event_output_type
+                event_output = event.get("output")
+                if isinstance(event_output, dict):
+                    output_payload = event_output
 
         final_answer = "".join(answer_parts).strip()
         if not final_answer:
@@ -192,4 +199,6 @@ class ChatService:
             done_data["visualization_result"] = visualization_result
         if output_type:
             done_data["output_type"] = output_type
+        if isinstance(output_payload, dict):
+            done_data["output"] = output_payload
         yield {"event": "done", "data": done_data}

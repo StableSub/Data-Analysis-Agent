@@ -102,6 +102,9 @@ class AgentClient:
                 "thought_steps": thought_steps,
                 "output_type": self._extract_output_type(final_state),
             }
+            output = final_state.get("output")
+            if isinstance(output, dict):
+                done_event["output"] = output
             preprocess_result = final_state.get("preprocess_result")
             if isinstance(preprocess_result, dict):
                 done_event["preprocess_result"] = preprocess_result
@@ -201,9 +204,9 @@ class AgentClient:
             content = output.get("content")
             if isinstance(content, str) and content:
                 return content
+
         return "응답을 생성하지 못했습니다."
 
-    @staticmethod
     async def _astream_workflow_values(
         workflow: Any,
         input_payload: Any,

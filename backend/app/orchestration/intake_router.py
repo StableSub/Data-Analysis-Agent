@@ -32,6 +32,7 @@ def build_intake_router_workflow(
         return {
             "handoff": {
                 "next_step": "data_pipeline",
+                "ask_analysis": bool(intent.get("ask_analysis", False)),
                 "ask_preprocess": bool(intent.get("ask_preprocess", False)),
                 "ask_visualization": bool(intent.get("ask_visualization", False)),
                 "ask_report": bool(intent.get("ask_report", False)),

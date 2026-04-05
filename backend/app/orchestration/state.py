@@ -2,9 +2,23 @@ from __future__ import annotations
 
 from typing import Any, Dict, Literal, TypedDict
 
+from ..modules.analysis.schemas import (
+    AnalysisError,
+    AnalysisExecutionResult,
+    AnalysisPlan,
+    AnalysisPlanDraft,
+    ColumnGroundingResult,
+    FinalStatus,
+    MetadataSnapshot,
+    QuestionUnderstanding,
+    SandboxExecutionResult,
+    VisualizationOutput,
+)
+
 
 class HandoffPayload(TypedDict, total=False):
     next_step: str
+    ask_analysis: bool
     ask_preprocess: bool
     ask_visualization: bool
     ask_report: bool
@@ -92,7 +106,11 @@ class AgentState(TypedDict, total=False):
     run_id: str
     source_id: str
     active_guideline_source_id: str
+    analysis_run_id: str
+    clarification_question: str
+    clarification_answer: str
     dataset_profile: Dict[str, Any]
+    dataset_meta: MetadataSnapshot
     pending_approval: PendingApprovalPayload
     revision_request: RevisionRequestPayload
     approved_plan: Dict[str, Any]
@@ -129,10 +147,29 @@ class GuidelineGraphState(AgentState, total=False):
     guideline_result: GuidelineResultPayload
 
 
+class AnalysisGraphState(AgentState, total=False):
+    """Analysis 서브그래프 전용 상태."""
+
+    handoff: HandoffPayload
+    question_understanding: QuestionUnderstanding
+    column_grounding: ColumnGroundingResult
+    analysis_plan_draft: AnalysisPlanDraft
+    analysis_plan: AnalysisPlan
+    generated_code: str
+    validated_code: str
+    sandbox_result: SandboxExecutionResult
+    analysis_result: AnalysisExecutionResult
+    analysis_error: AnalysisError
+    retry_count: int
+    final_status: FinalStatus
+
+
 class VisualizationGraphState(AgentState, total=False):
     handoff: HandoffPayload
     preprocess_result: PreprocessResultPayload
     rag_result: RagResultPayload
+    analysis_plan: AnalysisPlan
+    analysis_result: AnalysisExecutionResult
     guideline_result: GuidelineResultPayload
     insight: Dict[str, Any]
     visualization_plan: Dict[str, Any]
@@ -144,6 +181,7 @@ class ReportGraphState(AgentState, total=False):
     handoff: HandoffPayload
     preprocess_result: PreprocessResultPayload
     rag_result: RagResultPayload
+    analysis_result: AnalysisExecutionResult
     guideline_result: GuidelineResultPayload
     insight: Dict[str, Any]
     visualization_result: VisualizationResultPayload
@@ -169,8 +207,14 @@ class MainWorkflowState(AgentState, total=False):
     guideline_result: GuidelineResultPayload
     insight: Dict[str, Any]
 
+    analysis_plan: AnalysisPlan
+    analysis_result: AnalysisExecutionResult
+    analysis_error: AnalysisError
+    final_status: FinalStatus
+
     visualization_plan: Dict[str, Any]
     visualization_result: VisualizationResultPayload
+    visualization_output: VisualizationOutput
     merged_context: Dict[str, Any]
     report_draft: Dict[str, Any]
     report_result: ReportResultPayload
