@@ -27,7 +27,6 @@ class RetrievedChunk:
     chunk_id: int
     score: float
     content: str
-    db_id: int
 
 
 class _BaseIndexedRagService:
@@ -255,7 +254,6 @@ class _BaseIndexedRagService:
                     chunk_id=row.chunk_id,
                     score=0.0,
                     content=row.content,
-                    db_id=row.id,
                 )
 
         retrieved: list[RetrievedChunk] = []
@@ -269,7 +267,6 @@ class _BaseIndexedRagService:
                     chunk_id=item.chunk_id,
                     score=score,
                     content=item.content,
-                    db_id=item.db_id,
                 )
             )
         return retrieved
@@ -490,8 +487,12 @@ class DatasetRagSyncService:
         if dataset is None:
             return False
 
+        deleted = self.dataset_service.delete_dataset(source_id)
+        if not deleted:
+            return False
+
         self.rag_service.delete_source(source_id)
-        return self.dataset_service.delete_dataset(source_id)
+        return True
 
 
 class GuidelineRagSyncService:
@@ -533,8 +534,6 @@ class GuidelineRagSyncService:
         deleted = self.guideline_service.delete_guideline(source_id)
         if not deleted:
             return False
-        try:
-            self.guideline_rag_service.delete_source(source_id)
-        except Exception:
-            pass
+
+        self.guideline_rag_service.delete_source(source_id)
         return True
