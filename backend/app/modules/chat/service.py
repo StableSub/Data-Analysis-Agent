@@ -130,6 +130,7 @@ class ChatService:
         answer_parts: list[str] = []
         thought_steps: list[Dict[str, Any]] = []
         preprocess_result: Dict[str, Any] | None = None
+        analysis_result: Dict[str, Any] | None = None
         visualization_result: Dict[str, Any] | None = None
         output_type: str | None = None
         output_payload: Dict[str, Any] | None = None
@@ -172,6 +173,9 @@ class ChatService:
                 event_preprocess = event.get("preprocess_result")
                 if isinstance(event_preprocess, dict):
                     preprocess_result = event_preprocess
+                event_analysis = event.get("analysis_result")
+                if isinstance(event_analysis, dict):
+                    analysis_result = event_analysis
                 event_visualization = event.get("visualization_result")
                 if isinstance(event_visualization, dict):
                     visualization_result = event_visualization
@@ -183,6 +187,10 @@ class ChatService:
                     output_payload = event_output
 
         final_answer = "".join(answer_parts).strip()
+        if not final_answer and isinstance(output_payload, dict):
+            output_content = output_payload.get("content")
+            if isinstance(output_content, str):
+                final_answer = output_content.strip()
         if not final_answer:
             final_answer = "응답을 생성하지 못했습니다."
 
@@ -195,6 +203,8 @@ class ChatService:
             "thought_steps": thought_steps,
             "preprocess_result": preprocess_result,
         }
+        if isinstance(analysis_result, dict):
+            done_data["analysis_result"] = analysis_result
         if isinstance(visualization_result, dict):
             done_data["visualization_result"] = visualization_result
         if output_type:

@@ -26,6 +26,22 @@ def build_analysis_workflow(
     analysis_service: AnalysisService,
     default_model: str = "gpt-5-nano",
 ):
+    def _as_dict(value: Any) -> Dict[str, Any] | None:
+        if isinstance(value, dict):
+            return value
+        model_dump = getattr(value, "model_dump", None)
+        if callable(model_dump):
+            dumped = model_dump()
+            if isinstance(dumped, dict):
+                return dumped
+        return None
+
+    def _build_failure_output(message: str) -> Dict[str, Any]:
+        return {
+            "type": "analysis_failed",
+            "content": message,
+        }
+
     # 질문 해석, 컬럼 grounding, plan 초안 생성, 최종 plan 확정까지 수행한다.
     # 모호한 질문이면 needs_clarification 상태로 종료한다.
     def analysis_planning_node(state: AnalysisGraphState) -> Dict[str, Any]:
@@ -36,14 +52,16 @@ def build_analysis_workflow(
                 "question_understanding",
                 "user_input is empty",
             )
+            error_message = analysis_error.message
             return {
-                "analysis_error": analysis_error,
+                "analysis_error": analysis_error.model_dump(),
                 "analysis_result": AnalysisExecutionResult(
                     execution_status="fail",
                     error_stage=analysis_error.stage,
                     error_message=analysis_error.message,
-                ),
+                ).model_dump(),
                 "final_status": "fail",
+                "output": _build_failure_output(error_message),
             }
 
         try:
@@ -58,8 +76,8 @@ def build_analysis_workflow(
             # 질문 자체가 모호하면 code generation으로 가지 않고 clarification으로 종료한다.
             if question_understanding.ambiguity_status != "clear":
                 return {
-                    "dataset_meta": dataset_meta,
-                    "question_understanding": question_understanding,
+                    "dataset_meta": dataset_meta.model_dump(),
+                    "question_understanding": question_understanding.model_dump(),
                     "final_status": "needs_clarification",
                     "clarification_question": question_understanding.clarification_message,
                 }
@@ -84,10 +102,10 @@ def build_analysis_workflow(
                     or question_understanding.clarification_message
                 )
                 return {
-                    "dataset_meta": dataset_meta,
-                    "question_understanding": question_understanding,
-                    "column_grounding": column_grounding,
-                    "analysis_plan_draft": analysis_plan_draft,
+                    "dataset_meta": dataset_meta.model_dump(),
+                    "question_understanding": question_understanding.model_dump(),
+                    "column_grounding": column_grounding.model_dump(),
+                    "analysis_plan_draft": analysis_plan_draft.model_dump(),
                     "final_status": "needs_clarification",
                     "clarification_question": clarification_message,
                 }
@@ -98,11 +116,11 @@ def build_analysis_workflow(
                 column_grounding=column_grounding,
             )
             return {
-                "dataset_meta": dataset_meta,
-                "question_understanding": question_understanding,
-                "column_grounding": column_grounding,
-                "analysis_plan_draft": analysis_plan_draft,
-                "analysis_plan": analysis_plan,
+                "dataset_meta": dataset_meta.model_dump(),
+                "question_understanding": question_understanding.model_dump(),
+                "column_grounding": column_grounding.model_dump(),
+                "analysis_plan_draft": analysis_plan_draft.model_dump(),
+                "analysis_plan": analysis_plan.model_dump(),
                 "final_status": "planning",
             }
         except Exception as exc:
@@ -111,14 +129,16 @@ def build_analysis_workflow(
                 str(exc),
                 detail={"source_id": source_id or ""},
             )
+            error_message = analysis_error.message
             return {
-                "analysis_error": analysis_error,
+                "analysis_error": analysis_error.model_dump(),
                 "analysis_result": AnalysisExecutionResult(
                     execution_status="fail",
                     error_stage=analysis_error.stage,
                     error_message=analysis_error.message,
-                ),
+                ).model_dump(),
                 "final_status": "fail",
+                "output": _build_failure_output(error_message),
             }
 
     # planning 결과에 따라 execution, clarification 종료, fail 종료를 분기한다.
@@ -147,12 +167,12 @@ def build_analysis_workflow(
                 f"dataset not found: {source_id or ''}",
             )
             result = {
-                "analysis_error": analysis_error,
+                "analysis_error": analysis_error.model_dump(),
                 "analysis_result": AnalysisExecutionResult(
                     execution_status="fail",
                     error_stage=analysis_error.stage,
                     error_message=analysis_error.message,
-                ),
+                ).model_dump(),
                 "final_status": "executing",
             }
             return result
@@ -166,9 +186,9 @@ def build_analysis_workflow(
         result = {
             "generated_code": execution_bundle.get("generated_code"),
             "validated_code": execution_bundle.get("validated_code"),
-            "sandbox_result": execution_bundle.get("sandbox_result"),
-            "analysis_result": execution_bundle.get("analysis_result"),
-            "analysis_error": execution_bundle.get("analysis_error"),
+            "sandbox_result": _as_dict(execution_bundle.get("sandbox_result")),
+            "analysis_result": _as_dict(execution_bundle.get("analysis_result")),
+            "analysis_error": _as_dict(execution_bundle.get("analysis_error")),
             "retry_count": execution_bundle.get("retry_count", 0),
             "final_status": "executing",
         }
@@ -177,38 +197,47 @@ def build_analysis_workflow(
     # execution 결과를 기준으로 success/fail 최종 상태를 확정한다.
     def analysis_validation_node(state: AnalysisGraphState) -> Dict[str, Any]:
         result = state.get("analysis_result")
-        if not isinstance(result, AnalysisExecutionResult):
+        if not isinstance(result, dict):
             analysis_error = analysis_service.processor.build_error(
                 "result_validation",
                 "analysis_result is missing",
             )
+            error_message = analysis_error.message
             output = {
-                "analysis_error": analysis_error,
+                "analysis_error": analysis_error.model_dump(),
                 "analysis_result": AnalysisExecutionResult(
                     execution_status="fail",
                     error_stage=analysis_error.stage,
                     error_message=analysis_error.message,
-                ),
+                ).model_dump(),
                 "final_status": "fail",
+                "output": _build_failure_output(error_message),
             }
             return output
 
-        if result.execution_status == "success":
+        execution_result = AnalysisExecutionResult.model_validate(result)
+
+        if execution_result.execution_status == "success":
             return {
                 "final_status": "success",
             }
 
         if state.get("analysis_error") is None:
             analysis_error = analysis_service.processor.build_error(
-                result.error_stage or "result_validation",
-                result.error_message or "analysis execution failed",
+                execution_result.error_stage or "result_validation",
+                execution_result.error_message or "analysis execution failed",
             )
+            error_message = analysis_error.message
             return {
-                "analysis_error": analysis_error,
+                "analysis_error": analysis_error.model_dump(),
                 "final_status": "fail",
+                "output": _build_failure_output(error_message),
             }
+        existing_error = state.get("analysis_error") or {}
+        error_message = str(existing_error.get("message") or execution_result.error_message or "analysis execution failed")
         return {
             "final_status": "fail",
+            "output": _build_failure_output(error_message),
         }
 
     # validation 결과가 success면 persist로 아니면 바로 종료한다.
@@ -219,17 +248,28 @@ def build_analysis_workflow(
 
     # 최종 성공 결과를 results 저장소에 기록한다.
     def analysis_persist_result_node(state: AnalysisGraphState) -> Dict[str, Any]:
-        result_id = analysis_service._persist_result(
-            question=str(state.get("user_input", "")),
-            source_id=resolve_target_source_id(state) or "",
-            session_id=state.get("session_id"),
-            analysis_plan=state.get("analysis_plan"),
-            generated_code=state.get("generated_code"),
-            execution_result=state["analysis_result"],
-        )
-        return {
-            "analysis_result_id": result_id,
-        }
+        try:
+            result_id = analysis_service._persist_result(
+                question=str(state.get("user_input", "")),
+                source_id=resolve_target_source_id(state) or "",
+                session_id=state.get("session_id"),
+                analysis_plan=state.get("analysis_plan"),
+                generated_code=state.get("generated_code"),
+                execution_result=AnalysisExecutionResult.model_validate(state["analysis_result"]),
+            )
+            return {
+                "analysis_result_id": result_id,
+            }
+        except Exception as exc:
+            analysis_error = analysis_service.processor.build_error(
+                "persist_result",
+                str(exc),
+            )
+            return {
+                "analysis_error": analysis_error.model_dump(),
+                "final_status": "fail",
+                "output": _build_failure_output(analysis_error.message),
+            }
 
     graph = StateGraph(AnalysisGraphState)
     graph.add_node("analysis_planning", analysis_planning_node)

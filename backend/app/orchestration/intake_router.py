@@ -29,14 +29,32 @@ def build_intake_router_workflow(
 
     def data_pipeline_node(state: IntakeRouterState) -> Dict[str, Any]:
         intent = state.get("intent") or {}
+        ask_analysis = bool(intent.get("ask_analysis", False))
+        ask_preprocess = bool(intent.get("ask_preprocess", False))
+        ask_visualization = bool(intent.get("ask_visualization", False))
+        ask_report = bool(intent.get("ask_report", False))
+        ask_guideline = bool(intent.get("ask_guideline", False))
+        next_step = (
+            "data_pipeline"
+            if any(
+                [
+                    ask_analysis,
+                    ask_preprocess,
+                    ask_visualization,
+                    ask_report,
+                    ask_guideline,
+                ]
+            )
+            else "dataset_qa"
+        )
         return {
             "handoff": {
-                "next_step": "data_pipeline",
-                "ask_analysis": bool(intent.get("ask_analysis", False)),
-                "ask_preprocess": bool(intent.get("ask_preprocess", False)),
-                "ask_visualization": bool(intent.get("ask_visualization", False)),
-                "ask_report": bool(intent.get("ask_report", False)),
-                "ask_guideline": bool(intent.get("ask_guideline", False)),
+                "next_step": next_step,
+                "ask_analysis": ask_analysis,
+                "ask_preprocess": ask_preprocess,
+                "ask_visualization": ask_visualization,
+                "ask_report": ask_report,
+                "ask_guideline": ask_guideline,
             }
         }
 

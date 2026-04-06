@@ -125,6 +125,13 @@ def collect_thought_steps(state: Dict[str, Any]) -> list[Dict[str, str]]:
                     message="데이터셋 기반 파이프라인으로 라우팅했습니다.",
                 )
             )
+        elif next_step == "dataset_qa":
+            steps.append(
+                make_thought_step(
+                    phase="intake",
+                    message="데이터셋 기반 질의응답 경로로 라우팅했습니다.",
+                )
+            )
         elif next_step == "general_question":
             steps.append(
                 make_thought_step(

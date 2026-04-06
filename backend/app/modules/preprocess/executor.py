@@ -16,26 +16,36 @@ def execute_preprocess_plan(
     dataset_profile: dict[str, Any] | None,
     preprocess_service: PreprocessService,
 ) -> dict[str, Any]:
+    def _build_failed_output(message: str) -> dict[str, Any]:
+        return {
+            "type": "preprocess_failed",
+            "content": message,
+        }
+
     if not source_id:
+        message = "source_id가 없어 전처리를 실행하지 못했습니다."
         return {
             "preprocess_result": {
                 "status": "failed",
-                "summary": "source_id가 없어 전처리를 실행하지 못했습니다.",
+                "summary": message,
                 "applied_ops_count": 0,
                 "error": "source_id is required",
-            }
+            },
+            "output": _build_failed_output(message),
         }
 
     try:
         plan = PreprocessPlan.model_validate(approved_plan or preprocess_plan or {})
     except ValidationError as exc:
+        message = "전처리 계획 형식이 올바르지 않습니다."
         return {
             "preprocess_result": {
                 "status": "failed",
-                "summary": "전처리 계획 형식이 올바르지 않습니다.",
+                "summary": message,
                 "applied_ops_count": 0,
                 "error": f"invalid operation format: {exc}",
-            }
+            },
+            "output": _build_failed_output(message),
         }
 
     if not plan.operations:
@@ -50,16 +60,18 @@ def execute_preprocess_plan(
     try:
         apply_response = preprocess_service.apply(source_id=str(source_id), operations=plan.operations)
     except (FileNotFoundError, ValueError) as exc:
+        message = f"전처리 단계에서 오류가 발생했습니다: {exc}"
         return {
             "preprocess_result": {
                 "status": "failed",
-                "summary": f"전처리 단계에서 오류가 발생했습니다: {exc}",
+                "summary": message,
                 "applied_ops_count": 0,
                 "error": str(exc),
             },
             "revision_request": {},
             "approved_plan": {},
             "pending_approval": {},
+            "output": _build_failed_output(message),
         }
 
     updated_profile = dict(dataset_profile or {})

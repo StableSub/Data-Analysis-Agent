@@ -4,6 +4,7 @@ import ast
 import re
 from typing import Any, Iterable
 
+from .sandbox import validate_analysis_source_code
 from .schemas import (
     AnalysisError,
     AnalysisExecutionResult,
@@ -23,15 +24,6 @@ from .schemas import (
     VisualizationHint,
 )
 
-_ALLOWED_IMPORT_ROOTS = {"json", "math", "statistics", "datetime", "pandas", "numpy"}
-_FORBIDDEN_CALLS = {
-    "open",
-    "exec",
-    "eval",
-    "compile",
-    "__import__",
-    "input",
-}
 _OUTPUT_KEYS = {"summary", "table", "raw_metrics", "used_columns"}
 _TIME_AXIS_BY_GRAIN = {
     "hour": "hour",
@@ -205,28 +197,7 @@ class AnalysisProcessor:
         except SyntaxError as exc:
             raise ValueError(f"generated code is not valid python: {exc}") from exc
 
-        has_print = False
-        for node in ast.walk(tree):
-            # 허용되지 않은 import와 위험한 함수 호출을 차단한다.
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    root = alias.name.split(".")[0]
-                    if root not in _ALLOWED_IMPORT_ROOTS:
-                        raise ValueError(f"forbidden import: {alias.name}")
-            elif isinstance(node, ast.ImportFrom):
-                module_name = node.module or ""
-                root = module_name.split(".")[0]
-                if root not in _ALLOWED_IMPORT_ROOTS:
-                    raise ValueError(f"forbidden import: {module_name}")
-            elif isinstance(node, ast.Call):
-                call_name = self._extract_call_name(node.func)
-                if call_name in _FORBIDDEN_CALLS:
-                    raise ValueError(f"forbidden function call: {call_name}")
-                if call_name == "print":
-                    has_print = True
-
-        if not has_print:
-            raise ValueError("generated code must print a single JSON payload")
+        validate_analysis_source_code(code, require_print=True)
 
         # 결과 JSON 출력을 위한 필수 키가 코드에 포함되어 있는지 확인한다.
         missing_keys = [key for key in _OUTPUT_KEYS if key not in code]
@@ -684,13 +655,6 @@ class AnalysisProcessor:
         if not time_context or not time_context.grain:
             return None
         return _TIME_AXIS_BY_GRAIN.get(time_context.grain, time_context.grain)
-
-    def _extract_call_name(self, func: ast.AST) -> str | None:
-        if isinstance(func, ast.Name):
-            return func.id
-        if isinstance(func, ast.Attribute):
-            return func.attr
-        return None
 
     def _ensure_question_understanding(
         self,

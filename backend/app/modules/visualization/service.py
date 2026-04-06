@@ -121,12 +121,22 @@ class VisualizationService:
         self,
         *,
         source_id: str,
-        analysis_plan: AnalysisPlan,
-        analysis_result: AnalysisExecutionResult,
+        analysis_plan: AnalysisPlan | Dict[str, Any],
+        analysis_result: AnalysisExecutionResult | Dict[str, Any],
     ) -> Dict[str, Any]:
+        resolved_plan = (
+            analysis_plan
+            if isinstance(analysis_plan, AnalysisPlan)
+            else AnalysisPlan.model_validate(analysis_plan)
+        )
+        resolved_result = (
+            analysis_result
+            if isinstance(analysis_result, AnalysisExecutionResult)
+            else AnalysisExecutionResult.model_validate(analysis_result)
+        )
         output = self.processor.build_from_analysis_result(
-            analysis_plan=analysis_plan,
-            analysis_result=analysis_result,
+            analysis_plan=resolved_plan,
+            analysis_result=resolved_result,
         )
 
         chart_data = (

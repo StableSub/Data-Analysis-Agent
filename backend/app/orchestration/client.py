@@ -108,6 +108,9 @@ class AgentClient:
             preprocess_result = final_state.get("preprocess_result")
             if isinstance(preprocess_result, dict):
                 done_event["preprocess_result"] = preprocess_result
+            analysis_result = final_state.get("analysis_result")
+            if isinstance(analysis_result, dict):
+                done_event["analysis_result"] = analysis_result
             visualization_result = final_state.get("visualization_result")
             if (
                 isinstance(visualization_result, dict)

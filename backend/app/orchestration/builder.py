@@ -81,6 +81,11 @@ def build_main_workflow(
             or output.get("type") == "cancelled"
         ):
             return "cancelled"
+        if (
+            preprocess_result.get("status") == "failed"
+            or output.get("type") == "preprocess_failed"
+        ):
+            return "failed"
         handoff = state.get("handoff") or {}
         if bool(handoff.get("ask_analysis", False)):
             return "analysis"
@@ -178,6 +183,7 @@ def build_main_workflow(
         route_after_intake,
         {
             "general_question": "general_question_terminal",
+            "dataset_qa": "rag_flow",
             "data_pipeline": "preprocess_flow",
         },
     )
@@ -188,6 +194,7 @@ def build_main_workflow(
             "analysis": "analysis_flow",
             "rag": "rag_flow",
             "cancelled": END,
+            "failed": END,
         },
     )
     graph.add_conditional_edges(
