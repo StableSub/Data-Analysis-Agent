@@ -486,14 +486,12 @@ class DatasetRagSyncService:
         return dataset
 
     def delete_dataset(self, source_id: str) -> bool:
-        deleted = self.dataset_service.delete_dataset(source_id)
-        if not deleted:
+        dataset = self.dataset_service.get_dataset_detail(source_id)
+        if dataset is None:
             return False
-        try:
-            self.rag_service.delete_source(source_id)
-        except Exception:
-            pass
-        return True
+
+        self.rag_service.delete_source(source_id)
+        return self.dataset_service.delete_dataset(source_id)
 
 
 class GuidelineRagSyncService:

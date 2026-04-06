@@ -26,6 +26,8 @@ async def upload_dataset(
             original_filename=file.filename,
             display_name=file.filename,
         )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RagEmbeddingError as exc:
         raise HTTPException(status_code=500, detail="EMBEDDING_ERROR") from exc
     except Exception as exc:

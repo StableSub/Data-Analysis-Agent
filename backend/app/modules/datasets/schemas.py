@@ -11,7 +11,6 @@ class DatasetBase(BaseModel):
     id: int
     source_id: str
     filename: str
-    storage_path: str
     filesize: int | None = None
 
 

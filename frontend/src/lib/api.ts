@@ -29,7 +29,6 @@ export interface DatasetResponse {
   id: number;
   source_id: string;
   filename: string;
-  storage_path: string;
   filesize: number | null;
 }
 

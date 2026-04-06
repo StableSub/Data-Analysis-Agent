@@ -7,6 +7,8 @@ import pandas as pd
 from .models import Dataset
 from .repository import DatasetRepository
 
+ALLOWED_DATASET_EXTENSIONS = {".csv"}
+
 
 class DatasetStorage:
     """데이터셋 파일 저장/삭제만 담당한다."""
@@ -78,6 +80,9 @@ class DatasetService:
         original_filename: str,
         display_name: Optional[str] = None,
     ) -> Dataset:
+        if Path(original_filename).suffix.lower() not in ALLOWED_DATASET_EXTENSIONS:
+            raise ValueError("CSV 파일만 업로드할 수 있습니다.")
+
         storage_path, size = self.storage.persist_file(file_stream, original_filename)
         dataset = Dataset(
             filename=display_name or original_filename,
