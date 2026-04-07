@@ -195,6 +195,31 @@ def build_main_workflow(
 
     def data_qa_terminal(state: MainWorkflowState) -> Dict[str, Any]:
         set_trace_stage("data_qa")
+        handoff = state.get("handoff") or {}
+        visualization_result = state.get("visualization_result")
+        analysis_result = state.get("analysis_result")
+        if bool(handoff.get("ask_visualization", False)) and isinstance(visualization_result, dict):
+            if visualization_result.get("status") == "generated":
+                artifact = visualization_result.get("artifact")
+                has_image_artifact = (
+                    isinstance(artifact, dict)
+                    and isinstance(artifact.get("image_base64"), str)
+                    and bool(artifact.get("image_base64"))
+                )
+                summary = str(visualization_result.get("summary") or "").strip()
+                if not summary and isinstance(analysis_result, dict):
+                    summary = str(analysis_result.get("summary") or "").strip()
+
+                prefix = "차트를 생성했습니다." if has_image_artifact else "차트 데이터를 생성했습니다."
+                answer_text = prefix if not summary else f"{prefix}\n\n{summary}"
+                return {
+                    "data_qa_result": {"content": answer_text},
+                    "output": {
+                        "type": "data_qa",
+                        "content": answer_text,
+                    },
+                }
+
         merged_context = state.get("merged_context")
         answer = answer_data_question(
             user_input=str(state.get("user_input", "")),

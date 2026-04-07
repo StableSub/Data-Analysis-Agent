@@ -10,6 +10,10 @@ import {
   type PendingApprovalPayload,
   type ThoughtStepPayload,
 } from "../../lib/api";
+import {
+  parseVisualizationResult,
+  type VisualizationResultPayload,
+} from "../../lib/visualization";
 import type { ReportSection } from "../components/genui/AssistantReportMessage";
 import type {
   ToolCallEntry,
@@ -54,22 +58,6 @@ export interface UploadedDatasetMeta {
   datasetId: number;
   sourceId: string;
   fileName: string;
-}
-
-export interface VisualizationResultPayload {
-  status?: string;
-  source_id?: string;
-  summary?: string;
-  chart?: {
-    chart_type?: string;
-    x_key?: string;
-    y_key?: string;
-  };
-  artifact?: {
-    mime_type?: string;
-    image_base64?: string;
-    code?: string;
-  };
 }
 
 export type PipelineSessionStateHint = "empty" | "ready" | "success" | "error" | "needs-user";
@@ -268,43 +256,6 @@ function parseThoughtStep(payload: unknown): ThoughtStep | null {
       ? data.audience
       : undefined;
   return { phase, message, status, displayMessage, detailMessage, audience };
-}
-
-function parseVisualizationResult(payload: unknown): VisualizationResultPayload | null {
-  if (!payload || typeof payload !== "object") {
-    return null;
-  }
-  const data = payload as Record<string, unknown>;
-  const artifactRaw = data.artifact;
-  if (!artifactRaw || typeof artifactRaw !== "object") {
-    return null;
-  }
-  const artifact = artifactRaw as Record<string, unknown>;
-  const imageBase64 = artifact.image_base64;
-  if (typeof imageBase64 !== "string" || !imageBase64) {
-    return null;
-  }
-
-  const chartRaw = data.chart;
-  const chart = chartRaw && typeof chartRaw === "object"
-    ? chartRaw as Record<string, unknown>
-    : {};
-
-  return {
-    status: typeof data.status === "string" ? data.status : "generated",
-    source_id: typeof data.source_id === "string" ? data.source_id : undefined,
-    summary: typeof data.summary === "string" ? data.summary : undefined,
-    chart: {
-      chart_type: typeof chart.chart_type === "string" ? chart.chart_type : undefined,
-      x_key: typeof chart.x_key === "string" ? chart.x_key : undefined,
-      y_key: typeof chart.y_key === "string" ? chart.y_key : undefined,
-    },
-    artifact: {
-      mime_type: typeof artifact.mime_type === "string" ? artifact.mime_type : "image/png",
-      image_base64: imageBase64,
-      code: typeof artifact.code === "string" ? artifact.code : undefined,
-    },
-  };
 }
 
 function pickVisualizationResultFromDoneRecord(

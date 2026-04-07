@@ -1,4 +1,6 @@
 import { MutableRefObject, useEffect, useState } from 'react';
+import { VisualizationResultView } from '../../app/components/visualization/VisualizationResultView';
+import type { VisualizationResultPayload } from '../../lib/visualization';
 
 type Message = {
   id: string;
@@ -9,21 +11,7 @@ type Message = {
     message: string;
     status?: 'active' | 'completed' | 'failed';
   }>;
-  visualizationResult?: {
-    status?: string;
-    source_id?: string;
-    summary?: string;
-    chart?: {
-      chart_type?: string;
-      x_key?: string;
-      y_key?: string;
-    };
-    artifact?: {
-      mime_type?: string;
-      image_base64?: string;
-      code?: string;
-    };
-  };
+  visualizationResult?: VisualizationResultPayload;
   timestamp: Date | string;
 };
 
@@ -113,17 +101,9 @@ export function ChatMessages({
                     )}
                     {msg.role === 'assistant' &&
                       msg.visualizationResult?.status === 'generated' &&
-                      typeof msg.visualizationResult.artifact?.image_base64 === 'string' &&
-                      msg.visualizationResult.artifact.image_base64 && (
+                      msg.visualizationResult && (
                         <div className="mt-3 pt-3 border-t border-gray-200 dark:border-white/10">
-                          <p className="text-xs text-gray-600 dark:text-gray-300 mb-2">
-                            시각화: {msg.visualizationResult.chart?.x_key || 'x'} vs {msg.visualizationResult.chart?.y_key || 'y'}
-                          </p>
-                          <img
-                            src={`data:${msg.visualizationResult.artifact?.mime_type || 'image/png'};base64,${msg.visualizationResult.artifact?.image_base64}`}
-                            alt={`${msg.visualizationResult.chart?.chart_type || 'chart'} visualization`}
-                            className="w-full rounded-lg bg-white dark:bg-[#212121] border border-gray-200 dark:border-white/10"
-                          />
+                          <VisualizationResultView visualization={msg.visualizationResult} />
                         </div>
                       )}
                   </div>

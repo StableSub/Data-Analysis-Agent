@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { User, Role, Permission, ROLE_DEFINITIONS, AuditLogEntry } from '../types/rbac';
 import { apiRequest } from '../lib/api';
+import type { VisualizationResultPayload } from '../lib/visualization';
 
 interface UploadedFile {
   id: string;
@@ -25,21 +26,7 @@ interface ChatMessage {
     message: string;
     status?: 'active' | 'completed' | 'failed';
   }>;
-  visualizationResult?: {
-    status?: string;
-    source_id?: string;
-    summary?: string;
-    chart?: {
-      chart_type?: string;
-      x_key?: string;
-      y_key?: string;
-    };
-    artifact?: {
-      mime_type?: string;
-      image_base64?: string;
-      code?: string;
-    };
-  };
+  visualizationResult?: VisualizationResultPayload;
   timestamp: Date;
 }
 

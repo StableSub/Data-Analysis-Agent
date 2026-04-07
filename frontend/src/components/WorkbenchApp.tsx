@@ -11,6 +11,7 @@ import { SelectedFilesBar } from './workbench/SelectedFilesBar';
 import { ChatMessages } from './workbench/ChatMessages';
 import { ChatInputBar } from './workbench/ChatInputBar';
 import { apiRequest, buildApiUrl } from '../lib/api';
+import type { VisualizationResultPayload } from '../lib/visualization';
 import { toast } from 'sonner';
 
 // 데이터 분석(AI 챗봇)과 데이터 전처리 2가지 기능만
@@ -40,22 +41,6 @@ interface PreprocessResultPayload {
   status?: string;
   output_source_id?: string;
   output_filename?: string;
-}
-
-interface VisualizationResultPayload {
-  status?: string;
-  source_id?: string;
-  summary?: string;
-  chart?: {
-    chart_type?: string;
-    x_key?: string;
-    y_key?: string;
-  };
-  artifact?: {
-    mime_type?: string;
-    image_base64?: string;
-    code?: string;
-  };
 }
 
 function parseThinkingStep(payload: unknown): ThinkingStep | null {
