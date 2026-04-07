@@ -615,12 +615,12 @@ class EDAService:
         5. 실패 시 fallback(rule-based) 반환
         """
 
-        # 1. 프로파일 로드
+        # 프로파일 로드
         profile = self.profile_service.build_profile(source_id)
         if not profile.available:
             return None
 
-        # 2. 기본 EDA 결과 생성
+        # 기본 EDA 결과 생성
         summary = self._build_summary_response(profile)
         quality = self._build_quality_response(profile)
         column_types = self._build_column_types_response(profile)
@@ -634,7 +634,7 @@ class EDAService:
         stats = self._build_stats_response(source_id, profile, df)
         correlations = self._build_correlations_response(source_id, profile, df, limit=3)
 
-        # 3. 🔥 문제 감지 (rule-based)
+        # 문제 감지 (rule-based)
         detected_issues = detect_issues(
             quality=quality,
             stats=stats,
@@ -643,20 +643,20 @@ class EDAService:
         )
 
 
-        # 4. 🔥 fallback 결과 (항상 준비)
+        # fallback 결과 
         fallback = _issues_to_recommendation(detected_issues)
 
-        # 5. 🔥 LLM용 summary 구성 (핵심)
+        # LLM용 summary 구성 
         prompt_summary = self._build_prompt_summary(
             summary,
             quality,
             column_types,
         )
 
-        # 6. (선택) RAG — 아직 없으면 빈 문자열
+        # RAG — 아직 없으면 빈 문자열
         rag_context = ""
 
-        # 7. 🔥 LLM 추천 시도
+        # LLM 추천 시도
         try:
             result = recommend(
                 eda_summary=prompt_summary,
@@ -669,7 +669,6 @@ class EDAService:
             return result
 
         except Exception as exc:
-            # 🔥 LLM 실패 → fallback
             logger.warning(
                 "전처리 추천 LLM 실패 → fallback 사용. source_id=%s error=%s",
                 source_id,
