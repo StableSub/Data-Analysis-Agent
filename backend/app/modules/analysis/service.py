@@ -3,11 +3,11 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-import pandas as pd
-
 from ..datasets.models import Dataset
 from ..datasets.repository import DatasetRepository
-from ..datasets.service import DatasetReader
+from ..planner.service import PlannerService
+from ..profiling.schemas import DatasetContext
+from ..profiling.service import DatasetContextService
 from ..results.models import AnalysisResult as AnalysisResultModel
 from ..results.repository import ResultsRepository
 from ..visualization.service import VisualizationService
@@ -32,7 +32,8 @@ class AnalysisService:
         self,
         *,
         dataset_repository: DatasetRepository,
-        dataset_reader: DatasetReader,
+        dataset_context_service: DatasetContextService,
+        planner_service: PlannerService,
         run_service: AnalysisRunService,
         processor: AnalysisProcessor,
         sandbox: AnalysisSandbox,
@@ -41,7 +42,8 @@ class AnalysisService:
         max_retries: int = 1,
     ) -> None:
         self.dataset_repository = dataset_repository
-        self.dataset_reader = dataset_reader
+        self.dataset_context_service = dataset_context_service
+        self.planner_service = planner_service
         self.run_service = run_service
         self.processor = processor
         self.sandbox = sandbox
@@ -49,34 +51,12 @@ class AnalysisService:
         self.visualization_service = visualization_service
         self.max_retries = max_retries
 
-    # dataset 샘플을 읽어 컬럼/타입 기준의 MetadataSnapshot을 만든다.
+    # profiling 기반 dataset_context를 내부 MetadataSnapshot 호환 shape로 변환한다.
     def build_dataset_metadata(self, source_id: str) -> MetadataSnapshot:
-        dataset = self._get_dataset(source_id)
-        if dataset is None:
-            raise FileNotFoundError(f"dataset not found: {source_id}")
-
-        sample_df = self.dataset_reader.read_csv(dataset.storage_path, nrows=2000)
-        numeric_columns = [
-            str(column)
-            for column in sample_df.select_dtypes(include="number").columns.tolist()
-        ]
-        datetime_columns = self._infer_datetime_columns(sample_df, numeric_columns)
-        categorical_columns = [
-            str(column)
-            for column in sample_df.columns
-            if str(column) not in numeric_columns
-            and str(column) not in datetime_columns
-        ]
-        return MetadataSnapshot(
-            columns=[str(column) for column in sample_df.columns.tolist()],
-            dtypes={
-                str(column): str(dtype) for column, dtype in sample_df.dtypes.items()
-            },
-            numeric_columns=numeric_columns,
-            datetime_columns=datetime_columns,
-            categorical_columns=categorical_columns,
-            row_count=len(sample_df),
-        )
+        dataset_context = self.dataset_context_service.build_context(source_id)
+        if not dataset_context.available:
+            raise FileNotFoundError(f"dataset context unavailable: {source_id}")
+        return self._build_metadata_snapshot(dataset_context)
 
     # analysis 전체 상위 흐름을 조합한다.
     # 질문 해석, plan 생성/검증, 코드 생성/실행, 시각화 연계를 순서대로 수행한다.
@@ -86,79 +66,45 @@ class AnalysisService:
         question: str,
         source_id: str,
         session_id: str | None = None,
+        request_context: str | None = None,
+        guideline_context: dict[str, Any] | None = None,
         model_id: str | None = None,
     ) -> dict[str, Any]:
         dataset = self._get_dataset(source_id)
         if dataset is None:
             raise FileNotFoundError(f"dataset not found: {source_id}")
+        dataset_context = self.dataset_context_service.build_context(source_id)
+        if not dataset_context.available:
+            raise FileNotFoundError(f"dataset context unavailable: {source_id}")
 
-        dataset_meta = self.build_dataset_metadata(source_id)
-        question_understanding = self.run_service.build_question_understanding(
-            question=question,
-            dataset_meta=dataset_meta,
+        planning_result = self.planner_service.plan(
+            user_input=question,
+            request_context=request_context,
+            source_id=source_id,
+            dataset_context=dataset_context,
+            guideline_context=guideline_context,
             model_id=model_id,
         )
-        if question_understanding.ambiguity_status != "clear":
-            return self._build_clarification_response(
-                question_understanding=question_understanding,
-                dataset_meta=dataset_meta,
-            )
-        column_grounding = self.processor.ground_columns(
-            question_understanding=question_understanding,
-            dataset_meta=dataset_meta,
-        )
-        plan_draft = self.run_service.build_analysis_plan_draft(
-            question=question,
-            question_understanding=question_understanding,
-            column_grounding=column_grounding,
-            dataset_meta=dataset_meta,
-            model_id=model_id,
-        )
-        if plan_draft.ambiguity_status != "clear":
-            return self._build_clarification_response(
-                question_understanding=question_understanding,
-                dataset_meta=dataset_meta,
-                column_grounding=column_grounding,
-                plan_draft=plan_draft,
-            )
-
-        try:
-            analysis_plan = self.processor.validate_and_finalize_plan(
-                plan_draft=plan_draft,
-                dataset_meta=dataset_meta,
-                column_grounding=column_grounding,
-            )
-        except Exception as exc:
-            analysis_error = self.processor.build_error(
-                "plan_validation",
-                str(exc),
-                detail={"source_id": source_id},
-            )
-            execution_result = AnalysisExecutionResult(
-                execution_status="fail",
-                error_stage=analysis_error.stage,
-                error_message=analysis_error.message,
-            )
-            result_id = self._persist_result(
-                question=question,
-                source_id=source_id,
-                session_id=session_id,
-                analysis_plan=None,
-                generated_code=None,
-                execution_result=execution_result,
-            )
+        if planning_result.needs_clarification:
             return {
-                "dataset_meta": dataset_meta,
-                "question_understanding": question_understanding,
-                "column_grounding": column_grounding,
-                "analysis_plan_draft": plan_draft,
+                "planning_result": planning_result,
+                "dataset_meta": None,
+                "question_understanding": None,
+                "column_grounding": None,
+                "analysis_plan_draft": None,
                 "analysis_plan": None,
-                "analysis_result": execution_result,
-                "analysis_error": analysis_error,
-                "final_status": "fail",
-                "analysis_result_id": result_id,
+                "analysis_result": None,
+                "analysis_error": None,
+                "final_status": "needs_clarification",
+                "clarification_question": planning_result.clarification_question,
+                "analysis_result_id": None,
                 "visualization_output": None,
             }
+        if planning_result.route != "analysis" or planning_result.analysis_plan is None:
+            raise ValueError("planner did not route this request to analysis")
+
+        analysis_plan = planning_result.analysis_plan
+        dataset_meta = analysis_plan.metadata_snapshot
 
         execution_bundle = self._run_code_generation_loop(
             question=question,
@@ -182,10 +128,11 @@ class AnalysisService:
         )
 
         return {
+            "planning_result": planning_result,
             "dataset_meta": dataset_meta,
-            "question_understanding": question_understanding,
-            "column_grounding": column_grounding,
-            "analysis_plan_draft": plan_draft,
+            "question_understanding": None,
+            "column_grounding": None,
+            "analysis_plan_draft": None,
             "analysis_plan": analysis_plan,
             "generated_code": execution_bundle.get("generated_code"),
             "validated_code": execution_bundle.get("validated_code"),
@@ -376,19 +323,13 @@ class AnalysisService:
     def _get_dataset(self, source_id: str) -> Dataset | None:
         return self.dataset_repository.get_by_source_id(source_id)
 
-    def _infer_datetime_columns(
-        self,
-        df: pd.DataFrame,
-        numeric_columns: list[str],
-    ) -> list[str]:
-        datetime_columns: list[str] = []
-        numeric_set = set(numeric_columns)
-        for column in df.columns:
-            column_name = str(column)
-            if column_name in numeric_set:
-                continue
-            parsed = pd.to_datetime(df[column], errors="coerce")
-            parsed_ratio = float(parsed.notna().mean()) if len(parsed) > 0 else 0.0
-            if parsed_ratio >= 0.7:
-                datetime_columns.append(column_name)
-        return datetime_columns
+    @staticmethod
+    def _build_metadata_snapshot(dataset_context: DatasetContext) -> MetadataSnapshot:
+        return MetadataSnapshot(
+            columns=dataset_context.columns,
+            dtypes=dataset_context.dtypes,
+            numeric_columns=dataset_context.numeric_columns,
+            datetime_columns=dataset_context.datetime_columns,
+            categorical_columns=dataset_context.categorical_columns,
+            row_count=dataset_context.row_count_total,
+        )

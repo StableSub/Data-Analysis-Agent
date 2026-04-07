@@ -18,6 +18,8 @@ def run_analysis(
             question=request.question,
             source_id=request.source_id,
             session_id=request.session_id,
+            request_context=request.request_context,
+            guideline_context=request.guideline_context,
             model_id=request.model_id,
         )
     except FileNotFoundError as exc:

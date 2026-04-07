@@ -21,6 +21,10 @@ def build_merged_context(state: Dict[str, Any]) -> Dict[str, Any]:
     if isinstance(request_context, str) and request_context.strip():
         merged_context["request_context"] = request_context.strip()
 
+    dataset_context = state.get("dataset_context")
+    if isinstance(dataset_context, dict):
+        merged_context["dataset_context"] = dataset_context
+
     handoff = state.get("handoff")
     if isinstance(handoff, dict):
         merged_context["request_flags"] = {
@@ -50,16 +54,11 @@ def build_merged_context(state: Dict[str, Any]) -> Dict[str, Any]:
     guideline_result = state.get("guideline_result")
     if isinstance(guideline_result, dict):
         merged_context["guideline_result"] = guideline_result
-        merged_context["guideline_context"] = {
-            "active_source_id": state.get("active_guideline_source_id", ""),
-            "status": guideline_result.get("status", ""),
-            "retrieved_count": int(guideline_result.get("retrieved_count", 0) or 0),
-            "has_evidence": bool(guideline_result.get("has_evidence", False)),
-            "filename": guideline_result.get("filename", ""),
-            "guideline_id": guideline_result.get("guideline_id", ""),
-            "evidence_summary": guideline_result.get("evidence_summary", ""),
-        }
-        if bool(guideline_result.get("has_evidence", False)):
+
+    guideline_context = state.get("guideline_context")
+    if isinstance(guideline_context, dict):
+        merged_context["guideline_context"] = guideline_context
+        if bool(guideline_context.get("has_evidence", False)):
             merged_context["applied_steps"].append("guideline")
 
     insight = state.get("insight")
@@ -118,7 +117,35 @@ def collect_thought_steps(state: Dict[str, Any]) -> list[Dict[str, str]]:
     handoff = state.get("handoff")
     if isinstance(handoff, dict):
         next_step = handoff.get("next_step")
-        if next_step == "data_pipeline":
+        if next_step == "dataset_selected":
+            steps.append(
+                make_thought_step(
+                    phase="intake",
+                    message="데이터셋 선택 상태를 확인하고 planner 기반 경로를 준비했습니다.",
+                )
+            )
+        elif next_step == "analysis":
+            steps.append(
+                make_thought_step(
+                    phase="planning",
+                    message="planner가 기본 분석 경로를 선택했습니다.",
+                )
+            )
+        elif next_step == "fallback_rag":
+            steps.append(
+                make_thought_step(
+                    phase="planning",
+                    message="planner가 fallback RAG 경로를 선택했습니다.",
+                )
+            )
+        elif next_step == "general_question":
+            steps.append(
+                make_thought_step(
+                    phase="intake",
+                    message="일반 질의 경로로 라우팅했습니다.",
+                )
+            )
+        elif next_step == "data_pipeline":
             steps.append(
                 make_thought_step(
                     phase="intake",
@@ -130,13 +157,6 @@ def collect_thought_steps(state: Dict[str, Any]) -> list[Dict[str, str]]:
                 make_thought_step(
                     phase="intake",
                     message="데이터셋 기반 질의응답 경로로 라우팅했습니다.",
-                )
-            )
-        elif next_step == "general_question":
-            steps.append(
-                make_thought_step(
-                    phase="intake",
-                    message="일반 질의 경로로 라우팅했습니다.",
                 )
             )
 

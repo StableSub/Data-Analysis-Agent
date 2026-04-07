@@ -23,12 +23,17 @@ from ..modules.eda.dependencies import build_eda_service
 from ..modules.eda.service import EDAService
 from ..modules.guidelines.dependencies import build_guideline_repository, build_guideline_service
 from ..modules.guidelines.service import GuidelineService
+from ..modules.planner.dependencies import build_planner_service
+from ..modules.planner.service import PlannerService
 from ..modules.preprocess.dependencies import (
     build_preprocess_processor,
     build_preprocess_service,
 )
 from ..modules.preprocess.service import PreprocessService
-from ..modules.profiling.dependencies import build_dataset_profile_service
+from ..modules.profiling.dependencies import (
+    build_dataset_context_service,
+    build_dataset_profile_service,
+)
 from ..modules.rag.dependencies import (
     build_guideline_rag_repository,
     build_guideline_rag_service,
@@ -49,6 +54,7 @@ CHECKPOINT_DB_PATH = Path(__file__).resolve().parents[3] / "storage" / "langgrap
 
 @dataclass(frozen=True)
 class WorkflowServices:
+    planner_service: PlannerService
     analysis_service: AnalysisService
     preprocess_service: PreprocessService
     eda_service: EDAService
@@ -66,6 +72,13 @@ def build_orchestration_services(*, db: Session, agent: Any) -> WorkflowServices
         repository=dataset_repository,
         reader=dataset_reader,
     )
+    dataset_context_service = build_dataset_context_service(
+        repository=dataset_repository,
+        profile_service=profile_service,
+    )
+    planner_service = build_planner_service(
+        dataset_context_service=dataset_context_service,
+    )
     eda_service = build_eda_service(
         profile_service=profile_service,
         dataset_repository=dataset_repository,
@@ -77,7 +90,8 @@ def build_orchestration_services(*, db: Session, agent: Any) -> WorkflowServices
     )
     analysis_service = build_analysis_service(
         repository=dataset_repository,
-        reader=dataset_reader,
+        dataset_context_service=dataset_context_service,
+        planner_service=planner_service,
         processor=build_analysis_processor(),
         run_service=build_analysis_run_service(),
         sandbox=build_analysis_sandbox(),
@@ -103,10 +117,9 @@ def build_orchestration_services(*, db: Session, agent: Any) -> WorkflowServices
     )
     report_service = build_report_service(
         repository=build_report_repository(db),
-        dataset_repository=dataset_repository,
-        reader=dataset_reader,
     )
     return WorkflowServices(
+        planner_service=planner_service,
         analysis_service=analysis_service,
         preprocess_service=preprocess_service,
         eda_service=eda_service,
@@ -131,6 +144,7 @@ def build_agent_client(*, db: Session) -> "AgentClient":
         CHECKPOINT_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
         async with AsyncSqliteSaver.from_conn_string(str(CHECKPOINT_DB_PATH)) as checkpointer:
             workflow = build_main_workflow(
+                planner_service=services.planner_service,
                 analysis_service=services.analysis_service,
                 preprocess_service=services.preprocess_service,
                 eda_service=services.eda_service,

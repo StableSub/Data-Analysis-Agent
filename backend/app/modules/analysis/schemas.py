@@ -274,4 +274,6 @@ class AnalysisRunRequest(StrictModel):
     question: str
     source_id: str
     session_id: str | None = None
+    request_context: str | None = None
+    guideline_context: dict[str, Any] | None = None
     model_id: str | None = None

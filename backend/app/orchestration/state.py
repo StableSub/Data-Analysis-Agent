@@ -48,6 +48,39 @@ class GuidelineResultPayload(TypedDict, total=False):
     status: str
 
 
+class DatasetContextPayload(TypedDict, total=False):
+    source_id: str
+    filename: str
+    available: bool
+    row_count_total: int
+    row_count_sample: int
+    column_count: int
+    columns: list[str]
+    dtypes: Dict[str, str]
+    logical_types: Dict[str, str]
+    type_columns: Dict[str, list[str]]
+    numeric_columns: list[str]
+    datetime_columns: list[str]
+    categorical_columns: list[str]
+    boolean_columns: list[str]
+    identifier_columns: list[str]
+    group_key_columns: list[str]
+    sample_rows: list[Dict[str, Any]]
+    missing_rates: Dict[str, float]
+    quality_summary: Dict[str, Any]
+
+
+class GuidelineContextPayload(TypedDict, total=False):
+    guideline_source_id: str
+    guideline_id: str
+    filename: str
+    status: str
+    retrieved_chunks: list[Dict[str, Any]]
+    retrieved_count: int
+    has_evidence: bool
+    evidence_summary: str
+
+
 class VisualizationResultPayload(TypedDict, total=False):
     status: str
     source_id: str
@@ -69,6 +102,17 @@ class ReportResultPayload(TypedDict, total=False):
 class OutputPayload(TypedDict, total=False):
     type: str
     content: str
+
+
+class PlanningResultPayload(TypedDict, total=False):
+    route: str
+    needs_clarification: bool
+    clarification_question: str
+    preprocess_required: bool
+    analysis_plan: Dict[str, Any] | None
+    need_visualization: bool
+    need_report: bool
+    guideline_context_used: bool
 
 
 class PendingApprovalPayload(TypedDict, total=False):
@@ -98,6 +142,9 @@ class AgentState(TypedDict, total=False):
     analysis_run_id: str
     clarification_question: str
     clarification_answer: str
+    planning_result: PlanningResultPayload
+    dataset_context: DatasetContextPayload
+    guideline_context: GuidelineContextPayload
     dataset_profile: Dict[str, Any]
     pending_approval: PendingApprovalPayload
     revision_request: RevisionRequestPayload
@@ -140,6 +187,7 @@ class GuidelineGraphState(AgentState, total=False):
     handoff: HandoffPayload
     guideline_index_status: Dict[str, Any]
     guideline_data_exists: bool
+    guideline_context: GuidelineContextPayload
     guideline_result: GuidelineResultPayload
 
 
@@ -147,6 +195,7 @@ class AnalysisGraphState(AgentState, total=False):
     """Analysis 서브그래프 전용 상태."""
 
     handoff: HandoffPayload
+    preprocess_result: PreprocessResultPayload
     generated_code: str
     validated_code: str
     retry_count: int

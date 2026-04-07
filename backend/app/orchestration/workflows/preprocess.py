@@ -7,10 +7,13 @@ from typing import Any, Dict
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 
+from backend.app.modules.planner.service import (
+    build_preprocess_decision_from_planning_result,
+)
+from backend.app.modules.planner.schemas import PlanningResult
 from backend.app.modules.preprocess.executor import execute_preprocess_plan
 from backend.app.modules.preprocess.planner import (
     PreprocessPlan,
-    build_preprocess_decision,
     build_preprocess_plan,
     build_preprocess_review_payload,
     get_revision_instruction,
@@ -37,13 +40,16 @@ def build_preprocess_workflow(
         }
 
     def preprocess_decision_node(state: PreprocessGraphState) -> Dict[str, Any]:
-        decision = build_preprocess_decision(
-            user_input=str(state.get("user_input", "")),
-            dataset_profile=state.get("dataset_profile", {}),
-            handoff=state.get("handoff"),
-            model_id=state.get("model_id"),
-            default_model=default_model,
-        )
+        planning_result = state.get("planning_result")
+        if isinstance(planning_result, dict):
+            decision = build_preprocess_decision_from_planning_result(
+                PlanningResult.model_validate(planning_result)
+            )
+            return {"preprocess_decision": decision}
+        decision = {
+            "step": "skip_preprocess",
+            "reason_summary": "planner 결과가 없어 전처리를 생략합니다.",
+        }
         return {"preprocess_decision": decision}
 
     def route_by_decision(state: PreprocessGraphState) -> str:

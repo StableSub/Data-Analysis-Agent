@@ -211,6 +211,7 @@ class AgentClient:
         return "응답을 생성하지 못했습니다."
 
     async def _astream_workflow_values(
+        self,
         workflow: Any,
         input_payload: Any,
         config: Dict[str, Any],

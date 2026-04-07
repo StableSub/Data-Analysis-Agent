@@ -1,112 +1,35 @@
-from pathlib import Path
-from typing import Any, Dict, List
+from __future__ import annotations
 
-import pandas as pd
+from typing import Any, Dict, List, Mapping
 
-from ..datasets.repository import DatasetRepository
-from ..datasets.service import DatasetReader
 from .ai import draft_report
 from .models import Report
 from .repository import ReportRepository
 
-def _safe_float(value: Any, ndigits: int = 4) -> float | None:
-    if pd.isna(value):
-        return None
-    return round(float(value), ndigits)
+
+def _as_dict(value: Any) -> Dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    model_dump = getattr(value, "model_dump", None)
+    if callable(model_dump):
+        dumped = model_dump()
+        if isinstance(dumped, dict):
+            return dumped
+    return {}
 
 
-def _empty_dataset_metrics(*, source_id: str, status: str) -> Dict[str, Any]:
+def _as_list(value: Any) -> list[Any]:
+    if isinstance(value, list):
+        return value
+    return []
+
+
+def _build_table_metrics(table: list[Dict[str, Any]]) -> Dict[str, Any]:
+    columns = list(table[0].keys()) if table else []
     return {
-        "status": status,
-        "source_id": source_id,
-        "row_count": 0,
-        "column_count": 0,
-        "missing": {
-            "missing_cells": 0,
-            "total_cells": 0,
-            "missing_rate": 0.0,
-            "top_missing_columns": [],
-        },
-        "numeric_stats": [],
-        "top_correlations": [],
-    }
-
-
-def _build_dataset_metrics(*, df: pd.DataFrame, source_id: str) -> Dict[str, Any]:
-    row_count = int(df.shape[0])
-    column_count = int(df.shape[1])
-    total_cells = row_count * column_count
-    missing_cells = int(df.isna().sum().sum())
-    missing_rate = (missing_cells / total_cells) if total_cells > 0 else 0.0
-
-    missing_by_column = df.isna().mean().sort_values(ascending=False)
-    top_missing_columns = [
-        {
-            "column": str(column),
-            "missing_rate": round(float(rate), 4),
-        }
-        for column, rate in missing_by_column.head(5).items()
-        if float(rate) > 0
-    ]
-
-    numeric_df = df.select_dtypes(include="number")
-    numeric_stats: list[Dict[str, Any]] = []
-    for column in numeric_df.columns[:8]:
-        series = numeric_df[column].dropna()
-        if series.empty:
-            continue
-        numeric_stats.append(
-            {
-                "column": str(column),
-                "min": _safe_float(series.min()),
-                "max": _safe_float(series.max()),
-                "mean": _safe_float(series.mean()),
-                "median": _safe_float(series.median()),
-                "std": _safe_float(series.std()),
-            }
-        )
-
-    correlation_pairs: list[Dict[str, Any]] = []
-    if numeric_df.shape[1] >= 2:
-        corr_matrix = numeric_df.corr(numeric_only=True)
-        cols = list(corr_matrix.columns)
-        for i, col1 in enumerate(cols):
-            for col2 in cols[i + 1 :]:
-                value = corr_matrix.loc[col1, col2]
-                if pd.isna(value):
-                    continue
-                corr_value = float(value)
-                correlation_pairs.append(
-                    {
-                        "column_1": str(col1),
-                        "column_2": str(col2),
-                        "correlation": round(corr_value, 4),
-                        "abs_corr": abs(corr_value),
-                    }
-                )
-    correlation_pairs.sort(key=lambda item: item["abs_corr"], reverse=True)
-    top_correlations = [
-        {
-            "column_1": item["column_1"],
-            "column_2": item["column_2"],
-            "correlation": item["correlation"],
-        }
-        for item in correlation_pairs[:5]
-    ]
-
-    return {
-        "status": "available",
-        "source_id": source_id,
-        "row_count": row_count,
-        "column_count": column_count,
-        "missing": {
-            "missing_cells": missing_cells,
-            "total_cells": total_cells,
-            "missing_rate": round(missing_rate, 4),
-            "top_missing_columns": top_missing_columns,
-        },
-        "numeric_stats": numeric_stats,
-        "top_correlations": top_correlations,
+        "row_count": len(table),
+        "columns": columns,
+        "preview_rows": table[:5],
     }
 
 
@@ -117,13 +40,9 @@ class ReportService:
         self,
         repository: ReportRepository,
         *,
-        dataset_repository: DatasetRepository,
-        reader: DatasetReader,
         default_model: str = "gpt-5-nano",
     ) -> None:
         self.repository = repository
-        self.dataset_repository = dataset_repository
-        self.reader = reader
         self.default_model = default_model
 
     def save_report(self, *, session_id: int, summary_text: str) -> Report:
@@ -134,44 +53,131 @@ class ReportService:
             )
         )
 
-    def build_metrics_for_source(self, source_id: str) -> Dict[str, Any]:
-        if not source_id:
-            return _empty_dataset_metrics(source_id=source_id, status="no_source")
+    def build_metrics_from_results(
+        self,
+        *,
+        analysis_result: Mapping[str, Any] | None,
+        dataset_context: Mapping[str, Any] | None,
+    ) -> Dict[str, Any]:
+        analysis_payload = dict(analysis_result or {})
+        dataset_payload = dict(dataset_context or {})
+        raw_metrics = _as_dict(analysis_payload.get("raw_metrics"))
+        table = [
+            row
+            for row in _as_list(analysis_payload.get("table"))
+            if isinstance(row, dict)
+        ]
+        quality_summary = _as_dict(dataset_payload.get("quality_summary"))
 
-        dataset = self.dataset_repository.get_by_source_id(source_id)
-        if dataset is None or not dataset.storage_path:
-            return _empty_dataset_metrics(source_id=source_id, status="dataset_missing")
+        if raw_metrics:
+            primary_source = "analysis_result.raw_metrics"
+            primary_metrics = raw_metrics
+        elif table:
+            primary_source = "analysis_result.table"
+            primary_metrics = _build_table_metrics(table)
+        else:
+            primary_source = "dataset_context.quality_summary"
+            primary_metrics = quality_summary
 
-        file_path = Path(dataset.storage_path)
-        if not file_path.exists() or not file_path.is_file():
-            return _empty_dataset_metrics(source_id=source_id, status="dataset_missing")
-        if file_path.suffix.lower() != ".csv":
-            return _empty_dataset_metrics(source_id=source_id, status="unsupported_format")
+        return {
+            "primary_source": primary_source,
+            "primary_metrics": primary_metrics,
+            "raw_metrics": raw_metrics,
+            "table_metrics": _build_table_metrics(table),
+            "quality_summary": quality_summary,
+            "used_columns": [str(column) for column in _as_list(analysis_payload.get("used_columns"))],
+            "analysis_summary": str(analysis_payload.get("summary") or ""),
+            "analysis_execution_status": str(
+                analysis_payload.get("execution_status") or "unknown"
+            ),
+            "dataset_overview": {
+                "source_id": str(dataset_payload.get("source_id") or ""),
+                "filename": str(dataset_payload.get("filename") or ""),
+                "row_count_total": int(dataset_payload.get("row_count_total", 0) or 0),
+                "column_count": int(dataset_payload.get("column_count", 0) or 0),
+                "columns": [str(column) for column in _as_list(dataset_payload.get("columns"))],
+            },
+        }
 
-        try:
-            df = self.reader.read_csv(dataset.storage_path, nrows=5000)
-        except Exception:
-            return _empty_dataset_metrics(source_id=source_id, status="read_error")
-        return _build_dataset_metrics(df=df, source_id=source_id)
+    def build_report_payload(
+        self,
+        *,
+        analysis_result: Mapping[str, Any] | None,
+        visualization_result: Mapping[str, Any] | None,
+        guideline_context: Mapping[str, Any] | None,
+        dataset_context: Mapping[str, Any] | None,
+    ) -> Dict[str, Any]:
+        metrics = self.build_metrics_from_results(
+            analysis_result=analysis_result,
+            dataset_context=dataset_context,
+        )
+        analysis_payload = dict(analysis_result or {})
+        visualization_payload = dict(visualization_result or {})
+        guideline_payload = dict(guideline_context or {})
+        dataset_payload = dict(dataset_context or {})
+
+        return {
+            "analysis_result": {
+                "summary": str(analysis_payload.get("summary") or ""),
+                "execution_status": str(analysis_payload.get("execution_status") or ""),
+                "used_columns": metrics["used_columns"],
+                "raw_metrics": metrics["raw_metrics"],
+                "table": _as_list(analysis_payload.get("table"))[:10],
+            },
+            "visualization_result": {
+                "status": str(visualization_payload.get("status") or ""),
+                "summary": str(visualization_payload.get("summary") or ""),
+                "chart_type": str(
+                    visualization_payload.get("chart_type")
+                    or _as_dict(visualization_payload.get("chart_data")).get("chart_type")
+                    or _as_dict(visualization_payload.get("chart")).get("chart_type")
+                    or ""
+                ),
+                "caption": str(
+                    _as_dict(visualization_payload.get("chart_data")).get("caption")
+                    or _as_dict(visualization_payload.get("chart")).get("caption")
+                    or ""
+                ),
+            },
+            "guideline_context": {
+                "status": str(guideline_payload.get("status") or ""),
+                "has_evidence": bool(guideline_payload.get("has_evidence", False)),
+                "retrieved_count": int(guideline_payload.get("retrieved_count", 0) or 0),
+                "evidence_summary": str(guideline_payload.get("evidence_summary") or ""),
+                "filename": str(guideline_payload.get("filename") or ""),
+            },
+            "dataset_context": {
+                "source_id": str(dataset_payload.get("source_id") or ""),
+                "filename": str(dataset_payload.get("filename") or ""),
+                "row_count_total": int(dataset_payload.get("row_count_total", 0) or 0),
+                "column_count": int(dataset_payload.get("column_count", 0) or 0),
+                "quality_summary": metrics["quality_summary"],
+            },
+            "metrics": metrics,
+        }
 
     def build_report_draft(
         self,
         *,
         question: str,
-        source_id: str,
-        insight_summary: str,
-        visualization_summary: str,
+        analysis_result: Mapping[str, Any] | None,
+        visualization_result: Mapping[str, Any] | None,
+        guideline_context: Mapping[str, Any] | None,
+        dataset_context: Mapping[str, Any] | None,
         revision_instruction: str,
         model_id: str | None,
         visualizations: List[Dict[str, object]] | None = None,
         default_model: str | None = None,
     ) -> Dict[str, object]:
-        metrics = self.build_metrics_for_source(source_id)
+        report_payload = self.build_report_payload(
+            analysis_result=analysis_result,
+            visualization_result=visualization_result,
+            guideline_context=guideline_context,
+            dataset_context=dataset_context,
+        )
         report_text = draft_report(
             question=question,
-            metrics=metrics,
-            insight_summary=insight_summary,
-            visualization_summary=visualization_summary,
+            report_payload=report_payload,
             revision_instruction=revision_instruction,
             model_id=model_id,
             default_model=default_model or self.default_model,
@@ -179,6 +185,6 @@ class ReportService:
         return {
             "status": "generated",
             "summary": report_text,
-            "metrics": metrics,
+            "metrics": report_payload["metrics"],
             "visualizations": list(visualizations or []),
         }

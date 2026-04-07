@@ -35,3 +35,7 @@ class DatasetRepository:
     def delete(self, dataset: Dataset) -> None:
         self.db.delete(dataset)
         self.db.commit()
+
+
+# Compatibility alias for modules that still use the older repository name.
+DataSourceRepository = DatasetRepository

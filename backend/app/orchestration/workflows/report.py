@@ -14,9 +14,6 @@ from langgraph.types import interrupt
 
 from backend.app.modules.reports.service import ReportService
 from backend.app.orchestration.state import ReportGraphState
-from backend.app.orchestration.utils import resolve_target_source_id
-
-
 def _get_report_revision_instruction(state: ReportGraphState) -> str:
     revision_request = state.get("revision_request")
     if isinstance(revision_request, dict):
@@ -46,23 +43,14 @@ def _build_failed_report_payload(
 
 def build_report_workflow(*, report_service: ReportService, default_model: str = "gpt-5-nano"):
     def report_draft_node(state: ReportGraphState) -> Dict[str, Any]:
-        target_source_id = resolve_target_source_id(state)
-
         report_visualizations: list[Dict[str, Any]] = []
 
-        insight = state.get("insight")
-        insight_summary = ""
-        if isinstance(insight, dict) and isinstance(insight.get("summary"), str):
-            insight_summary = str(insight.get("summary")).strip()
-
         visualization_result = state.get("visualization_result")
-        visualization_summary = ""
         if isinstance(visualization_result, dict):
-            viz_summary = visualization_result.get("summary")
-            if isinstance(viz_summary, str) and viz_summary.strip():
-                visualization_summary = viz_summary.strip()
             if visualization_result.get("status") == "generated":
-                chart = visualization_result.get("chart")
+                chart = visualization_result.get("chart_data")
+                if not isinstance(chart, dict):
+                    chart = visualization_result.get("chart")
                 artifact = visualization_result.get("artifact")
                 if isinstance(chart, dict):
                     visualization_item: Dict[str, Any] = {"chart": chart}
@@ -82,9 +70,10 @@ def build_report_workflow(*, report_service: ReportService, default_model: str =
         try:
             draft = report_service.build_report_draft(
                 question=question,
-                source_id=str(target_source_id or ""),
-                insight_summary=insight_summary,
-                visualization_summary=visualization_summary,
+                analysis_result=state.get("analysis_result"),
+                visualization_result=state.get("visualization_result"),
+                guideline_context=state.get("guideline_context"),
+                dataset_context=state.get("dataset_context"),
                 revision_instruction=revision_instruction,
                 model_id=state.get("model_id"),
                 visualizations=report_visualizations,
@@ -125,7 +114,7 @@ def build_report_workflow(*, report_service: ReportService, default_model: str =
             "kind": "draft_review",
             "title": "Report draft review",
             "summary": "리포트 초안을 검토한 뒤 승인, 수정 요청, 취소 중 하나를 선택해 주세요.",
-            "source_id": str(resolve_target_source_id(state) or ""),
+            "source_id": str((state.get("dataset_context") or {}).get("source_id") or state.get("source_id") or ""),
             "draft": str(draft.get("summary") or ""),
             "review": {
                 "revision_count": int(draft.get("revision_count", 0) or 0),

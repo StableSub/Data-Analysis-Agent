@@ -20,6 +20,14 @@ def get_dataset_repository(db: Session = Depends(get_db)) -> DatasetRepository:
     return build_dataset_repository(db)
 
 
+def build_data_source_repository(db: Session) -> DatasetRepository:
+    return build_dataset_repository(db)
+
+
+def get_data_source_repository(db: Session = Depends(get_db)) -> DatasetRepository:
+    return build_data_source_repository(db)
+
+
 def build_dataset_storage() -> DatasetStorage:
     return DatasetStorage(_datasets_storage_dir())
 

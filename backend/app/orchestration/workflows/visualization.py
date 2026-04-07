@@ -28,8 +28,9 @@ def build_visualization_workflow(
     def visualization_planner_node(state: VisualizationGraphState) -> Dict[str, Any]:
         analysis_result = state.get("analysis_result")
         analysis_plan = state.get("analysis_plan")
+        revision_instruction = get_revision_instruction(state.get("revision_request"))
         source_id = resolve_target_source_id(state)
-        if analysis_result and analysis_plan:
+        if analysis_result and analysis_plan and not revision_instruction:
             build_method = getattr(
                 visualization_service, "build_from_analysis_result", None
             )

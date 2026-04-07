@@ -6,6 +6,7 @@ from langgraph.graph import END, START, StateGraph
 
 from .ai import answer_data_question, answer_general_question
 from .intake_router import build_intake_router_workflow
+from ..modules.planner.service import build_handoff_from_planning_result
 from .state import MainWorkflowState
 from .state_view import build_merged_context
 from .workflows.analysis import build_analysis_workflow
@@ -18,6 +19,7 @@ from .workflows.visualization import build_visualization_workflow
 
 def build_main_workflow(
     *,
+    planner_service,
     analysis_service,
     preprocess_service,
     eda_service,
@@ -29,7 +31,9 @@ def build_main_workflow(
     default_model: str = "gpt-5-nano",
     checkpointer: Any | None = None,
 ):
-    intake_graph = build_intake_router_workflow(default_model=default_model)
+    intake_graph = build_intake_router_workflow(
+        planner_service=planner_service,
+    )
     preprocess_graph = build_preprocess_workflow(
         preprocess_service=preprocess_service,
         eda_service=eda_service,
@@ -61,15 +65,24 @@ def build_main_workflow(
         branch = str((state.get("handoff") or {}).get("next_step", "general_question"))
         return branch
 
-    def route_after_rag(state: MainWorkflowState) -> str:
-        handoff = state.get("handoff") or {}
-        if bool(handoff.get("ask_guideline", False)):
-            return "guideline"
-        if bool(handoff.get("ask_visualization", False)):
-            return "visualization"
-        return "merge_context"
+    def route_after_planner(state: MainWorkflowState) -> str:
+        if state.get("final_status") == "fail":
+            return "fail"
 
-    def route_after_guideline(state: MainWorkflowState) -> str:
+        planning_result = state.get("planning_result") or {}
+        if bool(planning_result.get("needs_clarification", False)):
+            return "clarification"
+
+        route = str(planning_result.get("route", "fallback_rag"))
+        if route == "general_question":
+            return "general_question"
+        if route == "fallback_rag":
+            return "rag"
+        if bool(planning_result.get("preprocess_required", False)):
+            return "preprocess"
+        return "analysis"
+
+    def route_after_rag(state: MainWorkflowState) -> str:
         handoff = state.get("handoff") or {}
         if bool(handoff.get("ask_visualization", False)):
             return "visualization"
@@ -88,10 +101,7 @@ def build_main_workflow(
             or output.get("type") == "preprocess_failed"
         ):
             return "failed"
-        handoff = state.get("handoff") or {}
-        if bool(handoff.get("ask_analysis", False)):
-            return "analysis"
-        return "rag"
+        return "analysis"
 
     def route_after_analysis(state: MainWorkflowState) -> str:
         final_status = state.get("final_status")
@@ -101,8 +111,6 @@ def build_main_workflow(
             return "fail"
 
         handoff = state.get("handoff") or {}
-        if bool(handoff.get("ask_guideline", False)):
-            return "guideline"
         if bool(handoff.get("ask_visualization", False)):
             return "visualization"
         return "merge_context"
@@ -149,6 +157,36 @@ def build_main_workflow(
     def merge_context_node(state: MainWorkflowState) -> Dict[str, Any]:
         return {"merged_context": build_merged_context(state)}
 
+    def dataset_context_node(state: MainWorkflowState) -> Dict[str, Any]:
+        source_id = str(state.get("source_id") or "").strip()
+        dataset_context = planner_service.dataset_context_service.build_context(source_id)
+        return {"dataset_context": dataset_context.model_dump()}
+
+    def planner_node(state: MainWorkflowState) -> Dict[str, Any]:
+        try:
+            planning_result = planner_service.plan(
+                user_input=str(state.get("user_input", "")),
+                request_context=str(state.get("request_context", "")),
+                source_id=str(state.get("source_id", "")),
+                dataset_context=state.get("dataset_context"),
+                guideline_context=state.get("guideline_context"),
+                model_id=state.get("model_id"),
+            )
+        except Exception as exc:
+            return {
+                "final_status": "fail",
+                "output": {
+                    "type": "planning_failed",
+                    "content": str(exc),
+                },
+            }
+
+        return {
+            "planning_result": planning_result.model_dump(),
+            "handoff": build_handoff_from_planning_result(planning_result),
+            "clarification_question": planning_result.clarification_question,
+        }
+
     def data_qa_terminal(state: MainWorkflowState) -> Dict[str, Any]:
         merged_context = state.get("merged_context")
         answer = answer_data_question(
@@ -170,6 +208,8 @@ def build_main_workflow(
     graph.add_node("intake_flow", intake_graph)
     graph.add_node("general_question_terminal", general_question_terminal)
     graph.add_node("clarification_terminal", clarification_terminal)
+    graph.add_node("dataset_context", dataset_context_node)
+    graph.add_node("planner", planner_node)
     graph.add_node("preprocess_flow", preprocess_graph)
     graph.add_node("analysis_flow", analysis_graph)
     graph.add_node("rag_flow", rag_graph)
@@ -185,8 +225,21 @@ def build_main_workflow(
         route_after_intake,
         {
             "general_question": "general_question_terminal",
-            "dataset_qa": "rag_flow",
-            "data_pipeline": "preprocess_flow",
+            "dataset_selected": "dataset_context",
+        },
+    )
+    graph.add_edge("dataset_context", "guideline_flow")
+    graph.add_edge("guideline_flow", "planner")
+    graph.add_conditional_edges(
+        "planner",
+        route_after_planner,
+        {
+            "general_question": "general_question_terminal",
+            "preprocess": "preprocess_flow",
+            "analysis": "analysis_flow",
+            "rag": "rag_flow",
+            "clarification": "clarification_terminal",
+            "fail": END,
         },
     )
     graph.add_conditional_edges(
@@ -194,7 +247,6 @@ def build_main_workflow(
         route_after_preprocess,
         {
             "analysis": "analysis_flow",
-            "rag": "rag_flow",
             "cancelled": END,
             "failed": END,
         },
@@ -203,7 +255,6 @@ def build_main_workflow(
         "analysis_flow",
         route_after_analysis,
         {
-            "guideline": "guideline_flow",
             "visualization": "visualization_flow",
             "merge_context": "merge_context",
             "clarification": "clarification_terminal",
@@ -213,15 +264,6 @@ def build_main_workflow(
     graph.add_conditional_edges(
         "rag_flow",
         route_after_rag,
-        {
-            "guideline": "guideline_flow",
-            "visualization": "visualization_flow",
-            "merge_context": "merge_context",
-        },
-    )
-    graph.add_conditional_edges(
-        "guideline_flow",
-        route_after_guideline,
         {
             "visualization": "visualization_flow",
             "merge_context": "merge_context",

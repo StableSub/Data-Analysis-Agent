@@ -14,6 +14,7 @@ from typing import Any, Dict
 from langgraph.graph import END, START, StateGraph
 
 from backend.app.modules.analysis.schemas import AnalysisExecutionResult
+from backend.app.modules.planner.schemas import PlanningResult
 from backend.app.modules.analysis.service import AnalysisService
 from backend.app.orchestration.state import AnalysisGraphState
 from backend.app.orchestration.utils import resolve_target_source_id
@@ -42,6 +43,34 @@ def build_analysis_workflow(
             "content": message,
         }
 
+    def _current_dataset_context(
+        state: AnalysisGraphState,
+        *,
+        source_id: str,
+    ) -> Dict[str, Any]:
+        dataset_context = _as_dict(state.get("dataset_context"))
+        if dataset_context is not None and dataset_context.get("source_id") == source_id:
+            return dataset_context
+        return analysis_service.dataset_context_service.build_context(source_id).model_dump()
+
+    def _should_replan(
+        state: AnalysisGraphState,
+        *,
+        target_source_id: str,
+    ) -> bool:
+        planning_result = _as_dict(state.get("planning_result"))
+        if planning_result is None:
+            return True
+        if bool(planning_result.get("needs_clarification", False)):
+            return False
+        analysis_plan = _as_dict(planning_result.get("analysis_plan"))
+        if analysis_plan is None:
+            return True
+        dataset_context = _as_dict(state.get("dataset_context"))
+        if dataset_context is None:
+            return True
+        return str(dataset_context.get("source_id") or "") != target_source_id
+
     # 질문 해석, 컬럼 grounding, plan 초안 생성, 최종 plan 확정까지 수행한다.
     # 모호한 질문이면 needs_clarification 상태로 종료한다.
     def analysis_planning_node(state: AnalysisGraphState) -> Dict[str, Any]:
@@ -65,61 +94,36 @@ def build_analysis_workflow(
             }
 
         try:
-            dataset_meta = analysis_service.build_dataset_metadata(source_id or "")
-            question_understanding = (
-                analysis_service.run_service.build_question_understanding(
-                    question=question,
-                    dataset_meta=dataset_meta,
+            if source_id is None:
+                raise ValueError("source_id is required for analysis")
+
+            dataset_context = _current_dataset_context(state, source_id=source_id)
+            if _should_replan(state, target_source_id=source_id):
+                planning_result = analysis_service.planner_service.plan(
+                    user_input=question,
+                    request_context=str(state.get("request_context", "")),
+                    source_id=source_id,
+                    dataset_context=dataset_context,
+                    guideline_context=state.get("guideline_context"),
                     model_id=state.get("model_id"),
                 )
-            )
-            # 질문 자체가 모호하면 code generation으로 가지 않고 clarification으로 종료한다.
-            if question_understanding.ambiguity_status != "clear":
+            else:
+                planning_result_dict = _as_dict(state.get("planning_result")) or {}
+                planning_result = PlanningResult.model_validate(planning_result_dict)
+            if planning_result.needs_clarification:
                 return {
-                    "dataset_meta": dataset_meta.model_dump(),
-                    "question_understanding": question_understanding.model_dump(),
+                    "planning_result": planning_result.model_dump(),
+                    "dataset_context": dataset_context,
                     "final_status": "needs_clarification",
-                    "clarification_question": question_understanding.clarification_message,
+                    "clarification_question": planning_result.clarification_question,
                 }
-
-            column_grounding = analysis_service.processor.ground_columns(
-                question_understanding=question_understanding,
-                dataset_meta=dataset_meta,
-            )
-            analysis_plan_draft = (
-                analysis_service.run_service.build_analysis_plan_draft(
-                    question=question,
-                    question_understanding=question_understanding,
-                    column_grounding=column_grounding,
-                    dataset_meta=dataset_meta,
-                    model_id=state.get("model_id"),
-                )
-            )
-            # plan_draft 단계에서도 모호성이 남으면 clarification으로 돌린다.
-            if analysis_plan_draft.ambiguity_status != "clear":
-                clarification_message = (
-                    analysis_plan_draft.clarification_message
-                    or question_understanding.clarification_message
-                )
-                return {
-                    "dataset_meta": dataset_meta.model_dump(),
-                    "question_understanding": question_understanding.model_dump(),
-                    "column_grounding": column_grounding.model_dump(),
-                    "analysis_plan_draft": analysis_plan_draft.model_dump(),
-                    "final_status": "needs_clarification",
-                    "clarification_question": clarification_message,
-                }
-
-            analysis_plan = analysis_service.processor.validate_and_finalize_plan(
-                plan_draft=analysis_plan_draft,
-                dataset_meta=dataset_meta,
-                column_grounding=column_grounding,
-            )
+            if planning_result.route != "analysis" or planning_result.analysis_plan is None:
+                raise ValueError("planner did not route this request to analysis")
+            analysis_plan = planning_result.analysis_plan
             return {
-                "dataset_meta": dataset_meta.model_dump(),
-                "question_understanding": question_understanding.model_dump(),
-                "column_grounding": column_grounding.model_dump(),
-                "analysis_plan_draft": analysis_plan_draft.model_dump(),
+                "planning_result": planning_result.model_dump(),
+                "dataset_context": dataset_context,
+                "dataset_meta": analysis_plan.metadata_snapshot.model_dump(),
                 "analysis_plan": analysis_plan.model_dump(),
                 "final_status": "planning",
             }

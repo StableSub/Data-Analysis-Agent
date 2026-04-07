@@ -36,22 +36,43 @@ def build_guideline_workflow(
     입력: guideline 조회용 service, guideline RAG service, 요약용 기본 모델명을 받는다.
     출력: `guideline_result`, `guideline_index_status`를 누적하는 컴파일된 그래프를 반환한다.
     """
+    def build_guideline_context(
+        *,
+        active_source_id: str,
+        guideline_result: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        return {
+            "guideline_source_id": active_source_id or str(guideline_result.get("source_id") or ""),
+            "guideline_id": str(guideline_result.get("guideline_id") or ""),
+            "filename": str(guideline_result.get("filename") or ""),
+            "status": str(guideline_result.get("status") or ""),
+            "retrieved_chunks": list(guideline_result.get("retrieved_chunks") or []),
+            "retrieved_count": int(guideline_result.get("retrieved_count", 0) or 0),
+            "has_evidence": bool(guideline_result.get("has_evidence", False)),
+            "evidence_summary": str(guideline_result.get("evidence_summary") or ""),
+        }
+
     def ensure_guideline_index_node(state: GuidelineGraphState) -> Dict[str, Any]:
         """
         역할: 활성 지침서의 인덱스 존재 여부를 확인하고 필요 시 새로 인덱싱한다.
         """
         active_guideline = guideline_service.get_active_guideline()
         if active_guideline is None:
+            guideline_result = {
+                "status": "no_active_guideline",
+                "has_evidence": False,
+                "retrieved_chunks": [],
+                "retrieved_count": 0,
+                "evidence_summary": "활성화된 지침서가 없어 지침 근거를 확인하지 못했습니다.",
+            }
             return {
                 "active_guideline_source_id": "",
                 "guideline_index_status": {"status": "no_active_guideline"},
-                "guideline_result": {
-                    "status": "no_active_guideline",
-                    "has_evidence": False,
-                    "retrieved_chunks": [],
-                    "retrieved_count": 0,
-                    "evidence_summary": "활성화된 지침서가 없어 지침 근거를 확인하지 못했습니다.",
-                },
+                "guideline_result": guideline_result,
+                "guideline_context": build_guideline_context(
+                    active_source_id="",
+                    guideline_result=guideline_result,
+                ),
                 "guideline_data_exists": False,
             }
 
@@ -106,18 +127,29 @@ def build_guideline_workflow(
             for item in retrieved
         ]
 
+        guideline_result = {
+            "query": query,
+            "source_id": active_source_id,
+            "guideline_id": active_guideline.guideline_id if active_guideline else "",
+            "filename": active_guideline.filename if active_guideline else "",
+            "retrieved_chunks": retrieved_chunks,
+            "context": context,
+            "retrieved_count": len(retrieved_chunks),
+            "has_evidence": bool(retrieved_chunks),
+            "status": (
+                "no_active_guideline"
+                if status_value == "no_active_guideline"
+                else ("retrieved" if retrieved_chunks else "no_evidence")
+            ),
+        }
         return {
             "guideline_result": {
-                "query": query,
-                "source_id": active_source_id,
-                "guideline_id": active_guideline.guideline_id if active_guideline else "",
-                "filename": active_guideline.filename if active_guideline else "",
-                "retrieved_chunks": retrieved_chunks,
-                "context": context,
-                "retrieved_count": len(retrieved_chunks),
-                "has_evidence": bool(retrieved_chunks),
-                "status": "retrieved" if retrieved_chunks else "no_evidence",
+                **guideline_result,
             },
+            "guideline_context": build_guideline_context(
+                active_source_id=active_source_id,
+                guideline_result=guideline_result,
+            ),
             "guideline_data_exists": bool(retrieved_chunks),
         }
 
@@ -129,14 +161,25 @@ def build_guideline_workflow(
         guideline_result_dict = guideline_result if isinstance(guideline_result, dict) else {}
 
         if not bool(state.get("guideline_data_exists", False)):
-            no_evidence_summary = "관련 지침 근거를 찾지 못했습니다."
+            existing_summary = str(guideline_result_dict.get("evidence_summary") or "").strip()
+            if existing_summary:
+                no_evidence_summary = existing_summary
+            elif guideline_result_dict.get("status") == "no_active_guideline":
+                no_evidence_summary = "활성화된 지침서가 없어 지침 근거를 확인하지 못했습니다."
+            else:
+                no_evidence_summary = "관련 지침 근거를 찾지 못했습니다."
+            updated_guideline_result = {
+                **guideline_result_dict,
+                "has_evidence": False,
+                "evidence_summary": no_evidence_summary,
+                "status": guideline_result_dict.get("status", "no_evidence"),
+            }
             return {
-                "guideline_result": {
-                    **guideline_result_dict,
-                    "has_evidence": False,
-                    "evidence_summary": no_evidence_summary,
-                    "status": guideline_result_dict.get("status", "no_evidence"),
-                }
+                "guideline_result": updated_guideline_result,
+                "guideline_context": build_guideline_context(
+                    active_source_id=str(state.get("active_guideline_source_id") or ""),
+                    guideline_result=updated_guideline_result,
+                ),
             }
 
         query = str(guideline_result_dict.get("query", ""))
@@ -161,13 +204,18 @@ def build_guideline_workflow(
                 ),
             ]
         )
+        updated_guideline_result = {
+            **guideline_result_dict,
+            "has_evidence": True,
+            "evidence_summary": llm_result.evidence_summary,
+            "status": "retrieved",
+        }
         return {
-            "guideline_result": {
-                **guideline_result_dict,
-                "has_evidence": True,
-                "evidence_summary": llm_result.evidence_summary,
-                "status": "retrieved",
-            }
+            "guideline_result": updated_guideline_result,
+            "guideline_context": build_guideline_context(
+                active_source_id=str(state.get("active_guideline_source_id") or ""),
+                guideline_result=updated_guideline_result,
+            ),
         }
 
     graph = StateGraph(GuidelineGraphState)

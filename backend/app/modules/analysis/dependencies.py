@@ -2,9 +2,12 @@ from fastapi import Depends
 from sqlalchemy.orm import Session
 
 from ...core.db import get_db
-from ..datasets.dependencies import get_dataset_reader, get_dataset_repository
+from ..datasets.dependencies import get_dataset_repository
 from ..datasets.repository import DatasetRepository
-from ..datasets.service import DatasetReader
+from ..planner.dependencies import get_planner_service
+from ..planner.service import PlannerService
+from ..profiling.dependencies import get_dataset_context_service
+from ..profiling.service import DatasetContextService
 from ..results.repository import ResultsRepository
 from ..visualization.dependencies import get_visualization_service
 from ..visualization.service import VisualizationService
@@ -49,7 +52,8 @@ def get_results_repository(db: Session = Depends(get_db)) -> ResultsRepository:
 def build_analysis_service(
     *,
     repository: DatasetRepository,
-    reader: DatasetReader,
+    dataset_context_service: DatasetContextService,
+    planner_service: PlannerService,
     processor: AnalysisProcessor,
     run_service: AnalysisRunService,
     sandbox: AnalysisSandbox,
@@ -58,7 +62,8 @@ def build_analysis_service(
 ) -> AnalysisService:
     return AnalysisService(
         dataset_repository=repository,
-        dataset_reader=reader,
+        dataset_context_service=dataset_context_service,
+        planner_service=planner_service,
         run_service=run_service,
         processor=processor,
         sandbox=sandbox,
@@ -69,7 +74,8 @@ def build_analysis_service(
 
 def get_analysis_service(
     repository: DatasetRepository = Depends(get_dataset_repository),
-    reader: DatasetReader = Depends(get_dataset_reader),
+    dataset_context_service: DatasetContextService = Depends(get_dataset_context_service),
+    planner_service: PlannerService = Depends(get_planner_service),
     processor: AnalysisProcessor = Depends(get_analysis_processor),
     run_service: AnalysisRunService = Depends(get_analysis_run_service),
     sandbox: AnalysisSandbox = Depends(get_analysis_sandbox),
@@ -78,7 +84,8 @@ def get_analysis_service(
 ) -> AnalysisService:
     return build_analysis_service(
         repository=repository,
-        reader=reader,
+        dataset_context_service=dataset_context_service,
+        planner_service=planner_service,
         processor=processor,
         run_service=run_service,
         sandbox=sandbox,
