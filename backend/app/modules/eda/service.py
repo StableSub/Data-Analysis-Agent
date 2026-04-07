@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pandas as pd
+import logging
 
 from .ai import generate_eda_ai_summary
 from .schemas import (
@@ -11,8 +12,6 @@ from .schemas import (
     EDACorrelationsResponse,
     EDADistributionBin,
     EDADistributionResponse,
-    EDAPreprocessRecommendation,
-    EDAPreprocessRecommendationsResponse,
     EDAOutlierColumn,
     EDAOutliersResponse,
     EDAProfileResponse,
@@ -22,12 +21,16 @@ from .schemas import (
     EDAStatsResponse,
     EDASummaryCounts,
     EDASummaryResponse,
+    PreprocessRecommendation,
+    PreprocessRecommendationResponse,
 )
 from ..datasets.repository import DataSourceRepository
 from ..datasets.service import DatasetReader
 from ..profiling.schemas import DatasetProfile
 from ..profiling.service import DatasetProfileService
+from .ai import detect_issues, _issues_to_recommendation, recommend
 
+logger = logging.getLogger(__name__)
 
 class EDANotFoundError(LookupError):
     """Raised when a requested EDA resource does not exist."""
@@ -299,47 +302,7 @@ class EDAService:
             bins=distribution_bins,
         )
 
-    def get_preprocess_recommendations(
-        self,
-        source_id: str,
-        *,
-        profile: DatasetProfile | None = None,
-        include_outlier_analysis: bool = True,
-        df: pd.DataFrame | None = None,
-    ) -> EDAPreprocessRecommendationsResponse | None:
-        profile = profile or self.profile_service.build_profile(source_id)
-        if not profile.available:
-            return None
-
-        quality = self._build_quality_response(profile)
-        if quality is None:
-            return None
-
-        if include_outlier_analysis:
-            if df is None:
-                dataset = self.dataset_repository.get_by_source_id(source_id)
-                if dataset is None or not dataset.storage_path:
-                    return None
-
-                file_path = Path(dataset.storage_path)
-                if not file_path.exists() or not file_path.is_file():
-                    return None
-
-                df = self.reader.read_csv(dataset.storage_path)
-
-            outliers = self._build_outliers_response(source_id, profile, df)
-        else:
-            outliers = EDAOutliersResponse(
-                source_id=source_id,
-                numeric_column_count=len(profile.numeric_columns),
-                columns=[],
-            )
-
-        if quality is None or outliers is None:
-            return None
-
-        return self._build_preprocess_recommendations_response(source_id, profile, quality, outliers)
-
+    
     def build_ai_summary_payload(self, source_id: str) -> dict[str, object] | None:
         profile = self.profile_service.build_profile(source_id)
         if not profile.available:
@@ -360,12 +323,7 @@ class EDAService:
         stats = self._build_stats_response(source_id, profile, df)
         correlations = self._build_correlations_response(source_id, profile, df, limit=3)
         outliers = self._build_outliers_response(source_id, profile, df)
-        recommendations = self._build_preprocess_recommendations_response(
-            source_id,
-            profile,
-            quality,
-            outliers,
-        )
+
 
         if (
             summary is None
@@ -374,7 +332,6 @@ class EDAService:
             or stats is None
             or correlations is None
             or outliers is None
-            or recommendations is None
         ):
             return None
 
@@ -396,7 +353,6 @@ class EDAService:
                 "numeric_column_count": outliers.numeric_column_count,
                 "columns": [item.model_dump() for item in outliers.columns[:10]],
             },
-            "preprocess_recommendations": recommendations.model_dump(),
         }
 
     def _build_summary_response(self, profile: DatasetProfile) -> EDASummaryResponse:
@@ -491,6 +447,7 @@ class EDAService:
                     std=_safe_float(series.std(ddof=0)) if len(series) else None,
                     q1=_safe_float(series.quantile(0.25)) if len(series) else None,
                     q3=_safe_float(series.quantile(0.75)) if len(series) else None,
+                    skew=_safe_float(series.skew()) if len(series) else None,
                 )
             )
 
@@ -586,115 +543,6 @@ class EDAService:
             columns=outlier_columns,
         )
 
-    def _build_preprocess_recommendations_response(
-        self,
-        source_id: str,
-        profile: DatasetProfile,
-        quality: EDAQualityResponse,
-        outliers: EDAOutliersResponse,
-    ) -> EDAPreprocessRecommendationsResponse:
-        outlier_map = {item.column: item for item in outliers.columns}
-        recommendations: list[EDAPreprocessRecommendation] = []
-        dropped_columns: set[str] = set()
-
-        for column in profile.identifier_columns:
-            recommendations.append(
-                EDAPreprocessRecommendation(
-                    column=column,
-                    recommendation_type="exclude_identifier",
-                    priority="medium",
-                    reason="거의 유일값으로 구성된 식별자 컬럼으로 분석 대상에서 제외하는 것이 좋습니다.",
-                    suggested_operation={"op": "drop_columns", "columns": [column]},
-                )
-            )
-
-        for column in profile.datetime_columns:
-            recommendations.append(
-                EDAPreprocessRecommendation(
-                    column=column,
-                    recommendation_type="parse_datetime",
-                    priority="medium",
-                    reason="날짜/시간 컬럼으로 분류되어 전처리 단계에서 datetime 파싱을 권장합니다.",
-                    suggested_operation={"op": "parse_datetime", "columns": [column], "format": None},
-                )
-            )
-
-        for column_profile in quality.columns:
-            column = column_profile.column
-            null_ratio = column_profile.null_ratio
-            inferred_type = column_profile.inferred_type
-
-            if null_ratio >= 0.7:
-                dropped_columns.add(column)
-                recommendations.append(
-                    EDAPreprocessRecommendation(
-                        column=column,
-                        recommendation_type="drop_column_candidate",
-                        priority="high",
-                        reason=f"결측 비율이 {null_ratio:.1%}로 매우 높아 컬럼 삭제를 우선 검토하는 것이 좋습니다.",
-                        suggested_operation={"op": "drop_columns", "columns": [column]},
-                    )
-                )
-                continue
-
-            if null_ratio <= 0:
-                continue
-
-            if inferred_type == "numerical":
-                recommendations.append(
-                    EDAPreprocessRecommendation(
-                        column=column,
-                        recommendation_type="impute_missing",
-                        priority="medium",
-                        reason=f"수치형 컬럼이며 결측 비율이 {null_ratio:.1%}이므로 중앙값 대체를 추천합니다.",
-                        suggested_operation={"op": "impute", "columns": [column], "method": "median"},
-                    )
-                )
-            elif inferred_type in {"categorical", "boolean", "group_key"}:
-                recommendations.append(
-                    EDAPreprocessRecommendation(
-                        column=column,
-                        recommendation_type="impute_missing",
-                        priority="medium",
-                        reason=f"범주형 성격의 컬럼이며 결측 비율이 {null_ratio:.1%}이므로 최빈값 대체를 추천합니다.",
-                        suggested_operation={"op": "impute", "columns": [column], "method": "mode"},
-                    )
-                )
-
-        for column, outlier_info in outlier_map.items():
-            if column in dropped_columns or outlier_info.outlier_ratio < 0.05:
-                continue
-            recommendations.append(
-                EDAPreprocessRecommendation(
-                    column=column,
-                    recommendation_type="handle_outliers",
-                    priority="medium",
-                    reason=(
-                        f"IQR 기준 이상치 비율이 {outlier_info.outlier_ratio:.1%}로 높아 "
-                        "클리핑 또는 제거를 검토하는 것이 좋습니다."
-                    ),
-                    suggested_operation={
-                        "op": "outlier",
-                        "columns": [column],
-                        "method": "iqr",
-                        "strategy": "clip",
-                        "iqr_multiplier": 1.5,
-                    },
-                )
-            )
-
-        recommendations.sort(
-            key=lambda item: (
-                {"high": 0, "medium": 1, "low": 2}[item.priority],
-                item.column,
-                item.recommendation_type,
-            )
-        )
-        return EDAPreprocessRecommendationsResponse(
-            source_id=source_id,
-            recommendation_count=len(recommendations),
-            recommendations=recommendations,
-        )
 
     def get_ai_summary(
         self,
@@ -716,7 +564,115 @@ class EDAService:
             structure_summary=str(summary_content.get("structure_summary", "")).strip(),
             quality_issues=[str(item) for item in summary_content.get("quality_issues", [])],
             key_insights=[str(item) for item in summary_content.get("key_insights", [])],
-            preprocess_recommendations=[
-                str(item) for item in summary_content.get("preprocess_recommendations", [])
-            ],
         )
+
+    def _build_prompt_summary(
+        self,
+        summary: EDASummaryResponse,
+        quality: EDAQualityResponse,
+        column_types: EDAColumnTypesResponse,
+    ) -> dict:
+
+        # 1. shape
+        shape = {
+            "rows": summary.row_count,
+            "cols": summary.column_count,
+        }
+
+        # 2. missing (column: count)
+        missing = {
+            col.column: col.null_count
+            for col in quality.columns
+            if col.null_count > 0
+        }
+
+        # 3. dtypes (column: type)
+        dtypes = {
+            col.column: col.inferred_type
+            for col in column_types.columns
+        }
+
+        return {
+            "shape": shape,
+            "missing": missing,
+            "dtypes": dtypes,
+        }
+    
+    def get_preprocess_recommendation(
+        self,
+        source_id: str,
+        *,
+        model_id: str | None = None,
+    ) -> PreprocessRecommendation | None:
+        """
+        EDA 결과를 기반으로 전처리 추천 생성
+
+        흐름:
+        1. EDA 결과 생성
+        2. rule-based로 detected_issues 생성
+        3. LLM 입력용 summary 구성
+        4. LLM 추천 시도
+        5. 실패 시 fallback(rule-based) 반환
+        """
+
+        # 1. 프로파일 로드
+        profile = self.profile_service.build_profile(source_id)
+        if not profile.available:
+            return None
+
+        # 2. 기본 EDA 결과 생성
+        summary = self._build_summary_response(profile)
+        quality = self._build_quality_response(profile)
+        column_types = self._build_column_types_response(profile)
+
+        dataset = self.dataset_repository.get_by_source_id(source_id)
+        if dataset is None or not dataset.storage_path:
+            return None
+
+        df = self.reader.read_csv(dataset.storage_path)
+
+        stats = self._build_stats_response(source_id, profile, df)
+        correlations = self._build_correlations_response(source_id, profile, df, limit=3)
+
+        # 3. 🔥 문제 감지 (rule-based)
+        detected_issues = detect_issues(
+            quality=quality,
+            stats=stats,
+            correlations=correlations,
+            column_types=column_types,
+        )
+
+
+        # 4. 🔥 fallback 결과 (항상 준비)
+        fallback = _issues_to_recommendation(detected_issues)
+
+        # 5. 🔥 LLM용 summary 구성 (핵심)
+        prompt_summary = self._build_prompt_summary(
+            summary,
+            quality,
+            column_types,
+        )
+
+        # 6. (선택) RAG — 아직 없으면 빈 문자열
+        rag_context = ""
+
+        # 7. 🔥 LLM 추천 시도
+        try:
+            result = recommend(
+                eda_summary=prompt_summary,
+                detected_issues=detected_issues,
+                rag_context=rag_context,
+                default_model=self.default_model,
+                model_id=model_id,
+            )
+
+            return result
+
+        except Exception as exc:
+            # 🔥 LLM 실패 → fallback
+            logger.warning(
+                "전처리 추천 LLM 실패 → fallback 사용. source_id=%s error=%s",
+                source_id,
+                exc,
+            )
+            return fallback
