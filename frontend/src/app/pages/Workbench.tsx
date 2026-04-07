@@ -75,6 +75,7 @@ export default function Workbench() {
     toolCalls,
     runStatus,
     pipelineSteps,
+    thoughtSteps,
     decisionChips,
     evidence,
     milestones,
@@ -799,6 +800,7 @@ export default function Workbench() {
           runStatus={runStatus}
           toolCalls={toolCalls}
           pipelineSteps={pipelineSteps}
+          thoughtSteps={thoughtSteps}
           awaitingInfo={
             state === "needs-user" && pendingApproval
               ? {
@@ -828,11 +830,11 @@ export default function Workbench() {
 
   /* ── PIPELINE BAR ── */
   const subPhaseLabel: Record<string, string> = {
-    intake: "Intake",
-    preprocessing: "Preprocess",
-    rag: "RAG",
-    visualization: "Visualization",
-    report: "Report",
+    intake: "질문 확인",
+    preprocessing: "데이터 준비",
+    rag: "참고 정보 확인",
+    visualization: "시각화",
+    report: "리포트",
   };
 
   const pipelineBarVariant: PipelineBarVariant =

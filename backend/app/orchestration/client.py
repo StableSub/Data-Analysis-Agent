@@ -61,6 +61,7 @@ class AgentClient:
                     phase="analysis",
                     message="요청을 분석하고 처리 경로를 결정하는 중입니다.",
                     status="active",
+                    display_message="질문을 이해하고 있습니다.",
                 )
                 seen.add((initial_step["phase"], initial_step["message"]))
                 thought_steps.append(initial_step)

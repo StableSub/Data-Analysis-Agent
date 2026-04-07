@@ -8,6 +8,7 @@ import {
   type ChatResponse,
   type ChatHistoryMessage,
   type PendingApprovalPayload,
+  type ThoughtStepPayload,
 } from "../../lib/api";
 import type { ReportSection } from "../components/genui/AssistantReportMessage";
 import type {
@@ -92,6 +93,9 @@ interface ThoughtStep {
   phase: string;
   message: string;
   status?: "active" | "completed" | "failed";
+  displayMessage: string;
+  detailMessage?: string;
+  audience?: "user" | "debug";
 }
 
 export interface UseAnalysisPipelineReturn {
@@ -108,6 +112,7 @@ export interface UseAnalysisPipelineReturn {
   pipelineSteps: PipelineStep[] | undefined;
   decisionChips: DecisionChip[];
   evidence: EvidenceFooterProps;
+  thoughtSteps: ThoughtStep[];
   chatHistory: ChatHistoryMessage[];
   milestones: HistoryItem[];
   history: HistoryItem[];
@@ -149,12 +154,12 @@ export interface UseAnalysisPipelineReturn {
 
 const STAGES = ["intake", "preprocess", "rag", "viz", "merge", "report"] as const;
 const STAGE_LABELS: Record<string, string> = {
-  intake: "Intake",
-  preprocess: "Preprocess",
-  rag: "RAG",
-  viz: "Visualization",
-  merge: "Merge",
-  report: "Report",
+  intake: "질문 확인",
+  preprocess: "데이터 준비",
+  rag: "참고 정보 확인",
+  viz: "시각화",
+  merge: "결과 정리",
+  report: "리포트",
 };
 
 /** Map RunningSubPhase to STAGES index key */
@@ -250,7 +255,19 @@ function parseThoughtStep(payload: unknown): ThoughtStep | null {
     data.status === "active" || data.status === "completed" || data.status === "failed"
       ? data.status
       : undefined;
-  return { phase, message, status };
+  const displayMessage =
+    typeof data.display_message === "string" && data.display_message.trim()
+      ? data.display_message.trim()
+      : message;
+  const detailMessage =
+    typeof data.detail_message === "string" && data.detail_message.trim()
+      ? data.detail_message.trim()
+      : undefined;
+  const audience =
+    data.audience === "user" || data.audience === "debug"
+      ? data.audience
+      : undefined;
+  return { phase, message, status, displayMessage, detailMessage, audience };
 }
 
 function parseVisualizationResult(payload: unknown): VisualizationResultPayload | null {
@@ -878,7 +895,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
               session_id: resolvedSessionId,
               run_id: typeof nextRunId === "string" ? nextRunId : undefined,
               trace_id: activeTraceId,
-              thought_steps: Array.isArray(doneThoughts) ? doneThoughts as ChatResponse["thought_steps"] : [],
+              thought_steps: Array.isArray(doneThoughts) ? doneThoughts as ThoughtStepPayload[] : [],
             });
           }
 
@@ -1552,7 +1569,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
           { type: "paragraph" as const, content: streamingAnswer || "질문을 처리 중입니다..." },
           {
             type: "numbered-list" as const,
-            items: thoughtSteps.map((step) => step.message),
+            items: thoughtSteps.map((step) => step.displayMessage),
           },
         ];
       }
@@ -1671,9 +1688,9 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
     }
 
     const phaseLabels: Record<RunningSubPhase, string> = {
-      intake: "데이터 수집",
-      preprocessing: "자동 전처리",
-      rag: "RAG 분석",
+      intake: "질문 확인",
+      preprocessing: "데이터 준비",
+      rag: "참고 정보 확인",
       visualization: "시각화",
       report: "리포트 생성",
     };
@@ -1719,7 +1736,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
         const lastStageThought = [...thoughtSteps]
           .reverse()
           .find((step) => subPhaseToStageKey(mapThoughtPhaseToSubPhase(step.phase)) === stageId);
-        sublabel = lastStageThought?.message ?? "Processing...";
+        sublabel = lastStageThought?.displayMessage ?? "처리 중입니다.";
       } else if (completed.has(stageId) || (state === "success" && i <= currentIdx)) {
         status = "success";
       }
@@ -1786,13 +1803,15 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
 
   const derivedEvidence: EvidenceFooterProps = (() => {
     const selectedDataset = uploadedDatasets.find((item) => item.sourceId === sourceId);
-    const ragUsed = thoughtSteps.some((step) => step.phase.startsWith("rag"));
+    const ragUsed = thoughtSteps.some(
+      (step) => step.phase === "rag_retrieval" && step.displayMessage === "질문과 관련된 참고 정보를 찾았습니다.",
+    );
 
     return {
       data: selectedDataset?.fileName || "-",
       scope: uploadedDatasets.length > 0 ? `${uploadedDatasets.length} files` : "-",
       compute: `v3 · ${formatElapsed(elapsedSeconds)}`,
-      rag: ragUsed ? "ON" : "OFF",
+      rag: ragUsed ? "사용함" : "사용 안 함",
     };
   })();
 
@@ -1808,6 +1827,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
     pipelineSteps: derivedPipelineSteps,
     decisionChips: derivedDecisionChips,
     evidence: derivedEvidence,
+    thoughtSteps,
     chatHistory,
     milestones,
     history,

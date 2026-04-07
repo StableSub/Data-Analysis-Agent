@@ -2,6 +2,42 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
+_DETAIL_MESSAGE_LIMIT = 180
+_DISPLAY_COPY = {
+    "analysis_active": "질문을 이해하고 있습니다.",
+    "intake_dataset_selected": "질문과 데이터를 확인했습니다.",
+    "planning_analysis": "분석 경로를 선택했습니다.",
+    "planning_fallback_rag": "관련 정보를 함께 확인합니다.",
+    "planning_general": "질문에 바로 답변하고 있습니다.",
+    "planning_dataset": "데이터 기반 흐름을 준비했습니다.",
+    "intent_visualization": "시각화를 준비하고 있습니다.",
+    "intent_analysis": "계산을 준비하고 있습니다.",
+    "intent_report": "리포트를 준비하고 있습니다.",
+    "intent_preprocess": "데이터를 준비하고 있습니다.",
+    "intent_skip_preprocess": "바로 계산할 수 있는지 확인했습니다.",
+    "preprocess_needed": "데이터 준비가 필요합니다.",
+    "preprocess_skipped": "추가 데이터 준비 없이 진행합니다.",
+    "preprocess_plan": "데이터 준비 방법을 정리했습니다.",
+    "preprocess_result": "데이터 준비를 마쳤습니다.",
+    "analysis_success": "계산을 마쳤습니다.",
+    "analysis_failed": "계산 중 문제가 발생했습니다.",
+    "analysis_clarification": "질문을 조금 더 구체적으로 알려주세요.",
+    "rag_index": "관련 정보를 확인하고 있습니다.",
+    "rag_found": "질문과 관련된 참고 정보를 찾았습니다.",
+    "rag_not_used": "추가 참고 정보는 사용하지 않았습니다.",
+    "guideline_used": "추가 참고 기준을 확인했습니다.",
+    "guideline_not_used": "추가 참고 기준은 사용하지 않았습니다.",
+    "visualization": "시각화를 준비했습니다.",
+    "merge_context": "찾은 정보와 계산 결과를 정리하고 있습니다.",
+    "report_draft": "리포트 초안을 작성하고 있습니다.",
+    "report_generated": "리포트를 정리했습니다.",
+    "report_failed": "리포트 생성 중 문제가 발생했습니다.",
+    "report_revision": "수정 요청을 반영하고 있습니다.",
+    "data_qa": "답변을 정리하고 있습니다.",
+    "output": "응답을 준비하고 있습니다.",
+    "approval": "검토를 기다리고 있습니다.",
+}
+
 
 def _as_dict(value: Any) -> Dict[str, Any] | None:
     if isinstance(value, dict):
@@ -87,8 +123,33 @@ def build_merged_context(state: Dict[str, Any]) -> Dict[str, Any]:
     return merged_context
 
 
-def make_thought_step(*, phase: str, message: str, status: str = "completed") -> Dict[str, str]:
-    return {"phase": phase, "message": message, "status": status}
+def _truncate_detail_message(value: str) -> str:
+    text = value.strip()
+    if len(text) <= _DETAIL_MESSAGE_LIMIT:
+        return text
+    return f"{text[:_DETAIL_MESSAGE_LIMIT]}..."
+
+
+def make_thought_step(
+    *,
+    phase: str,
+    message: str,
+    status: str = "completed",
+    display_message: str | None = None,
+    detail_message: str | None = None,
+    audience: str = "user",
+) -> Dict[str, str]:
+    step = {
+        "phase": phase,
+        "message": message,
+        "status": status,
+        "display_message": (display_message or message).strip(),
+        "audience": audience,
+    }
+    detail = (detail_message or message).strip()
+    if detail:
+        step["detail_message"] = _truncate_detail_message(detail)
+    return step
 
 
 def build_approval_wait_step(stage: str) -> Dict[str, str]:
@@ -97,17 +158,20 @@ def build_approval_wait_step(stage: str) -> Dict[str, str]:
             phase="visualization_approval",
             message="시각화 계획 승인을 기다리는 중입니다.",
             status="active",
+            display_message=_DISPLAY_COPY["approval"],
         )
     if stage == "report":
         return make_thought_step(
             phase="report_approval",
             message="리포트 초안 검토를 기다리는 중입니다.",
             status="active",
+            display_message=_DISPLAY_COPY["approval"],
         )
     return make_thought_step(
         phase="preprocess_approval",
         message="전처리 계획 승인을 기다리는 중입니다.",
         status="active",
+        display_message=_DISPLAY_COPY["approval"],
     )
 
 
@@ -122,6 +186,7 @@ def collect_thought_steps(state: Dict[str, Any]) -> list[Dict[str, str]]:
                 make_thought_step(
                     phase="intake",
                     message="데이터셋 선택 상태를 확인하고 planner 기반 경로를 준비했습니다.",
+                    display_message=_DISPLAY_COPY["intake_dataset_selected"],
                 )
             )
         elif next_step == "analysis":
@@ -129,6 +194,7 @@ def collect_thought_steps(state: Dict[str, Any]) -> list[Dict[str, str]]:
                 make_thought_step(
                     phase="planning",
                     message="planner가 기본 분석 경로를 선택했습니다.",
+                    display_message=_DISPLAY_COPY["planning_analysis"],
                 )
             )
         elif next_step == "fallback_rag":
@@ -136,6 +202,7 @@ def collect_thought_steps(state: Dict[str, Any]) -> list[Dict[str, str]]:
                 make_thought_step(
                     phase="planning",
                     message="planner가 fallback RAG 경로를 선택했습니다.",
+                    display_message=_DISPLAY_COPY["planning_fallback_rag"],
                 )
             )
         elif next_step == "general_question":
@@ -143,6 +210,7 @@ def collect_thought_steps(state: Dict[str, Any]) -> list[Dict[str, str]]:
                 make_thought_step(
                     phase="intake",
                     message="일반 질의 경로로 라우팅했습니다.",
+                    display_message=_DISPLAY_COPY["planning_general"],
                 )
             )
         elif next_step == "data_pipeline":
@@ -150,6 +218,7 @@ def collect_thought_steps(state: Dict[str, Any]) -> list[Dict[str, str]]:
                 make_thought_step(
                     phase="intake",
                     message="데이터셋 기반 파이프라인으로 라우팅했습니다.",
+                    display_message=_DISPLAY_COPY["planning_dataset"],
                 )
             )
         elif next_step == "dataset_qa":
@@ -157,6 +226,7 @@ def collect_thought_steps(state: Dict[str, Any]) -> list[Dict[str, str]]:
                 make_thought_step(
                     phase="intake",
                     message="데이터셋 기반 질의응답 경로로 라우팅했습니다.",
+                    display_message=_DISPLAY_COPY["planning_dataset"],
                 )
             )
 
@@ -165,6 +235,7 @@ def collect_thought_steps(state: Dict[str, Any]) -> list[Dict[str, str]]:
                 make_thought_step(
                     phase="intent",
                     message="시각화 요청이 감지되어 시각화 경로를 준비했습니다.",
+                    display_message=_DISPLAY_COPY["intent_visualization"],
                 )
             )
         if bool(handoff.get("ask_analysis", False)):
@@ -172,6 +243,7 @@ def collect_thought_steps(state: Dict[str, Any]) -> list[Dict[str, str]]:
                 make_thought_step(
                     phase="intent",
                     message="분석 요청이 감지되어 분석 단계를 준비했습니다.",
+                    display_message=_DISPLAY_COPY["intent_analysis"],
                 )
             )
         if bool(handoff.get("ask_report", False)):
@@ -179,6 +251,7 @@ def collect_thought_steps(state: Dict[str, Any]) -> list[Dict[str, str]]:
                 make_thought_step(
                     phase="intent",
                     message="리포트 요청이 감지되어 리포트 경로를 준비했습니다.",
+                    display_message=_DISPLAY_COPY["intent_report"],
                 )
             )
         if bool(handoff.get("ask_preprocess", False)):
@@ -186,6 +259,7 @@ def collect_thought_steps(state: Dict[str, Any]) -> list[Dict[str, str]]:
                 make_thought_step(
                     phase="intent",
                     message="전처리 요청이 감지되어 전처리 단계를 준비했습니다.",
+                    display_message=_DISPLAY_COPY["intent_preprocess"],
                 )
             )
         elif "ask_preprocess" in handoff:
@@ -193,6 +267,7 @@ def collect_thought_steps(state: Dict[str, Any]) -> list[Dict[str, str]]:
                 make_thought_step(
                     phase="intent",
                     message="전처리 요청이 없어 전처리 생략 경로를 준비했습니다.",
+                    display_message=_DISPLAY_COPY["intent_skip_preprocess"],
                 )
             )
 
@@ -204,6 +279,11 @@ def collect_thought_steps(state: Dict[str, Any]) -> list[Dict[str, str]]:
                 make_thought_step(
                     phase="preprocess_decision",
                     message=reason_summary.strip(),
+                    display_message=(
+                        _DISPLAY_COPY["preprocess_needed"]
+                        if decision.get("step") == "run_preprocess"
+                        else _DISPLAY_COPY["preprocess_skipped"]
+                    ),
                 )
             )
         else:
@@ -213,6 +293,7 @@ def collect_thought_steps(state: Dict[str, Any]) -> list[Dict[str, str]]:
                     make_thought_step(
                         phase="preprocess_decision",
                         message="전처리가 필요하다고 판단했습니다.",
+                        display_message=_DISPLAY_COPY["preprocess_needed"],
                     )
                 )
             elif decision_step == "skip_preprocess":
@@ -220,6 +301,7 @@ def collect_thought_steps(state: Dict[str, Any]) -> list[Dict[str, str]]:
                     make_thought_step(
                         phase="preprocess_decision",
                         message="전처리를 생략해도 된다고 판단했습니다.",
+                        display_message=_DISPLAY_COPY["preprocess_skipped"],
                     )
                 )
 
@@ -231,6 +313,7 @@ def collect_thought_steps(state: Dict[str, Any]) -> list[Dict[str, str]]:
                 make_thought_step(
                     phase="preprocess_plan",
                     message=planner_comment.strip(),
+                    display_message=_DISPLAY_COPY["preprocess_plan"],
                 )
             )
         else:
@@ -240,6 +323,7 @@ def collect_thought_steps(state: Dict[str, Any]) -> list[Dict[str, str]]:
                     make_thought_step(
                         phase="preprocess_plan",
                         message=f"전처리 연산 {len(operations)}개를 계획했습니다.",
+                        display_message=_DISPLAY_COPY["preprocess_plan"],
                     )
                 )
 
@@ -253,6 +337,7 @@ def collect_thought_steps(state: Dict[str, Any]) -> list[Dict[str, str]]:
                     phase="preprocess_result",
                     message=preprocess_summary.strip(),
                     status=preprocess_status,
+                    display_message=_DISPLAY_COPY["preprocess_result"],
                 )
             )
 
@@ -266,6 +351,7 @@ def collect_thought_steps(state: Dict[str, Any]) -> list[Dict[str, str]]:
                     make_thought_step(
                         phase="analysis",
                         message=summary.strip(),
+                        display_message=_DISPLAY_COPY["analysis_success"],
                     )
                 )
             else:
@@ -273,6 +359,7 @@ def collect_thought_steps(state: Dict[str, Any]) -> list[Dict[str, str]]:
                     make_thought_step(
                         phase="analysis",
                         message="분석 결과를 생성했습니다.",
+                        display_message=_DISPLAY_COPY["analysis_success"],
                     )
                 )
         elif execution_status == "fail":
@@ -283,6 +370,7 @@ def collect_thought_steps(state: Dict[str, Any]) -> list[Dict[str, str]]:
                         phase="analysis",
                         message=f"분석 단계에서 오류가 발생했습니다: {error_message.strip()}",
                         status="failed",
+                        display_message=_DISPLAY_COPY["analysis_failed"],
                     )
                 )
 
@@ -292,6 +380,7 @@ def collect_thought_steps(state: Dict[str, Any]) -> list[Dict[str, str]]:
             make_thought_step(
                 phase="analysis_clarification",
                 message=clarification_question.strip(),
+                display_message=_DISPLAY_COPY["analysis_clarification"],
             )
         )
 
@@ -305,6 +394,7 @@ def collect_thought_steps(state: Dict[str, Any]) -> list[Dict[str, str]]:
                 make_thought_step(
                     phase="rag_index",
                     message=f"RAG 인덱스를 생성했습니다. (source_id={source_text})",
+                    display_message=_DISPLAY_COPY["rag_index"],
                 )
             )
         elif index_status == "existing":
@@ -312,6 +402,7 @@ def collect_thought_steps(state: Dict[str, Any]) -> list[Dict[str, str]]:
                 make_thought_step(
                     phase="rag_index",
                     message=f"기존 RAG 인덱스를 재사용합니다. (source_id={source_text})",
+                    display_message=_DISPLAY_COPY["rag_index"],
                 )
             )
         elif index_status == "dataset_missing":
@@ -319,7 +410,7 @@ def collect_thought_steps(state: Dict[str, Any]) -> list[Dict[str, str]]:
                 make_thought_step(
                     phase="rag_index",
                     message=f"RAG 인덱싱 대상 데이터셋을 찾지 못했습니다. (source_id={source_text})",
-                    status="failed",
+                    display_message=_DISPLAY_COPY["rag_not_used"],
                 )
             )
         elif index_status == "unsupported_format":
@@ -327,7 +418,7 @@ def collect_thought_steps(state: Dict[str, Any]) -> list[Dict[str, str]]:
                 make_thought_step(
                     phase="rag_index",
                     message=f"현재 RAG는 해당 파일 형식을 지원하지 않습니다. (source_id={source_text})",
-                    status="failed",
+                    display_message=_DISPLAY_COPY["rag_not_used"],
                 )
             )
 
@@ -344,6 +435,7 @@ def collect_thought_steps(state: Dict[str, Any]) -> list[Dict[str, str]]:
                         f"RAG 검색으로 관련 청크 {retrieved_count}개를 찾았습니다. "
                         f"(source_id={source_text})"
                     ),
+                    display_message=_DISPLAY_COPY["rag_found"],
                 )
             )
         else:
@@ -353,6 +445,7 @@ def collect_thought_steps(state: Dict[str, Any]) -> list[Dict[str, str]]:
                     make_thought_step(
                         phase="rag_retrieval",
                         message=evidence_summary.strip(),
+                        display_message=_DISPLAY_COPY["rag_not_used"],
                     )
                 )
 
@@ -364,6 +457,7 @@ def collect_thought_steps(state: Dict[str, Any]) -> list[Dict[str, str]]:
                 make_thought_step(
                     phase="insight",
                     message=insight_summary.strip(),
+                    display_message="찾은 참고 정보를 정리했습니다.",
                 )
             )
 
@@ -371,13 +465,16 @@ def collect_thought_steps(state: Dict[str, Any]) -> list[Dict[str, str]]:
     if isinstance(guideline_result, dict):
         guideline_summary = guideline_result.get("evidence_summary")
         guideline_status = guideline_result.get("status")
-        step_status = "failed" if guideline_status == "no_active_guideline" else "completed"
         if isinstance(guideline_summary, str) and guideline_summary.strip():
             steps.append(
                 make_thought_step(
                     phase="guideline",
                     message=guideline_summary.strip(),
-                    status=step_status,
+                    display_message=(
+                        _DISPLAY_COPY["guideline_not_used"]
+                        if guideline_status == "no_active_guideline"
+                        else _DISPLAY_COPY["guideline_used"]
+                    ),
                 )
             )
 
@@ -391,6 +488,7 @@ def collect_thought_steps(state: Dict[str, Any]) -> list[Dict[str, str]]:
                     phase="visualization",
                     message=viz_summary.strip(),
                     status="failed" if viz_status == "unavailable" else "completed",
+                    display_message=_DISPLAY_COPY["visualization"],
                 )
             )
 
@@ -402,6 +500,11 @@ def collect_thought_steps(state: Dict[str, Any]) -> list[Dict[str, str]]:
                 make_thought_step(
                     phase="merge_context",
                     message=f"누적 컨텍스트를 병합했습니다. (steps={len(applied_steps)})",
+                    display_message=_DISPLAY_COPY["merge_context"],
+                    detail_message=(
+                        f"누적 컨텍스트를 병합했습니다. "
+                        f"(steps={len(applied_steps)}, applied_steps={applied_steps})"
+                    ),
                 )
             )
 
@@ -418,6 +521,7 @@ def collect_thought_steps(state: Dict[str, Any]) -> list[Dict[str, str]]:
                         if revision_count > 0
                         else "리포트 초안을 작성했습니다."
                     ),
+                    display_message=_DISPLAY_COPY["report_draft"],
                 )
             )
 
@@ -429,6 +533,7 @@ def collect_thought_steps(state: Dict[str, Any]) -> list[Dict[str, str]]:
                 make_thought_step(
                     phase="report",
                     message="리포트 응답을 구성했습니다.",
+                    display_message=_DISPLAY_COPY["report_generated"],
                 )
             )
         elif report_status == "failed":
@@ -439,6 +544,7 @@ def collect_thought_steps(state: Dict[str, Any]) -> list[Dict[str, str]]:
                         phase="report",
                         message=f"리포트 생성에 실패했습니다: {error.strip()}",
                         status="failed",
+                        display_message=_DISPLAY_COPY["report_failed"],
                     )
                 )
 
@@ -450,6 +556,7 @@ def collect_thought_steps(state: Dict[str, Any]) -> list[Dict[str, str]]:
                 make_thought_step(
                     phase="report_revision",
                     message=f"리포트 수정 요청을 반영합니다: {instruction.strip()}",
+                    display_message=_DISPLAY_COPY["report_revision"],
                 )
             )
 
@@ -461,6 +568,7 @@ def collect_thought_steps(state: Dict[str, Any]) -> list[Dict[str, str]]:
                 make_thought_step(
                     phase="data_qa",
                     message="데이터 QA 응답을 구성했습니다.",
+                    display_message=_DISPLAY_COPY["data_qa"],
                 )
             )
 
@@ -473,6 +581,7 @@ def collect_thought_steps(state: Dict[str, Any]) -> list[Dict[str, str]]:
             make_thought_step(
                 phase="output",
                 message=f"{output_type} 응답을 구성하고 있습니다.",
+                display_message=_DISPLAY_COPY["output"],
             )
         )
     return steps

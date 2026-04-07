@@ -48,12 +48,17 @@ export interface ChatResponse {
   session_id: number;
   run_id?: string;
   trace_id?: string;
-  thought_steps?: {
-    phase: string;
-    message: string;
-    status: string;
-  }[];
+  thought_steps?: ThoughtStepPayload[];
   pending_approval?: PendingApprovalPayload;
+}
+
+export interface ThoughtStepPayload {
+  phase: string;
+  message: string;
+  status: string;
+  display_message?: string;
+  detail_message?: string;
+  audience?: "user" | "debug";
 }
 
 export interface ChatHistoryMessage {
