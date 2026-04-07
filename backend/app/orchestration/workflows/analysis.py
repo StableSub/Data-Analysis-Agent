@@ -133,7 +133,10 @@ def build_analysis_workflow(
             analysis_error = analysis_service.processor.build_error(
                 "plan_validation",
                 str(exc),
-                detail={"source_id": source_id or ""},
+                detail={
+                    "source_id": source_id or "",
+                    "exception_type": type(exc).__name__,
+                },
             )
             error_message = analysis_error.message
             return {
@@ -274,6 +277,7 @@ def build_analysis_workflow(
             analysis_error = analysis_service.processor.build_error(
                 "persist_result",
                 str(exc),
+                detail={"exception_type": type(exc).__name__},
             )
             return {
                 "analysis_error": analysis_error.model_dump(),

@@ -177,6 +177,37 @@ class ChatService:
             session = self.repository.create_session(title=title[:60])
         return session
 
+    @staticmethod
+    def _extract_done_error_fields(
+        *,
+        preprocess_result: Dict[str, Any] | None,
+        analysis_result: Dict[str, Any] | None,
+        output_payload: Dict[str, Any] | None,
+    ) -> Dict[str, Any]:
+        error_stage = None
+        error_message = None
+        error_type = None
+
+        if isinstance(preprocess_result, dict) and preprocess_result.get("status") == "failed":
+            error_stage = "preprocess"
+            error_message = preprocess_result.get("error") or preprocess_result.get("summary")
+
+        if isinstance(analysis_result, dict):
+            error_stage = error_stage or analysis_result.get("error_stage")
+            error_message = error_message or analysis_result.get("error_message")
+
+        if not error_message and isinstance(output_payload, dict):
+            output_type = output_payload.get("type")
+            output_content = output_payload.get("content")
+            if isinstance(output_type, str) and output_type.endswith("_failed"):
+                error_message = output_content
+
+        return {
+            "error_stage": error_stage,
+            "error_message": error_message,
+            "error_type": error_type,
+        }
+
     async def _relay_agent_events(
         self,
         *,
@@ -310,6 +341,11 @@ class ChatService:
             done_data["output_type"] = output_type
         if isinstance(output_payload, dict):
             done_data["output"] = output_payload
+        error_fields = self._extract_done_error_fields(
+            preprocess_result=preprocess_result,
+            analysis_result=analysis_result,
+            output_payload=output_payload,
+        )
         log_trace(
             layer="chat",
             event="done",
@@ -327,6 +363,9 @@ class ChatService:
                     visualization_result.get("status") if isinstance(visualization_result, dict) else None
                 ),
                 "pending_approval_stage": None,
+                "error_stage": error_fields["error_stage"],
+                "error_message": error_fields["error_message"],
+                "error_type": error_fields["error_type"],
             },
         )
         yield {"event": "done", "data": done_data}

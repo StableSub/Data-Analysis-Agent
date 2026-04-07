@@ -236,9 +236,39 @@ class AgentClient:
         planning_result = snapshot.get("planning_result")
         output = snapshot.get("output")
         analysis_result = snapshot.get("analysis_result")
+        analysis_error = snapshot.get("analysis_error")
+        sandbox_result = snapshot.get("sandbox_result")
         visualization_result = snapshot.get("visualization_result")
         report_result = snapshot.get("report_result")
         interrupt = AgentClient._extract_interrupt_payload(snapshot)
+        error_stage = None
+        error_message = None
+        error_type = None
+
+        if isinstance(analysis_error, dict):
+            error_stage = analysis_error.get("stage")
+            error_message = analysis_error.get("message")
+            detail = analysis_error.get("detail")
+            if isinstance(detail, dict):
+                error_type = detail.get("exception_type") or detail.get("error_type")
+
+        if not error_stage and isinstance(analysis_result, dict):
+            error_stage = analysis_result.get("error_stage")
+        if not error_message and isinstance(analysis_result, dict):
+            error_message = analysis_result.get("error_message")
+        if not error_type and isinstance(sandbox_result, dict):
+            error_type = sandbox_result.get("error_type")
+        is_failed_snapshot = (
+            snapshot.get("final_status") == "fail"
+            or (
+                isinstance(analysis_result, dict)
+                and analysis_result.get("execution_status") == "fail"
+            )
+        )
+        if is_failed_snapshot and not error_message and isinstance(output, dict):
+            output_content = output.get("content")
+            if isinstance(output_content, str) and output_content:
+                error_message = output_content
 
         return {
             "handoff_next_step": (
@@ -279,6 +309,9 @@ class AgentClient:
                 if isinstance(report_result, dict)
                 else None
             ),
+            "error_stage": error_stage,
+            "error_message": error_message,
+            "error_type": error_type,
             "interrupt_stage": interrupt.get("stage") if isinstance(interrupt, dict) else None,
         }
 

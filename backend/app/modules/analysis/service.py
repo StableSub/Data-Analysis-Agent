@@ -212,7 +212,10 @@ class AnalysisService:
                 analysis_error = self.processor.build_error(
                     stage,
                     str(exc),
-                    detail={"attempt": attempt + 1},
+                    detail={
+                        "attempt": attempt + 1,
+                        "exception_type": type(exc).__name__,
+                    },
                 )
                 execution_result = AnalysisExecutionResult(
                     execution_status="fail",
