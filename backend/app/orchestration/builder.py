@@ -20,6 +20,7 @@ def build_main_workflow(
     *,
     analysis_service,
     preprocess_service,
+    eda_service,
     rag_service,
     guideline_service,
     guideline_rag_service,
@@ -31,6 +32,7 @@ def build_main_workflow(
     intake_graph = build_intake_router_workflow(default_model=default_model)
     preprocess_graph = build_preprocess_workflow(
         preprocess_service=preprocess_service,
+        eda_service=eda_service,
         default_model=default_model,
     )
     analysis_graph = build_analysis_workflow(

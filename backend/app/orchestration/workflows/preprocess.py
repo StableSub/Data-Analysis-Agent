@@ -15,13 +15,16 @@ from backend.app.modules.preprocess.planner import (
     build_preprocess_review_payload,
     get_revision_instruction,
 )
+from backend.app.modules.eda.service import EDAService
 from backend.app.modules.preprocess.service import PreprocessService
+from backend.app.modules.profiling.schemas import DatasetProfile
 from backend.app.orchestration.state import PreprocessGraphState
 
 
 def build_preprocess_workflow(
     *,
     preprocess_service: PreprocessService,
+    eda_service: EDAService,
     default_model: str = "gpt-5-nano",
 ):
     def ingestion_and_profile_node(state: PreprocessGraphState) -> Dict[str, Any]:
@@ -48,15 +51,32 @@ def build_preprocess_workflow(
         return "run_preprocess" if step == "run_preprocess" else "skip_preprocess"
 
     def planner_node(state: PreprocessGraphState) -> Dict[str, Any]:
+        dataset_profile = dict(state.get("dataset_profile") or {})
+        if "preprocess_recommendations" not in dataset_profile:
+            profile_model = DatasetProfile.model_validate(dataset_profile)
+            recommendations = eda_service.get_preprocess_recommendations(
+                str(state.get("source_id") or ""),
+                profile=profile_model,
+                include_outlier_analysis=False,
+            )
+            dataset_profile["preprocess_recommendations"] = (
+                recommendations.model_dump().get("recommendations", [])
+                if recommendations is not None
+                else []
+            )
+
         plan = build_preprocess_plan(
             user_input=str(state.get("user_input", "")),
             source_id=str(state.get("source_id") or ""),
-            dataset_profile=state.get("dataset_profile", {}),
+            dataset_profile=dataset_profile,
             revision_request=state.get("revision_request"),
             model_id=state.get("model_id"),
             default_model=default_model,
         )
-        return {"preprocess_plan": plan.model_dump()}
+        return {
+            "dataset_profile": dataset_profile,
+            "preprocess_plan": plan.model_dump(),
+        }
 
     def approval_gate_node(state: PreprocessGraphState) -> Dict[str, Any]:
         plan = PreprocessPlan.model_validate(state.get("preprocess_plan") or {})

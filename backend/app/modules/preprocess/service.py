@@ -7,6 +7,7 @@ import pandas as pd
 from ..datasets.models import Dataset
 from ..datasets.repository import DatasetRepository
 from ..datasets.service import DatasetReader
+from ..profiling.service import DatasetProfileService
 from .processor import PreprocessProcessor
 from .schemas import (
     DataSummary,
@@ -82,53 +83,29 @@ class PreprocessService:
         repository: DatasetRepository,
         reader: DatasetReader,
         processor: PreprocessProcessor,
+        profile_service: DatasetProfileService,
     ) -> None:
         self.repository = repository
         self.reader = reader
         self.processor = processor
+        self.profile_service = profile_service
 
     def build_dataset_profile(self, source_id: str) -> Dict[str, Any]:
-        if not source_id:
-            return {"available": False}
-
-        dataset = self.repository.get_by_source_id(source_id)
-        if not dataset or not dataset.storage_path:
-            return {"available": False}
-
-        file_path = Path(dataset.storage_path)
-        if not file_path.exists():
-            return {"available": False}
-
-        sample_df = self.reader.read_csv(dataset.storage_path, nrows=2000)
-        numeric_cols = sample_df.select_dtypes(include="number").columns.tolist()
-        datetime_cols = [
-            col
-            for col in sample_df.columns
-            if (
-                pd.to_datetime(sample_df[col], errors="coerce").notna().mean() >= 0.7
-                and col not in numeric_cols
-            )
-        ]
-        categorical_cols = [
-            col
-            for col in sample_df.columns
-            if col not in numeric_cols and col not in datetime_cols
-        ]
-        sample_rows = sample_df.head(3)
-        return {
-            "available": True,
-            "sample_row_count": len(sample_df),
-            "columns": sample_df.columns.tolist(),
-            "dtypes": sample_df.dtypes.astype(str).to_dict(),
-            "missing_rates": sample_df.isna().mean().round(3).to_dict(),
-            "sample_values": sample_rows.where(
-                sample_rows.notnull(),
-                None,
-            ).to_dict(orient="list"),
-            "numeric_columns": [str(c) for c in numeric_cols],
-            "datetime_columns": [str(c) for c in datetime_cols],
-            "categorical_columns": [str(c) for c in categorical_cols],
+        profile = self.profile_service.build_profile(source_id)
+        profile_data = profile.model_dump()
+        profile_data["type_columns"] = {
+            "numerical": profile.numeric_columns,
+            "categorical": profile.categorical_columns,
+            "datetime": profile.datetime_columns,
+            "boolean": profile.boolean_columns,
+            "identifier": profile.identifier_columns,
+            "group_key": profile.group_key_columns,
         }
+        profile_data["sample_values"] = {
+            str(column): [row.get(str(column)) for row in profile.sample_rows]
+            for column in profile.columns
+        }
+        return profile_data
 
     def apply(
         self,

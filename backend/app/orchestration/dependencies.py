@@ -19,6 +19,8 @@ from ..modules.analysis.dependencies import (
 )
 from ..modules.analysis.service import AnalysisService
 from ..modules.datasets.dependencies import build_dataset_reader, build_dataset_repository
+from ..modules.eda.dependencies import build_eda_service
+from ..modules.eda.service import EDAService
 from ..modules.guidelines.dependencies import build_guideline_repository, build_guideline_service
 from ..modules.guidelines.service import GuidelineService
 from ..modules.preprocess.dependencies import (
@@ -26,6 +28,7 @@ from ..modules.preprocess.dependencies import (
     build_preprocess_service,
 )
 from ..modules.preprocess.service import PreprocessService
+from ..modules.profiling.dependencies import build_dataset_profile_service
 from ..modules.rag.dependencies import (
     build_guideline_rag_repository,
     build_guideline_rag_service,
@@ -48,6 +51,7 @@ CHECKPOINT_DB_PATH = Path(__file__).resolve().parents[3] / "storage" / "langgrap
 class WorkflowServices:
     analysis_service: AnalysisService
     preprocess_service: PreprocessService
+    eda_service: EDAService
     rag_service: RagService
     guideline_service: GuidelineService
     guideline_rag_service: GuidelineRagService
@@ -58,6 +62,15 @@ class WorkflowServices:
 def build_orchestration_services(*, db: Session, agent: Any) -> WorkflowServices:
     dataset_repository = build_dataset_repository(db)
     dataset_reader = build_dataset_reader()
+    profile_service = build_dataset_profile_service(
+        repository=dataset_repository,
+        reader=dataset_reader,
+    )
+    eda_service = build_eda_service(
+        profile_service=profile_service,
+        dataset_repository=dataset_repository,
+        reader=dataset_reader,
+    )
     visualization_service = build_visualization_service(
         repository=dataset_repository,
         reader=dataset_reader,
@@ -75,6 +88,7 @@ def build_orchestration_services(*, db: Session, agent: Any) -> WorkflowServices
         repository=dataset_repository,
         reader=dataset_reader,
         processor=build_preprocess_processor(),
+        profile_service=profile_service,
     )
     rag_service = build_rag_service(
         repository=build_rag_repository(db),
@@ -95,6 +109,7 @@ def build_orchestration_services(*, db: Session, agent: Any) -> WorkflowServices
     return WorkflowServices(
         analysis_service=analysis_service,
         preprocess_service=preprocess_service,
+        eda_service=eda_service,
         rag_service=rag_service,
         guideline_service=guideline_service,
         guideline_rag_service=guideline_rag_service,
@@ -118,6 +133,7 @@ def build_agent_client(*, db: Session) -> "AgentClient":
             workflow = build_main_workflow(
                 analysis_service=services.analysis_service,
                 preprocess_service=services.preprocess_service,
+                eda_service=services.eda_service,
                 rag_service=services.rag_service,
                 guideline_service=services.guideline_service,
                 guideline_rag_service=services.guideline_rag_service,
