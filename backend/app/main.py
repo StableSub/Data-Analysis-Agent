@@ -8,6 +8,7 @@ from .modules.chat import models as chat_models
 from .modules.chat import router as chats_api
 from .modules.datasets import models as dataset_models
 from .modules.datasets import router as datasets_api
+from .modules.eda import router as eda_api
 from .modules.export import router as export_api
 from .modules.guidelines import models as guideline_models
 from .modules.guidelines import router as guidelines_api
@@ -44,6 +45,7 @@ def on_startup():
 
 
 app.include_router(datasets_api.router)
+app.include_router(eda_api.router)
 app.include_router(chats_api.router)
 app.include_router(analysis_api.router)
 app.include_router(visualization_api.router)
