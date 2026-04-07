@@ -1,6 +1,7 @@
 import uuid
 from typing import Any, AsyncIterator, Dict, Optional
 
+from ...core.trace_logging import log_trace, trace_context
 from ...orchestration.client import AgentClient
 from ..datasets.repository import DatasetRepository
 from .models import ChatSession
@@ -29,27 +30,60 @@ class ChatService:
         session_id: Optional[int] = None,
         model_id: Optional[str] = None,
         source_id: Optional[str] = None,
+        trace_id: Optional[str] = None,
     ) -> AsyncIterator[Dict[str, Any]]:
         session = self._get_or_create_session(session_id=session_id, title=question)
         dataset = self.dataset_repository.get_by_source_id(source_id) if source_id else None
 
-        self.repository.append_message(session, "user", question)
         run_id = uuid.uuid4().hex
-        yield {"event": "session", "data": {"session_id": session.id, "run_id": run_id}}
+        active_trace_id = (trace_id or "").strip() or uuid.uuid4().hex
 
-        async for event in self._relay_agent_events(
-            session_id=session.id,
-            run_id=run_id,
-            agent_stream=self.agent.astream_with_trace(
-                session_id=str(session.id),
+        with trace_context(trace_id=active_trace_id, session_id=session.id, run_id=run_id):
+            log_trace(
+                layer="chat",
+                event="ingress",
+                payload={
+                    "trace_id": active_trace_id,
+                    "session_id": session.id,
+                    "run_id": run_id,
+                    "source_id": source_id,
+                    "question": question,
+                    "question_length": len(question),
+                    "model_id": model_id,
+                },
+            )
+            self.repository.append_message(session, "user", question)
+            log_trace(
+                layer="chat",
+                event="user_message_saved",
+                payload={
+                    "role": "user",
+                    "message_length": len(question),
+                },
+            )
+            yield {
+                "event": "session",
+                "data": {
+                    "session_id": session.id,
+                    "run_id": run_id,
+                    "trace_id": active_trace_id,
+                },
+            }
+
+            async for event in self._relay_agent_events(
+                session_id=session.id,
                 run_id=run_id,
-                question=question,
-                dataset=dataset,
-                model_id=model_id,
-            ),
-            session=session,
-        ):
-            yield event
+                trace_id=active_trace_id,
+                agent_stream=self.agent.astream_with_trace(
+                    session_id=str(session.id),
+                    run_id=run_id,
+                    question=question,
+                    dataset=dataset,
+                    model_id=model_id,
+                ),
+                session=session,
+            ):
+                yield event
 
     async def resume_run_stream(
         self,
@@ -59,27 +93,51 @@ class ChatService:
         decision: str,
         stage: str,
         instruction: Optional[str] = None,
+        trace_id: Optional[str] = None,
     ) -> AsyncIterator[Dict[str, Any]]:
         session = self._get_session(session_id)
         if session is None:
             raise RuntimeError("세션을 찾을 수 없습니다.")
 
-        yield {"event": "session", "data": {"session_id": session.id, "run_id": run_id}}
-        async for event in self._relay_agent_events(
-            session_id=session.id,
-            run_id=run_id,
-            agent_stream=self.agent.astream_with_trace(
-                session_id=str(session.id),
-                run_id=run_id,
-                resume={
+        active_trace_id = (trace_id or "").strip() or run_id
+
+        with trace_context(trace_id=active_trace_id, session_id=session.id, run_id=run_id):
+            log_trace(
+                layer="chat",
+                event="resume_ingress",
+                payload={
+                    "trace_id": active_trace_id,
+                    "session_id": session.id,
+                    "run_id": run_id,
                     "decision": decision,
                     "stage": stage,
                     "instruction": instruction or "",
                 },
-            ),
-            session=session,
-        ):
-            yield event
+            )
+            yield {
+                "event": "session",
+                "data": {
+                    "session_id": session.id,
+                    "run_id": run_id,
+                    "trace_id": active_trace_id,
+                },
+            }
+            async for event in self._relay_agent_events(
+                session_id=session.id,
+                run_id=run_id,
+                trace_id=active_trace_id,
+                agent_stream=self.agent.astream_with_trace(
+                    session_id=str(session.id),
+                    run_id=run_id,
+                    resume={
+                        "decision": decision,
+                        "stage": stage,
+                        "instruction": instruction or "",
+                    },
+                ),
+                session=session,
+            ):
+                yield event
 
     async def get_pending_approval(
         self,
@@ -124,6 +182,7 @@ class ChatService:
         *,
         session_id: int,
         run_id: str,
+        trace_id: str,
         agent_stream: AsyncIterator[Dict[str, Any]],
         session: ChatSession,
     ) -> AsyncIterator[Dict[str, Any]]:
@@ -134,6 +193,7 @@ class ChatService:
         visualization_result: Dict[str, Any] | None = None
         output_type: str | None = None
         output_payload: Dict[str, Any] | None = None
+        chunk_count = 0
 
         async for event in agent_stream:
             event_type = event.get("type")
@@ -141,6 +201,14 @@ class ChatService:
                 step = event.get("step")
                 if isinstance(step, dict):
                     thought_steps.append(step)
+                    log_trace(
+                        layer="chat",
+                        event="thought",
+                        payload={
+                            "trace_id": trace_id,
+                            "step": step,
+                        },
+                    )
                     yield {"event": "thought", "data": step}
             elif event_type == "approval_required":
                 pending_approval = event.get("pending_approval")
@@ -148,11 +216,21 @@ class ChatService:
                     final_steps = event.get("thought_steps")
                     if isinstance(final_steps, list):
                         thought_steps = [step for step in final_steps if isinstance(step, dict)]
+                    log_trace(
+                        layer="chat",
+                        event="approval_required",
+                        payload={
+                            "trace_id": trace_id,
+                            "pending_stage": pending_approval.get("stage"),
+                            "thought_step_count": len(thought_steps),
+                        },
+                    )
                     yield {
                         "event": "approval_required",
                         "data": {
                             "session_id": session_id,
                             "run_id": run_id,
+                            "trace_id": trace_id,
                             "pending_approval": pending_approval,
                             "thought_steps": thought_steps,
                         },
@@ -162,6 +240,17 @@ class ChatService:
                 delta = event.get("delta")
                 if isinstance(delta, str) and delta:
                     answer_parts.append(delta)
+                    chunk_count += 1
+                    log_trace(
+                        layer="chat",
+                        event="chunk",
+                        payload={
+                            "trace_id": trace_id,
+                            "chunk_count": chunk_count,
+                            "accumulated_answer_length": len("".join(answer_parts)),
+                            "last_delta_sample": delta,
+                        },
+                    )
                     yield {"event": "chunk", "data": {"delta": delta}}
             elif event_type == "done":
                 final_answer = event.get("answer")
@@ -195,11 +284,21 @@ class ChatService:
             final_answer = "응답을 생성하지 못했습니다."
 
         self.repository.append_message(session, "assistant", final_answer)
+        log_trace(
+            layer="chat",
+            event="assistant_message_saved",
+            payload={
+                "trace_id": trace_id,
+                "role": "assistant",
+                "message_length": len(final_answer),
+            },
+        )
 
         done_data: Dict[str, Any] = {
             "answer": final_answer,
             "session_id": session_id,
             "run_id": run_id,
+            "trace_id": trace_id,
             "thought_steps": thought_steps,
             "preprocess_result": preprocess_result,
         }
@@ -211,4 +310,23 @@ class ChatService:
             done_data["output_type"] = output_type
         if isinstance(output_payload, dict):
             done_data["output"] = output_payload
+        log_trace(
+            layer="chat",
+            event="done",
+            payload={
+                "trace_id": trace_id,
+                "answer": final_answer,
+                "output_type": output_type,
+                "preprocess_status": (
+                    preprocess_result.get("status") if isinstance(preprocess_result, dict) else None
+                ),
+                "analysis_execution_status": (
+                    analysis_result.get("execution_status") if isinstance(analysis_result, dict) else None
+                ),
+                "visualization_status": (
+                    visualization_result.get("status") if isinstance(visualization_result, dict) else None
+                ),
+                "pending_approval_stage": None,
+            },
+        )
         yield {"event": "done", "data": done_data}

@@ -9,6 +9,7 @@ from typing import Any, AsyncIterator, Dict
 
 from langgraph.types import Command
 
+from ..core.trace_logging import log_trace
 from .state_view import build_approval_wait_step, collect_thought_steps, make_thought_step
 
 
@@ -68,8 +69,21 @@ class AgentClient:
             final_state: Dict[str, Any] = {}
             async for snapshot in self._astream_workflow_values(workflow, input_payload, config):
                 final_state = snapshot
+                log_trace(
+                    layer="workflow",
+                    event="snapshot",
+                    payload=self._summarize_snapshot(snapshot),
+                )
                 pending_approval = self._extract_interrupt_payload(snapshot)
                 if pending_approval is not None:
+                    log_trace(
+                        layer="workflow",
+                        event="workflow_interrupt",
+                        payload={
+                            "stage": pending_approval.get("stage"),
+                            "kind": pending_approval.get("kind"),
+                        },
+                    )
                     pending_stage = str(pending_approval.get("stage") or "")
                     approval_step = build_approval_wait_step(pending_stage)
                     key = (approval_step["phase"], approval_step["message"])
@@ -91,6 +105,11 @@ class AgentClient:
                     thought_steps.append(step)
                     yield {"type": "thought", "step": step}
 
+            log_trace(
+                layer="workflow",
+                event="workflow_final_state",
+                payload=self._summarize_snapshot(final_state),
+            )
             answer = self._extract_answer(final_state)
             for index in range(0, len(answer), 24):
                 delta = answer[index:index + 24]
@@ -209,6 +228,58 @@ class AgentClient:
                 return content
 
         return "응답을 생성하지 못했습니다."
+
+    @staticmethod
+    def _summarize_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
+        handoff = snapshot.get("handoff")
+        planning_result = snapshot.get("planning_result")
+        output = snapshot.get("output")
+        analysis_result = snapshot.get("analysis_result")
+        visualization_result = snapshot.get("visualization_result")
+        report_result = snapshot.get("report_result")
+        interrupt = AgentClient._extract_interrupt_payload(snapshot)
+
+        return {
+            "handoff_next_step": (
+                handoff.get("next_step") if isinstance(handoff, dict) else None
+            ),
+            "planning_route": (
+                planning_result.get("route") if isinstance(planning_result, dict) else None
+            ),
+            "planning_preprocess_required": (
+                planning_result.get("preprocess_required")
+                if isinstance(planning_result, dict)
+                else None
+            ),
+            "planning_need_visualization": (
+                planning_result.get("need_visualization")
+                if isinstance(planning_result, dict)
+                else None
+            ),
+            "planning_need_report": (
+                planning_result.get("need_report")
+                if isinstance(planning_result, dict)
+                else None
+            ),
+            "final_status": snapshot.get("final_status"),
+            "output_type": output.get("type") if isinstance(output, dict) else None,
+            "analysis_execution_status": (
+                analysis_result.get("execution_status")
+                if isinstance(analysis_result, dict)
+                else None
+            ),
+            "visualization_status": (
+                visualization_result.get("status")
+                if isinstance(visualization_result, dict)
+                else None
+            ),
+            "report_status": (
+                report_result.get("status")
+                if isinstance(report_result, dict)
+                else None
+            ),
+            "interrupt_stage": interrupt.get("stage") if isinstance(interrupt, dict) else None,
+        }
 
     async def _astream_workflow_values(
         self,

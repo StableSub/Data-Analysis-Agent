@@ -4,6 +4,7 @@ from typing import Any, AsyncIterator, Dict
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 
+from ...core.trace_logging import get_trace_context
 from .dependencies import get_chat_service
 from .schemas import (
     ChatHistoryResponse,
@@ -33,7 +34,13 @@ def _stream_response(events: AsyncIterator[Dict[str, Any]]) -> StreamingResponse
                 payload = data if isinstance(data, dict) else {"value": data}
                 yield _format_sse(name, payload)
         except Exception as exc:
-            yield _format_sse("error", {"message": str(exc)})
+            yield _format_sse(
+                "error",
+                {
+                    "message": str(exc),
+                    "trace_id": get_trace_context().get("trace_id"),
+                },
+            )
 
     return StreamingResponse(
         event_generator(),
@@ -52,6 +59,7 @@ async def ask_chat_stream(
             session_id=request.session_id,
             model_id=request.model_id,
             source_id=request.source_id,
+            trace_id=request.trace_id,
         )
     )
 
@@ -69,6 +77,7 @@ async def resume_chat_run(
             decision=request.decision,
             stage=request.stage,
             instruction=request.instruction,
+            trace_id=request.trace_id,
         )
     )
 

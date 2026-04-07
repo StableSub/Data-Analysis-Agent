@@ -12,6 +12,7 @@ from typing import Any, Dict
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 
+from backend.app.core.trace_logging import set_trace_stage
 from backend.app.modules.reports.service import ReportService
 from backend.app.orchestration.state import ReportGraphState
 def _get_report_revision_instruction(state: ReportGraphState) -> str:
@@ -43,6 +44,7 @@ def _build_failed_report_payload(
 
 def build_report_workflow(*, report_service: ReportService, default_model: str = "gpt-5-nano"):
     def report_draft_node(state: ReportGraphState) -> Dict[str, Any]:
+        set_trace_stage("report_draft")
         report_visualizations: list[Dict[str, Any]] = []
 
         visualization_result = state.get("visualization_result")
@@ -105,6 +107,7 @@ def build_report_workflow(*, report_service: ReportService, default_model: str =
         return "approval"
 
     def approval_gate_node(state: ReportGraphState) -> Dict[str, Any]:
+        set_trace_stage("report_approval")
         draft = state.get("report_draft")
         if not isinstance(draft, dict):
             draft = {}
@@ -167,6 +170,7 @@ def build_report_workflow(*, report_service: ReportService, default_model: str =
         return "approve"
 
     def finalize_node(state: ReportGraphState) -> Dict[str, Any]:
+        set_trace_stage("report_finalize")
         draft = state.get("report_draft")
         if not isinstance(draft, dict):
             draft = {}

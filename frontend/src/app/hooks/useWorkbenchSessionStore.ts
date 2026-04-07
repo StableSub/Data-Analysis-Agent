@@ -33,6 +33,7 @@ function createEmptyContext(): PipelineSessionContext {
   return {
     backendSessionId: null,
     runId: null,
+    traceId: null,
     fileName: "",
     uploadedDatasets: [],
     selectedSourceId: null,
@@ -53,6 +54,7 @@ function normalizeContext(value: unknown): PipelineSessionContext {
   return {
     backendSessionId: typeof context.backendSessionId === "number" ? context.backendSessionId : null,
     runId: typeof context.runId === "string" ? context.runId : null,
+    traceId: typeof context.traceId === "string" ? context.traceId : null,
     fileName: typeof context.fileName === "string" ? context.fileName : "",
     uploadedDatasets: Array.isArray(context.uploadedDatasets) ? context.uploadedDatasets : [],
     selectedSourceId: typeof context.selectedSourceId === "string" ? context.selectedSourceId : null,

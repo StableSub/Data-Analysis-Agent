@@ -12,6 +12,7 @@ from typing import Any, Dict, List
 
 from langgraph.graph import END, START, StateGraph
 
+from backend.app.core.trace_logging import set_trace_stage
 from backend.app.modules.rag.ai import synthesize_insight
 from backend.app.modules.rag.service import RagService, RetrievedChunk
 from backend.app.orchestration.state import RagGraphState
@@ -20,10 +21,12 @@ from backend.app.orchestration.utils import resolve_target_source_id
 
 def build_rag_workflow(*, rag_service: RagService, default_model: str = "gpt-5-nano"):
     def ensure_rag_index_node(state: RagGraphState) -> Dict[str, Any]:
+        set_trace_stage("rag_index")
         target_source_id = resolve_target_source_id(state)
         return {"rag_index_status": rag_service.ensure_index_for_source(target_source_id or "")}
 
     def retrieve_context_node(state: RagGraphState) -> Dict[str, Any]:
+        set_trace_stage("rag_retrieve")
         query = str(state.get("user_input", "")).strip()
         target_source_id = resolve_target_source_id(state)
         index_status = state.get("rag_index_status")
@@ -69,6 +72,7 @@ def build_rag_workflow(*, rag_service: RagService, default_model: str = "gpt-5-n
         }
 
     def insight_synthesis_node(state: RagGraphState) -> Dict[str, Any]:
+        set_trace_stage("rag_synthesis")
         rag_result = state.get("rag_result")
         rag_result_dict = rag_result if isinstance(rag_result, dict) else {}
         retrieved_count_raw = rag_result_dict.get("retrieved_count")

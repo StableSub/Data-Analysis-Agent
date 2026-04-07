@@ -13,6 +13,7 @@ from typing import Any, Dict
 
 from langgraph.graph import END, START, StateGraph
 
+from backend.app.core.trace_logging import set_trace_stage
 from backend.app.modules.analysis.schemas import AnalysisExecutionResult
 from backend.app.modules.planner.schemas import PlanningResult
 from backend.app.modules.analysis.service import AnalysisService
@@ -74,6 +75,7 @@ def build_analysis_workflow(
     # 질문 해석, 컬럼 grounding, plan 초안 생성, 최종 plan 확정까지 수행한다.
     # 모호한 질문이면 needs_clarification 상태로 종료한다.
     def analysis_planning_node(state: AnalysisGraphState) -> Dict[str, Any]:
+        set_trace_stage("analysis_planning")
         question = str(state.get("user_input", "")).strip()
         source_id = resolve_target_source_id(state)
         if not question:
@@ -155,6 +157,7 @@ def build_analysis_workflow(
         return "execute"
 
     def analysis_clarification_node(state: AnalysisGraphState) -> Dict[str, Any]:
+        set_trace_stage("analysis_clarification")
         clarification_question = str(state.get("clarification_question", "")).strip()
         return {
             "final_status": "needs_clarification",
@@ -163,6 +166,7 @@ def build_analysis_workflow(
 
     # 최종 plan을 기반으로 코드 생성, code repair, sandbox 실행까지 수행한다.
     def analysis_execution_node(state: AnalysisGraphState) -> Dict[str, Any]:
+        set_trace_stage("analysis_execution")
         source_id = resolve_target_source_id(state)
         dataset = analysis_service._get_dataset(source_id or "")
         if dataset is None:
@@ -200,6 +204,7 @@ def build_analysis_workflow(
 
     # execution 결과를 기준으로 success/fail 최종 상태를 확정한다.
     def analysis_validation_node(state: AnalysisGraphState) -> Dict[str, Any]:
+        set_trace_stage("analysis_validation")
         result = state.get("analysis_result")
         if not isinstance(result, dict):
             analysis_error = analysis_service.processor.build_error(
@@ -252,6 +257,7 @@ def build_analysis_workflow(
 
     # 최종 성공 결과를 results 저장소에 기록한다.
     def analysis_persist_result_node(state: AnalysisGraphState) -> Dict[str, Any]:
+        set_trace_stage("analysis_persist")
         try:
             result_id = analysis_service._persist_result(
                 question=str(state.get("user_input", "")),

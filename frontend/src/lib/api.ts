@@ -47,6 +47,7 @@ export interface ChatResponse {
   answer: string;
   session_id: number;
   run_id?: string;
+  trace_id?: string;
   thought_steps?: {
     phase: string;
     message: string;
@@ -130,6 +131,7 @@ export interface ResumeRunRequest {
   decision: "approve" | "revise" | "cancel";
   stage: "preprocess" | "visualization" | "report";
   instruction?: string;
+  trace_id?: string;
 }
 
 export interface PendingApprovalResponse {

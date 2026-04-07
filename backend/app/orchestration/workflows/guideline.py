@@ -11,11 +11,12 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field
 
+from ...core.ai import LLMGateway
+from ...core.trace_logging import set_trace_stage
 from ..state import GuidelineGraphState
 from ...modules.guidelines.service import GuidelineService
 from ...modules.rag.service import GuidelineRagService
@@ -53,6 +54,7 @@ def build_guideline_workflow(
         }
 
     def ensure_guideline_index_node(state: GuidelineGraphState) -> Dict[str, Any]:
+        set_trace_stage("guideline_index")
         """
         역할: 활성 지침서의 인덱스 존재 여부를 확인하고 필요 시 새로 인덱싱한다.
         """
@@ -90,6 +92,7 @@ def build_guideline_workflow(
         }
 
     def retrieve_guideline_context_node(state: GuidelineGraphState) -> Dict[str, Any]:
+        set_trace_stage("guideline_retrieve")
         """
         역할: 사용자 질문으로 활성 지침서 검색을 수행해 컨텍스트와 청크 메타데이터를 구성한다.
         """
@@ -154,6 +157,7 @@ def build_guideline_workflow(
         }
 
     def summarize_guideline_evidence_node(state: GuidelineGraphState) -> Dict[str, Any]:
+        set_trace_stage("guideline_synthesis")
         """
         역할: 검색된 지침 근거가 있을 때 간단한 근거 요약을 생성한다.
         """
@@ -185,12 +189,11 @@ def build_guideline_workflow(
         query = str(guideline_result_dict.get("query", ""))
         context = str(guideline_result_dict.get("context", ""))
         model_name = state.get("model_id") or default_model
-        llm = init_chat_model(model_name).with_structured_output(
-            GuidelineSynthesisPayload,
-            method="function_calling",
-        )
-        llm_result = llm.invoke(
-            [
+        llm = LLMGateway(default_model=default_model)
+        llm_result = llm.invoke_structured(
+            schema=GuidelineSynthesisPayload,
+            model_id=model_name,
+            messages=[
                 SystemMessage(
                     content=(
                         "질문과 지침서 검색 컨텍스트를 읽고, 답변에 바로 활용할 수 있는 지침 근거 요약을 짧게 작성하라."
@@ -202,7 +205,7 @@ def build_guideline_workflow(
                         f"guideline_context:\n{context}"
                     )
                 ),
-            ]
+            ],
         )
         updated_guideline_result = {
             **guideline_result_dict,

@@ -4,6 +4,7 @@ from typing import Any, Dict
 
 from langgraph.graph import END, START, StateGraph
 
+from ..core.trace_logging import set_trace_stage
 from .ai import answer_data_question, answer_general_question
 from .intake_router import build_intake_router_workflow
 from ..modules.planner.service import build_handoff_from_planning_result
@@ -132,6 +133,7 @@ def build_main_workflow(
         return "merge_context"
 
     def general_question_terminal(state: MainWorkflowState) -> Dict[str, Any]:
+        set_trace_stage("general_question")
         answer = answer_general_question(
             user_input=str(state.get("user_input", "")),
             request_context=str(state.get("request_context", "")),
@@ -146,6 +148,7 @@ def build_main_workflow(
         }
 
     def clarification_terminal(state: MainWorkflowState) -> Dict[str, Any]:
+        set_trace_stage("clarification")
         clarification_question = str(state.get("clarification_question", "")).strip()
         return {
             "output": {
@@ -155,14 +158,17 @@ def build_main_workflow(
         }
 
     def merge_context_node(state: MainWorkflowState) -> Dict[str, Any]:
+        set_trace_stage("merge_context")
         return {"merged_context": build_merged_context(state)}
 
     def dataset_context_node(state: MainWorkflowState) -> Dict[str, Any]:
+        set_trace_stage("dataset_context")
         source_id = str(state.get("source_id") or "").strip()
         dataset_context = planner_service.dataset_context_service.build_context(source_id)
         return {"dataset_context": dataset_context.model_dump()}
 
     def planner_node(state: MainWorkflowState) -> Dict[str, Any]:
+        set_trace_stage("planner")
         try:
             planning_result = planner_service.plan(
                 user_input=str(state.get("user_input", "")),
@@ -188,6 +194,7 @@ def build_main_workflow(
         }
 
     def data_qa_terminal(state: MainWorkflowState) -> Dict[str, Any]:
+        set_trace_stage("data_qa")
         merged_context = state.get("merged_context")
         answer = answer_data_question(
             user_input=str(state.get("user_input", "")),

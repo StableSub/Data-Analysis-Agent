@@ -76,6 +76,7 @@ export type PipelineSessionStateHint = "empty" | "ready" | "success" | "error" |
 export interface PipelineSessionContext {
   backendSessionId: number | null;
   runId: string | null;
+  traceId: string | null;
   fileName: string;
   uploadedDatasets: UploadedDatasetMeta[];
   selectedSourceId: string | null;
@@ -176,6 +177,13 @@ function now(): string {
   return new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
+function createTraceId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `trace-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 function formatElapsed(s: number): string {
   const m = Math.floor(s / 60).toString().padStart(2, "0");
   const sec = (s % 60).toString().padStart(2, "0");
@@ -210,10 +218,16 @@ function failToolCall(
   return { ...tc, status: "failed", result, duration: `${dur}s` };
 }
 
-function makeRawLog(label: string, payload: Record<string, unknown>, isError?: boolean): RawLogEntry {
+function makeRawLog(
+  label: string,
+  payload: Record<string, unknown>,
+  isError?: boolean,
+  traceId?: string | null,
+): RawLogEntry {
   return {
     id: crypto.randomUUID(),
     label,
+    traceId: traceId ?? undefined,
     payload: JSON.stringify(payload, null, 2),
     isError,
   };
@@ -528,6 +542,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
   const [fileName, setFileName] = useState("");
   const [sessionId, setSessionId] = useState<number | null>(null);
   const [runId, setRunId] = useState<string | null>(null);
+  const [traceId, setTraceId] = useState<string | null>(null);
   const [chatResponse, setChatResponse] = useState<ChatResponse | null>(null);
   const [streamingAnswer, setStreamingAnswer] = useState("");
   const [thoughtSteps, setThoughtSteps] = useState<ThoughtStep[]>([]);
@@ -644,6 +659,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
       response,
       tc,
       startMs,
+      requestTraceId,
       question,
       successMilestoneTitle,
       successMilestoneSubtext,
@@ -651,6 +667,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
       response: Response;
       tc: ToolCallEntry;
       startMs: number;
+      requestTraceId: string;
       question?: string;
       successMilestoneTitle?: string;
       successMilestoneSubtext?: string;
@@ -671,6 +688,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
       let finalAnswer = "";
       let doneReceived = false;
       let approvalReceived = false;
+      let activeTraceId = requestTraceId;
 
       const handleEvent = (rawEvent: string) => {
         const lines = rawEvent.split("\n");
@@ -700,6 +718,11 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
           : {};
 
         if (eventName === "session") {
+          const nextTraceId = record.trace_id;
+          if (typeof nextTraceId === "string" && nextTraceId.trim()) {
+            activeTraceId = nextTraceId;
+            setTraceId(nextTraceId);
+          }
           const nextSession = record.session_id;
           if (typeof nextSession === "number") {
             setSessionId(nextSession);
@@ -708,10 +731,23 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
           if (typeof nextRunId === "string" && nextRunId.trim()) {
             setRunId(nextRunId);
           }
+          addLog(
+            makeRawLog(
+              "sse: session",
+              {
+                session_id: nextSession,
+                run_id: nextRunId,
+                trace_id: activeTraceId,
+              },
+              false,
+              activeTraceId,
+            ),
+          );
           return;
         }
 
         if (eventName === "thought") {
+          addLog(makeRawLog("sse: thought", record, false, activeTraceId));
           const step = parseThoughtStep(record);
           if (step) {
             appendThoughtStep(step);
@@ -730,6 +766,12 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
 
         if (eventName === "approval_required") {
           approvalReceived = true;
+
+          const nextTraceId = record.trace_id;
+          if (typeof nextTraceId === "string" && nextTraceId.trim()) {
+            activeTraceId = nextTraceId;
+            setTraceId(nextTraceId);
+          }
 
           const nextSession = record.session_id;
           if (typeof nextSession === "number") {
@@ -781,12 +823,29 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
             timestamp: now(),
             selected: true,
           });
-          addLog(makeRawLog("approval_required", pending as unknown as Record<string, unknown>));
+          addLog(
+            makeRawLog(
+              "sse: approval_required",
+              {
+                trace_id: activeTraceId,
+                session_id: nextSession,
+                run_id: nextRunId,
+                pending_approval: pending,
+              },
+              false,
+              activeTraceId,
+            ),
+          );
           return;
         }
 
         if (eventName === "done") {
           doneReceived = true;
+          const nextTraceId = record.trace_id;
+          if (typeof nextTraceId === "string" && nextTraceId.trim()) {
+            activeTraceId = nextTraceId;
+            setTraceId(nextTraceId);
+          }
           const answer = typeof record.answer === "string" ? record.answer : streamText;
           finalAnswer = answer;
           setStreamingAnswer(answer);
@@ -818,6 +877,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
               answer,
               session_id: resolvedSessionId,
               run_id: typeof nextRunId === "string" ? nextRunId : undefined,
+              trace_id: activeTraceId,
               thought_steps: Array.isArray(doneThoughts) ? doneThoughts as ChatResponse["thought_steps"] : [],
             });
           }
@@ -858,11 +918,30 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
             }
           }
 
+          addLog(
+            makeRawLog(
+              "sse: done",
+              {
+                trace_id: activeTraceId,
+                run_id: typeof nextRunId === "string" ? nextRunId : null,
+                output_type: typeof record.output_type === "string" ? record.output_type : null,
+                answer_length: answer.length,
+              },
+              false,
+              activeTraceId,
+            ),
+          );
           setState("success");
           return;
         }
 
         if (eventName === "error") {
+          const nextTraceId = record.trace_id;
+          if (typeof nextTraceId === "string" && nextTraceId.trim()) {
+            activeTraceId = nextTraceId;
+            setTraceId(nextTraceId);
+          }
+          addLog(makeRawLog("sse: error", record, true, activeTraceId));
           const message = typeof record.message === "string"
             ? record.message
             : "스트리밍 처리 중 오류가 발생했습니다.";
@@ -906,7 +985,12 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
       if (!doneReceived && finalText) {
         setStreamingAnswer(finalText);
         if (sessionId !== null) {
-          setChatResponse({ answer: finalText, session_id: sessionId, thought_steps: [] });
+          setChatResponse({
+            answer: finalText,
+            session_id: sessionId,
+            trace_id: activeTraceId,
+            thought_steps: [],
+          });
         }
         setChatHistory((prev) => [
           ...prev,
@@ -918,6 +1002,19 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
           },
         ]);
         setState("success");
+        addLog(
+          makeRawLog(
+            "sse: done",
+            {
+              trace_id: activeTraceId,
+              run_id: runId,
+              output_type: null,
+              answer_length: finalText.length,
+            },
+            false,
+            activeTraceId,
+          ),
+        );
       }
 
       updateToolCall(tc.id, completeToolCall(tc, finalText.slice(0, 80) || "stream done", startMs));
@@ -929,16 +1026,13 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
           timestamp: now(),
         });
       }
-      addLog(makeRawLog("tool_result", {
-        tool: tc.name,
-        answer_length: finalText.length,
-      }));
     },
     [
       addLog,
       addMilestone,
       appendThoughtStep,
       nextLocalMessageId,
+      runId,
       sessionId,
       updateToolCall,
       upsertUploadedDataset,
@@ -1051,16 +1145,26 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
       setStreamingAnswer("");
       setThoughtSteps([]);
       completedStagesRef.current = approvalStageCompletedStages(pendingApproval.stage);
+      const nextTraceId = traceId || createTraceId();
+      setTraceId(nextTraceId);
 
       const request = {
         decision,
         stage: pendingApproval.stage,
         instruction: instruction?.trim() || undefined,
+        trace_id: nextTraceId,
       };
 
       const tc = makeToolCall("resume_run", request);
       addToolCall(tc);
-      addLog(makeRawLog("tool_call: resume_run", { session_id: sessionId, run_id: runId, ...request }));
+      addLog(
+        makeRawLog(
+          "tool_call: resume_run",
+          { session_id: sessionId, run_id: runId, ...request },
+          false,
+          nextTraceId,
+        ),
+      );
 
       const startMs = Date.now();
       const abortController = new AbortController();
@@ -1079,6 +1183,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
             response,
             tc,
             startMs,
+            requestTraceId: nextTraceId,
             successMilestoneTitle:
               decision === "approve"
                 ? `${approvalStageLabel(pendingApproval.stage)} approved`
@@ -1100,7 +1205,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
 
           const message = error instanceof Error ? error.message : "재개 요청에 실패했습니다.";
           updateToolCall(tc.id, failToolCall(tc, message, startMs));
-          addLog(makeRawLog("tool_error: resume_run", { error: message }, true));
+          addLog(makeRawLog("tool_error: resume_run", { error: message }, true, nextTraceId));
           transitionToError("resume_run", message);
         } finally {
           abortRef.current = null;
@@ -1114,6 +1219,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
       addToolCall,
       addLog,
       consumeSseResponse,
+      traceId,
       transitionToError,
       updateToolCall,
     ],
@@ -1177,18 +1283,21 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
       setChatResponse(null);
       setThoughtSteps([]);
       setRunId(null);
+      const nextTraceId = createTraceId();
+      setTraceId(nextTraceId);
       setPendingApproval(null);
       completedStagesRef.current = new Set();
 
-      const request: { question: string; session_id?: number; source_id?: string } = {
+      const request: { question: string; session_id?: number; source_id?: string; trace_id: string } = {
         question,
+        trace_id: nextTraceId,
       };
       if (sessionId !== null) request.session_id = sessionId;
       if (selectedSourceId) request.source_id = selectedSourceId;
 
       const tc = makeToolCall("chat_stream", request);
       addToolCall(tc);
-      addLog(makeRawLog("tool_call: chat_stream", request));
+      addLog(makeRawLog("tool_call: chat_stream", request, false, nextTraceId));
 
       const startMs = Date.now();
       const abortController = new AbortController();
@@ -1207,6 +1316,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
             response,
             tc,
             startMs,
+            requestTraceId: nextTraceId,
             question,
             successMilestoneTitle: "Follow-up",
             successMilestoneSubtext: question.slice(0, 40),
@@ -1221,7 +1331,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
 
           const message = error instanceof Error ? error.message : "채팅 요청에 실패했습니다.";
           updateToolCall(tc.id, failToolCall(tc, message, startMs));
-          addLog(makeRawLog("tool_error: chat_stream", { error: message }, true));
+          addLog(makeRawLog("tool_error: chat_stream", { error: message }, true, nextTraceId));
           transitionToError("chat_stream", message);
         } finally {
           abortRef.current = null;
@@ -1269,6 +1379,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
     setFileName("");
     setSessionId(null);
     setRunId(null);
+    setTraceId(null);
     setChatResponse(null);
     setStreamingAnswer("");
     setThoughtSteps([]);
@@ -1316,6 +1427,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
     return {
       backendSessionId: sessionId,
       runId,
+      traceId,
       fileName,
       uploadedDatasets: [...uploadedDatasets],
       selectedSourceId,
@@ -1333,6 +1445,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
     uploadedDatasets,
     sessionId,
     runId,
+    traceId,
     fileName,
     selectedSourceId,
     chatHistory,
@@ -1346,6 +1459,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
 
     const nextSessionId = context.backendSessionId ?? null;
     const nextRunId = context.runId ?? null;
+    const nextTraceId = context.traceId ?? null;
     const nextUploadedDatasets = Array.isArray(context.uploadedDatasets)
       ? context.uploadedDatasets
       : [];
@@ -1358,6 +1472,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
 
     setSessionId(nextSessionId);
     setRunId(nextRunId);
+    setTraceId(nextTraceId);
     setFileName(context.fileName || "");
     setUploadedDatasets(nextUploadedDatasets);
     setSelectedSourceId(context.selectedSourceId ?? null);
@@ -1386,6 +1501,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
       setChatResponse({
         answer: latestAnswer,
         session_id: nextSessionId,
+        trace_id: nextTraceId ?? undefined,
         thought_steps: [],
       });
     } else {
