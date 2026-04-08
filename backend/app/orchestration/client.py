@@ -193,7 +193,7 @@ class AgentClient:
             "session_id": str(session_id or ""),
             "run_id": str(run_id or ""),
             "model_id": model_id or self.default_model,
-            # source_id is the dataset currently selected in the UI for this request.
+            # source_id is the dataset this run should actively use.
             "source_id": getattr(dataset, "source_id", None) if dataset is not None else None,
         }
         return state, None

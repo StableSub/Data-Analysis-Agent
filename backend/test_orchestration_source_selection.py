@@ -10,6 +10,8 @@ from backend.app.modules.analysis.schemas import (
     MetadataSnapshot,
     VisualizationHint,
 )
+from backend.app.modules.preprocess.executor import execute_preprocess_plan
+from backend.app.modules.preprocess.schemas import PreprocessApplyResponse
 from backend.app.modules.planner.schemas import PlanningResult
 from backend.app.orchestration.utils import resolve_target_source_id
 from backend.app.orchestration.workflows.analysis import build_analysis_workflow
@@ -158,20 +160,51 @@ class _FakeAnalysisService:
         return "result-1"
 
 
+class _FakePreprocessService:
+    def apply(self, source_id: str, operations):
+        return PreprocessApplyResponse(
+            input_source_id=source_id,
+            output_source_id="processed-source",
+            output_filename="processed-source.csv",
+        )
+
+
 class SourceSelectionTests(unittest.TestCase):
-    def test_resolve_target_source_id_keeps_ui_selected_source(self) -> None:
+    def test_resolve_target_source_id_prefers_applied_output_source(self) -> None:
         state = {
             "source_id": "raw-source",
             "preprocess_result": {
                 "status": "applied",
+                "input_source_id": "raw-source",
                 "output_source_id": "processed-source",
             },
             "rag_result": {"source_id": "rag-source"},
         }
 
-        self.assertEqual(resolve_target_source_id(state), "raw-source")
+        self.assertEqual(resolve_target_source_id(state), "processed-source")
 
-    def test_analysis_workflow_keeps_selected_source_after_preprocess(self) -> None:
+    def test_execute_preprocess_plan_promotes_output_source_to_active_source(self) -> None:
+        result = execute_preprocess_plan(
+            source_id="raw-source",
+            preprocess_plan={
+                "operations": [
+                    {
+                        "op": "impute",
+                        "columns": ["Age"],
+                        "method": "mean",
+                    }
+                ]
+            },
+            approved_plan=None,
+            dataset_profile=None,
+            preprocess_service=_FakePreprocessService(),
+        )
+
+        self.assertEqual(result["source_id"], "processed-source")
+        self.assertEqual(result["preprocess_result"]["input_source_id"], "raw-source")
+        self.assertEqual(result["preprocess_result"]["output_source_id"], "processed-source")
+
+    def test_analysis_workflow_uses_processed_source_after_preprocess(self) -> None:
         analysis_service = _FakeAnalysisService()
         workflow = build_analysis_workflow(analysis_service=analysis_service)
 
@@ -189,10 +222,10 @@ class SourceSelectionTests(unittest.TestCase):
         )
 
         self.assertEqual(result["final_status"], "success")
-        self.assertEqual(result["dataset_context"]["source_id"], "raw-source")
-        self.assertEqual(analysis_service.planner_service.calls, ["raw-source"])
-        self.assertEqual(analysis_service.dataset_fetch_calls, ["raw-source"])
-        self.assertEqual(analysis_service.persist_calls, ["raw-source"])
+        self.assertEqual(result["dataset_context"]["source_id"], "processed-source")
+        self.assertEqual(analysis_service.planner_service.calls, ["processed-source"])
+        self.assertEqual(analysis_service.dataset_fetch_calls, ["processed-source"])
+        self.assertEqual(analysis_service.persist_calls, ["processed-source"])
 
 
 if __name__ == "__main__":

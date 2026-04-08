@@ -90,6 +90,11 @@ export interface PipelineSessionContext {
   errorMessage: string | null;
 }
 
+interface LastQuestionRequest {
+  question: string;
+  sourceId: string | null;
+}
+
 interface ThoughtStep {
   phase: string;
   message: string;
@@ -584,7 +589,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
 
   // --- Abort / retry refs ---
   const abortRef = useRef<AbortController | null>(null);
-  const lastQuestionRef = useRef<string>("");
+  const lastQuestionRef = useRef<LastQuestionRequest | null>(null);
   const localMessageIdRef = useRef(0);
   const nextLocalMessageId = useCallback(() => {
     localMessageIdRef.current += 1;
@@ -932,7 +937,8 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
               preprocess.status === "applied" &&
               typeof preprocess.output_source_id === "string" &&
               preprocess.output_source_id
-                ) {
+            ) {
+              setSelectedSourceId(preprocess.output_source_id);
               upsertUploadedDataset({
                 datasetId: 0,
                 sourceId: preprocess.output_source_id,
@@ -1262,7 +1268,16 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
   );
 
   const runQuestionStream = useCallback(
-    (question: string) => {
+    (question: string, sourceIdOverride?: string | null) => {
+      const requestSourceId = typeof sourceIdOverride === "string"
+        ? (sourceIdOverride.trim() || null)
+        : selectedSourceId;
+
+      lastQuestionRef.current = {
+        question,
+        sourceId: requestSourceId,
+      };
+
       setErrorMessage(null);
       setErrorStep(null);
       setState("running");
@@ -1281,7 +1296,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
         trace_id: nextTraceId,
       };
       if (sessionId !== null) request.session_id = sessionId;
-      if (selectedSourceId) request.source_id = selectedSourceId;
+      if (requestSourceId) request.source_id = requestSourceId;
 
       const tc = makeToolCall("chat_stream", request);
       addToolCall(tc);
@@ -1435,7 +1450,10 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
       const question = message.trim();
       if (!question || pendingApproval) return;
 
-      lastQuestionRef.current = question;
+      lastQuestionRef.current = {
+        question,
+        sourceId: selectedSourceId,
+      };
 
       setChatHistory((prev) => [
         ...prev,
@@ -1466,7 +1484,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
         return;
       }
 
-      runQuestionStream(question);
+      runQuestionStream(question, selectedSourceId);
     },
     [pendingApproval, nextLocalMessageId, uploadedDatasets, selectedSourceId, runQuestionStream],
   );
@@ -1487,8 +1505,9 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
       },
     ]);
 
-    if (selectedSourceId) {
-      updateUploadedDataset(selectedSourceId, (current) => ({
+    if (pendingApproval?.source_id) {
+      setSelectedSourceId(pendingApproval.source_id);
+      updateUploadedDataset(pendingApproval.source_id, (current) => ({
         ...current,
         preprocessApproved: true,
       }));
@@ -1496,8 +1515,11 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
 
     setPendingApproval(null);
 
-    if (lastQuestionRef.current.trim()) {
-      runQuestionStream(lastQuestionRef.current);
+    if (lastQuestionRef.current?.question.trim()) {
+      runQuestionStream(
+        lastQuestionRef.current.question,
+        pendingApproval?.source_id ?? lastQuestionRef.current.sourceId,
+      );
       return;
     }
 
@@ -1507,7 +1529,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
     sessionId,
     runId,
     resumeRun,
-    selectedSourceId,
+    setSelectedSourceId,
     updateUploadedDataset,
     runQuestionStream,
     uploadedDatasets.length,
@@ -1561,12 +1583,12 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
   }, [pendingApproval, sessionId, runId, resumeRun]);
 
   const handleRetry = useCallback(() => {
-    if (!lastQuestionRef.current) {
+    if (!lastQuestionRef.current?.question) {
       setState(uploadedDatasets.length > 0 ? "ready" : "empty");
       return;
     }
-    handleSend(lastQuestionRef.current);
-  }, [handleSend, uploadedDatasets.length]);
+    runQuestionStream(lastQuestionRef.current.question, lastQuestionRef.current.sourceId);
+  }, [runQuestionStream, uploadedDatasets.length]);
 
   const handleCancel = useCallback(() => {
     abortRef.current?.abort();
@@ -1603,7 +1625,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
     setPendingApproval(null);
     setLatestVisualizationResult(null);
     setChatHistory([]);
-    lastQuestionRef.current = "";
+    lastQuestionRef.current = null;
     localMessageIdRef.current = 0;
     completedStagesRef.current = new Set();
   }, []);
@@ -1731,7 +1753,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
       setState("empty");
     }
 
-    lastQuestionRef.current = "";
+    lastQuestionRef.current = null;
     if (!(nextStateHint === "needs-user" && nextPendingApproval)) {
       completedStagesRef.current = new Set();
     }

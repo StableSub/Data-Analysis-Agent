@@ -78,6 +78,7 @@ def execute_preprocess_plan(
     updated_profile["preprocess_applied"] = True
 
     return {
+        "source_id": apply_response.output_source_id,
         "dataset_profile": updated_profile,
         "preprocess_result": {
             "status": "applied",

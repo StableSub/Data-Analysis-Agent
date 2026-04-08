@@ -182,6 +182,7 @@ export default function Workbench() {
     uploadedDatasets.find((item) => item.sourceId === selectedSourceId) ?? null;
   const preprocessApproveStartsAnalysis =
     pendingApproval?.stage === "preprocess" && state === "needs-user";
+  const isDatasetSelectorLocked = preprocessApproveStartsAnalysis;
   const preprocessBoardActionMode =
     selectedDataset?.preprocessApproved
       ? "approved"
@@ -742,7 +743,8 @@ export default function Workbench() {
           <select
             value={selectedSourceId ?? ""}
             onChange={(e) => selectUploadedDataset(e.target.value || null)}
-            className="h-7 w-[220px] max-w-full flex-shrink-0 rounded-md border border-[var(--genui-border)] bg-[var(--genui-surface)] px-2 text-xs text-[var(--genui-text)] focus:outline-none focus:ring-1 focus:ring-[var(--genui-focus-ring)] truncate"
+            disabled={isDatasetSelectorLocked}
+            className="h-7 w-[220px] max-w-full flex-shrink-0 rounded-md border border-[var(--genui-border)] bg-[var(--genui-surface)] px-2 text-xs text-[var(--genui-text)] focus:outline-none focus:ring-1 focus:ring-[var(--genui-focus-ring)] truncate disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <option value="">선택 안 함 (일반 질문)</option>
             {uploadedDatasets.map((dataset) => (
