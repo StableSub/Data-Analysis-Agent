@@ -720,6 +720,8 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
       let doneReceived = false;
       let approvalReceived = false;
       let activeTraceId = requestTraceId;
+      let terminalErrorStep: string | null = null;
+      let terminalErrorMessage: string | null = null;
 
       const handleEvent = (rawEvent: string) => {
         const lines = rawEvent.split("\n");
@@ -878,9 +880,15 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
             setTraceId(nextTraceId);
           }
           const answer = typeof record.answer === "string" ? record.answer : streamText;
+          const outputType = typeof record.output_type === "string" ? record.output_type : null;
+          const isReportFailure = outputType === "report_failed";
           finalAnswer = answer;
           setStreamingAnswer(answer);
           setPendingApproval(null);
+          if (isReportFailure) {
+            terminalErrorStep = "report";
+            terminalErrorMessage = answer.trim() || "리포트 생성에 실패했습니다.";
+          }
 
           const nextSession = record.session_id;
           const resolvedSessionId = typeof nextSession === "number" ? nextSession : sessionId;
@@ -959,14 +967,16 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
               {
                 trace_id: activeTraceId,
                 run_id: typeof nextRunId === "string" ? nextRunId : null,
-                output_type: typeof record.output_type === "string" ? record.output_type : null,
+                output_type: outputType,
                 answer_length: answer.length,
               },
-              false,
+              isReportFailure,
               activeTraceId,
             ),
           );
-          setState("success");
+          if (!isReportFailure) {
+            setState("success");
+          }
           return;
         }
 
@@ -1013,6 +1023,12 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
       }
 
       if (approvalReceived) {
+        return;
+      }
+
+      if (terminalErrorMessage) {
+        updateToolCall(tc.id, failToolCall(tc, terminalErrorMessage, startMs));
+        transitionToError(terminalErrorStep ?? "chat_stream", terminalErrorMessage);
         return;
       }
 
@@ -1071,6 +1087,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
       sessionId,
       updateToolCall,
       upsertUploadedDataset,
+      transitionToError,
     ],
   );
 

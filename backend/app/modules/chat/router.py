@@ -53,6 +53,13 @@ async def ask_chat_stream(
     request: ChatRequest,
     chat_service: ChatService = Depends(get_chat_service),
 ):
+    requested_source_id = (request.source_id or "").strip()
+    if requested_source_id and not chat_service.has_dataset_source(requested_source_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="데이터셋을 찾을 수 없습니다.",
+        )
+
     return _stream_response(
         chat_service.ask_stream(
             question=request.question,

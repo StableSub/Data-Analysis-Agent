@@ -324,6 +324,7 @@ def _update_trace_summary(summary: dict[str, Any], entry: dict[str, Any]) -> Non
                 "analysis_execution_status": payload.get("analysis_execution_status"),
                 "preprocess_status": payload.get("preprocess_status"),
                 "visualization_status": payload.get("visualization_status"),
+                "report_status": payload.get("report_status"),
             },
         )
 

@@ -42,6 +42,25 @@ def _build_failed_report_payload(
     }
 
 
+def _build_failed_report_state(
+    *,
+    draft: Dict[str, Any] | None,
+    error: str,
+) -> Dict[str, Any]:
+    failed = _build_failed_report_payload(draft=draft, error=error)
+    return {
+        "report_draft": failed,
+        "report_result": failed,
+        "final_status": "fail",
+        "pending_approval": {},
+        "revision_request": {},
+        "output": {
+            "type": "report_failed",
+            "content": "리포트 생성에 실패했습니다.",
+        },
+    }
+
+
 def build_report_workflow(*, report_service: ReportService, default_model: str = "gpt-5-nano"):
     def report_draft_node(state: ReportGraphState) -> Dict[str, Any]:
         set_trace_stage("report_draft")
@@ -82,18 +101,10 @@ def build_report_workflow(*, report_service: ReportService, default_model: str =
                 default_model=default_model,
             )
         except Exception as exc:
-            failed = _build_failed_report_payload(draft=None, error=str(exc))
-            failed["revision_count"] = revision_count
-            return {
-                "report_draft": failed,
-                "report_result": failed,
-                "pending_approval": {},
-                "revision_request": {},
-                "output": {
-                    "type": "report_answer",
-                    "content": "리포트 생성에 실패했습니다.",
-                },
-            }
+            failed = _build_failed_report_state(draft=None, error=str(exc))
+            failed["report_draft"]["revision_count"] = revision_count
+            failed["report_result"]["revision_count"] = revision_count
+            return failed
 
         return {
             "report_draft": {**draft, "revision_count": revision_count},
@@ -176,19 +187,10 @@ def build_report_workflow(*, report_service: ReportService, default_model: str =
             draft = {}
         report_text = str(draft.get("summary") or "").strip()
         if not report_text:
-            failed = _build_failed_report_payload(
+            return _build_failed_report_state(
                 draft=draft,
                 error="REPORT_DRAFT_EMPTY",
             )
-            return {
-                "report_result": failed,
-                "pending_approval": {},
-                "revision_request": {},
-                "output": {
-                    "type": "report_answer",
-                    "content": "리포트 생성에 실패했습니다.",
-                },
-            }
 
         try:
             session_id = int(str(state.get("session_id") or "").strip())
@@ -197,16 +199,7 @@ def build_report_workflow(*, report_service: ReportService, default_model: str =
                 summary_text=report_text,
             )
         except Exception as exc:
-            failed = _build_failed_report_payload(draft=draft, error=str(exc))
-            return {
-                "report_result": failed,
-                "pending_approval": {},
-                "revision_request": {},
-                "output": {
-                    "type": "report_answer",
-                    "content": "리포트 생성에 실패했습니다.",
-                },
-            }
+            return _build_failed_report_state(draft=draft, error=str(exc))
 
         result = {
             **draft,

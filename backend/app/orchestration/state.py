@@ -221,6 +221,7 @@ class ReportGraphState(AgentState, total=False):
     insight: Dict[str, Any]
     visualization_result: VisualizationResultPayload
     merged_context: Dict[str, Any]
+    final_status: FinalStatus
     report_draft: Dict[str, Any]
     report_result: ReportResultPayload
     output: OutputPayload

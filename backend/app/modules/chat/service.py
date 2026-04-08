@@ -161,6 +161,9 @@ class ChatService:
     def has_session(self, session_id: int) -> bool:
         return self._get_session(session_id) is not None
 
+    def has_dataset_source(self, source_id: str) -> bool:
+        return self.dataset_repository.get_by_source_id(source_id) is not None
+
     def get_history(self, session_id: int) -> Optional[ChatHistoryResponse]:
         session = self._get_session(session_id)
         if not session:
@@ -183,6 +186,7 @@ class ChatService:
     @staticmethod
     def _extract_done_error_fields(
         *,
+        report_result: Dict[str, Any] | None,
         preprocess_result: Dict[str, Any] | None,
         analysis_result: Dict[str, Any] | None,
         output_payload: Dict[str, Any] | None,
@@ -191,9 +195,13 @@ class ChatService:
         error_message = None
         error_type = None
 
+        if isinstance(report_result, dict) and report_result.get("status") == "failed":
+            error_stage = "report"
+            error_message = report_result.get("error") or report_result.get("summary")
+
         if isinstance(preprocess_result, dict) and preprocess_result.get("status") == "failed":
-            error_stage = "preprocess"
-            error_message = preprocess_result.get("error") or preprocess_result.get("summary")
+            error_stage = error_stage or "preprocess"
+            error_message = error_message or preprocess_result.get("error") or preprocess_result.get("summary")
 
         if isinstance(analysis_result, dict):
             error_stage = error_stage or analysis_result.get("error_stage")
@@ -225,6 +233,7 @@ class ChatService:
         preprocess_result: Dict[str, Any] | None = None
         analysis_result: Dict[str, Any] | None = None
         visualization_result: Dict[str, Any] | None = None
+        report_result: Dict[str, Any] | None = None
         output_type: str | None = None
         output_payload: Dict[str, Any] | None = None
         chunk_count = 0
@@ -302,6 +311,9 @@ class ChatService:
                 event_visualization = event.get("visualization_result")
                 if isinstance(event_visualization, dict):
                     visualization_result = event_visualization
+                event_report = event.get("report_result")
+                if isinstance(event_report, dict):
+                    report_result = event_report
                 event_output_type = event.get("output_type")
                 if isinstance(event_output_type, str) and event_output_type:
                     output_type = event_output_type
@@ -340,11 +352,14 @@ class ChatService:
             done_data["analysis_result"] = analysis_result
         if isinstance(visualization_result, dict):
             done_data["visualization_result"] = visualization_result
+        if isinstance(report_result, dict):
+            done_data["report_result"] = report_result
         if output_type:
             done_data["output_type"] = output_type
         if isinstance(output_payload, dict):
             done_data["output"] = output_payload
         error_fields = self._extract_done_error_fields(
+            report_result=report_result,
             preprocess_result=preprocess_result,
             analysis_result=analysis_result,
             output_payload=output_payload,
@@ -364,6 +379,9 @@ class ChatService:
                 ),
                 "visualization_status": (
                     visualization_result.get("status") if isinstance(visualization_result, dict) else None
+                ),
+                "report_status": (
+                    report_result.get("status") if isinstance(report_result, dict) else None
                 ),
                 "pending_approval_stage": None,
                 "error_stage": error_fields["error_stage"],

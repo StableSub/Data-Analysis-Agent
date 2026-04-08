@@ -137,6 +137,9 @@ class AgentClient:
                 and visualization_result.get("status") == "generated"
             ):
                 done_event["visualization_result"] = visualization_result
+            report_result = final_state.get("report_result")
+            if isinstance(report_result, dict):
+                done_event["report_result"] = report_result
             yield done_event
 
     def _runtime(self):
@@ -257,6 +260,18 @@ class AgentClient:
             error_stage = analysis_result.get("error_stage")
         if not error_message and isinstance(analysis_result, dict):
             error_message = analysis_result.get("error_message")
+        if (
+            not error_stage
+            and isinstance(report_result, dict)
+            and report_result.get("status") == "failed"
+        ):
+            error_stage = "report"
+        if (
+            not error_message
+            and isinstance(report_result, dict)
+            and report_result.get("status") == "failed"
+        ):
+            error_message = report_result.get("error") or report_result.get("summary")
         if not error_type and isinstance(sandbox_result, dict):
             error_type = sandbox_result.get("error_type")
         is_failed_snapshot = (
@@ -264,6 +279,10 @@ class AgentClient:
             or (
                 isinstance(analysis_result, dict)
                 and analysis_result.get("execution_status") == "fail"
+            )
+            or (
+                isinstance(report_result, dict)
+                and report_result.get("status") == "failed"
             )
         )
         if is_failed_snapshot and not error_message and isinstance(output, dict):
