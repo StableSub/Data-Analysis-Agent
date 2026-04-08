@@ -46,6 +46,9 @@ def get_analysis_result(
 
     return {
         "analysis_result_id": result.id,
+        "source_id": results_repository.resolve_analysis_result_source_id(result) or "",
+        "question": results_repository.resolve_analysis_result_question(result),
+        "analysis_type": results_repository.resolve_analysis_type(result) or "",
         "analysis_plan_json": result.analysis_plan_json,
         "generated_code": result.generated_code,
         "used_columns": result.used_columns,

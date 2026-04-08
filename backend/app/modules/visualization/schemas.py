@@ -24,3 +24,12 @@ class ManualVizResponse(BaseModel):
 
 class VisualizationFromAnalysisRequest(BaseModel):
     analysis_result_id: str
+
+
+class VisualizationFromAnalysisResponse(BaseModel):
+    status: str
+    source_id: str
+    summary: str
+    chart: Dict[str, Any] | None = None
+    chart_data: Dict[str, Any] | None = None
+    fallback_table: List[Dict[str, Any]] | None = None

@@ -1,3 +1,5 @@
+import type { VisualizationResultPayload } from "./visualization";
+
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 
 export class ApiError extends Error {
@@ -360,6 +362,9 @@ export interface AnalysisResultResponse {
   source_id: string;
   question: string;
   analysis_type: string;
+  analysis_plan_json?: unknown;
+  generated_code?: string | null;
+  used_columns?: string[] | null;
   execution_status: string;
   result_json: unknown;
   table?: unknown;
@@ -369,10 +374,11 @@ export interface AnalysisResultResponse {
   created_at: string;
 }
 
-export interface VisualizationFromAnalysisResponse {
-  visualization_status: string;
-  chart_data?: unknown;
-  fallback_table?: unknown;
+export interface VisualizationFromAnalysisResponse extends VisualizationResultPayload {
+  status: string;
+  source_id: string;
+  summary: string;
+  fallback_table?: Record<string, unknown>[] | null;
 }
 
 export interface AnalysisRunRequest {
@@ -416,21 +422,19 @@ export function submitClarification(
   );
 }
 
-/** GET /api/analysis/results/{analysis_result_id} */
+/** GET /analysis/results/{analysis_result_id} */
 export function getAnalysisResult(
   analysisResultId: string,
-): Promise<ApiEnvelope<AnalysisResultResponse>> {
-  return apiRequest<ApiEnvelope<AnalysisResultResponse>>(
-    `/api/analysis/results/${analysisResultId}`,
-  );
+): Promise<AnalysisResultResponse> {
+  return apiRequest<AnalysisResultResponse>(`/analysis/results/${analysisResultId}`);
 }
 
-/** POST /api/visualization/from-analysis */
+/** POST /vizualization/from-analysis */
 export function createVisualizationFromAnalysis(
   analysisResultId: string,
-): Promise<ApiEnvelope<VisualizationFromAnalysisResponse>> {
-  return apiRequest<ApiEnvelope<VisualizationFromAnalysisResponse>>(
-    "/api/visualization/from-analysis",
+): Promise<VisualizationFromAnalysisResponse> {
+  return apiRequest<VisualizationFromAnalysisResponse>(
+    "/vizualization/from-analysis",
     { method: "POST", body: JSON.stringify({ analysis_result_id: analysisResultId }) },
   );
 }
