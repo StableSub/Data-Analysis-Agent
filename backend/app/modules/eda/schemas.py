@@ -1,7 +1,7 @@
 from typing import Literal
 
 from ..profiling.schemas import ColumnProfile, ColumnProfileType
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 
 class EDASummaryCounts(BaseModel):
@@ -66,6 +66,7 @@ class EDAStatsColumn(BaseModel):
     std: float | None = None
     q1: float | None = None
     q3: float | None = None
+    skew: float | None = None
 
 
 class EDAStatsResponse(BaseModel):
@@ -122,36 +123,11 @@ class EDADistributionResponse(BaseModel):
     bins: list[EDADistributionBin] = Field(default_factory=list)
 
 
-EDARecommendationType = Literal[
-    "drop_column_candidate",
-    "impute_missing",
-    "handle_outliers",
-    "exclude_identifier",
-    "parse_datetime",
-]
-EDARecommendationPriority = Literal["high", "medium", "low"]
-
-
-class EDAPreprocessRecommendation(BaseModel):
-    column: str
-    recommendation_type: EDARecommendationType
-    priority: EDARecommendationPriority
-    reason: str
-    suggested_operation: dict[str, object] = Field(default_factory=dict)
-
-
-class EDAPreprocessRecommendationsResponse(BaseModel):
-    source_id: str
-    recommendation_count: int = 0
-    recommendations: list[EDAPreprocessRecommendation] = Field(default_factory=list)
-
-
 class EDAAISummaryResponse(BaseModel):
     source_id: str
     structure_summary: str = ""
     quality_issues: list[str] = Field(default_factory=list)
     key_insights: list[str] = Field(default_factory=list)
-    preprocess_recommendations: list[str] = Field(default_factory=list)
 
 
 class EDAProfileResponse(BaseModel):
@@ -173,3 +149,31 @@ class EDAProfileResponse(BaseModel):
     type_columns: dict[str, list[str]] = Field(default_factory=dict)
     logical_types: dict[str, ColumnProfileType] = Field(default_factory=dict)
     column_profiles: list[ColumnProfile] = Field(default_factory=list)
+
+# 전처리 추천
+class RecommendedOperation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    op: Literal[
+        "drop_missing",
+        "impute",
+        "drop_columns",
+        "scale",
+        "encode_categorical",
+        "outlier",
+        "parse_datetime",
+        "derived_column",
+    ]
+    target_columns: list[str]
+    reason: str
+    priority: Literal["high", "medium", "low"]
+
+class PreprocessRecommendation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    operations: list[RecommendedOperation] = Field(default_factory=list)
+    summary: str
+
+class PreprocessRecommendationResponse(BaseModel):
+    source_id: str
+    recommendation: PreprocessRecommendation
