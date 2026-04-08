@@ -158,6 +158,9 @@ class ChatService:
             pending_approval=pending_approval,
         )
 
+    def has_session(self, session_id: int) -> bool:
+        return self._get_session(session_id) is not None
+
     def get_history(self, session_id: int) -> Optional[ChatHistoryResponse]:
         session = self._get_session(session_id)
         if not session:

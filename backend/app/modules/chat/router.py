@@ -70,6 +70,25 @@ async def resume_chat_run(
     request: ResumeRunRequest,
     chat_service: ChatService = Depends(get_chat_service),
 ):
+    if not chat_service.has_session(session_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="세션을 찾을 수 없습니다.",
+        )
+
+    pending = await chat_service.get_pending_approval(run_id=run_id)
+    if pending is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="pending approval not found",
+        )
+
+    if pending.session_id != session_id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="run belongs to a different session",
+        )
+
     return _stream_response(
         chat_service.resume_run_stream(
             session_id=session_id,
