@@ -1,23 +1,36 @@
 import React, { useState, useRef, useCallback, useEffect } from "react";
-import { TimelineItem } from "../components/genui/TimelineItem";
 import { ToolCallIndicator } from "../components/genui/ToolCallIndicator";
 import { WorkbenchCommandBar } from "../components/genui/WorkbenchCommandBar";
 import { Dropzone } from "../components/genui/Dropzone";
 import { WorkbenchLayout } from "../components/genui/WorkbenchLayout";
 import { StatusBadge } from "../components/genui/StatusBadge";
-import { DetailsPanel } from "../components/genui/DetailsPanel";
 import { GateBar } from "../components/genui/GateBar";
 import { AssistantReportMessage } from "../components/genui/AssistantReportMessage";
 import { RightPanelTabs, type RightTabId } from "../components/genui/RightPanelTabs";
 import { CopilotPanel } from "../components/genui/CopilotPanel";
 import { MCPPanel } from "../components/genui/MCPPanel";
 import { DecisionChips } from "../components/genui/DecisionChips";
-import { Sparkles, FileText, CheckCircle2, Plus, Trash2, MessageSquare } from "lucide-react";
+import { ApprovalCard } from "../components/genui/ApprovalCard";
+import { CardShell, CardHeader, CardBody } from "../components/genui/CardShell";
+import { PreEdaBoard } from "../components/genui/PreEdaBoard";
+import {
+  CheckCircle2,
+  FileText,
+  MessageSquare,
+  Plus,
+  Trash2,
+} from "lucide-react";
 import { cn } from "../../lib/utils";
 import { PipelineBar, type PipelineBarVariant } from "../components/genui/PipelineBar";
 import { useAnalysisPipeline, type PipelineSessionContext } from "../hooks/useAnalysisPipeline";
 import { useWorkbenchSessionStore } from "../hooks/useWorkbenchSessionStore";
-import { deleteChatSession, fetchPendingApproval, getChatHistory } from "../../lib/api";
+import {
+  deleteChatSession,
+  fetchPendingApproval,
+  getChatHistory,
+  isApiErrorStatus,
+  type PendingApprovalPayload,
+} from "../../lib/api";
 import { toast } from "sonner";
 
 // --- INLINE COMPONENTS ---
@@ -62,6 +75,64 @@ const InlineUploadProgress = ({ progress, fileName }: { progress: number; fileNa
   );
 };
 
+const formatPendingValue = (value: unknown): string => {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item)).join(", ");
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "number" || typeof value === "boolean" || value === null) {
+    return String(value);
+  }
+  if (value && typeof value === "object") {
+    return JSON.stringify(value);
+  }
+  return "";
+};
+
+const formatPendingOperation = (operation: Record<string, unknown>): string => {
+  const op = typeof operation.op === "string" && operation.op.trim() ? operation.op : "operation";
+  const details = Object.entries(operation)
+    .filter(([key, value]) => key !== "op" && value !== undefined && value !== "")
+    .map(([key, value]) => `${key}: ${formatPendingValue(value)}`)
+    .filter((value) => value.trim());
+  return details.length > 0 ? `${op} (${details.join(" · ")})` : op;
+};
+
+const buildPendingApprovalChanges = (
+  pendingApproval: PendingApprovalPayload | null,
+): string[] => {
+  if (!pendingApproval) {
+    return ["승인 대기 중인 작업이 있습니다."];
+  }
+
+  if (pendingApproval.stage === "report") {
+    return [
+      "리포트 초안을 검토한 뒤 승인 또는 수정 요청",
+      typeof pendingApproval.review?.revision_count === "number"
+        ? `현재 revision count: ${pendingApproval.review.revision_count}`
+        : "리포트 수정 횟수 정보 없음",
+      "승인 후 최종 report 흐름을 마무리",
+    ];
+  }
+
+  if (pendingApproval.stage === "visualization") {
+    return [
+      `chart_type: ${pendingApproval.plan.chart_type || "-"}`,
+      `x: ${pendingApproval.plan.x_key || "-"} / y: ${pendingApproval.plan.y_key || "-"}`,
+      pendingApproval.plan.reason || "시각화 계획 검토 필요",
+    ];
+  }
+
+  const operationItems =
+    pendingApproval.plan.operations.length > 0
+      ? pendingApproval.plan.operations.map((operation) => formatPendingOperation(operation))
+      : ["제안된 전처리 operation 없음"];
+
+  return operationItems.slice(0, 4);
+};
+
 // --- MAIN PAGE ---
 
 export default function Workbench() {
@@ -77,11 +148,10 @@ export default function Workbench() {
     pipelineSteps,
     decisionChips,
     evidence,
-    milestones,
-    history,
     pendingApproval,
     rawLogs,
     latestVisualizationResult,
+    selectedPreEdaProfile,
     chatHistory,
     fileName,
     uploadedDatasets,
@@ -109,14 +179,81 @@ export default function Workbench() {
   const hasUploadedDatasets = uploadedDatasets.length > 0;
   const selectedDataset =
     uploadedDatasets.find((item) => item.sourceId === selectedSourceId) ?? null;
+  const preprocessApproveStartsAnalysis =
+    pendingApproval?.stage === "preprocess" && state === "needs-user";
+  const preprocessBoardActionMode =
+    selectedDataset?.preprocessApproved
+      ? "approved"
+      : preprocessApproveStartsAnalysis
+        ? "run"
+        : "prepare";
+  const canApprovePreprocessFromBoard =
+    Boolean(selectedPreEdaProfile?.recommendation)
+    && !selectedDataset?.preprocessApproved
+    && (!pendingApproval || pendingApproval.stage === "preprocess");
 
   // UI-only local state
+  type CanvasView = "current" | "pre-eda" | "deep-eda" | "report";
+  const [canvasView, setCanvasView] = useState<CanvasView>("current");
   const [highlightDetails, setHighlightDetails] = useState(false);
   const [rightTab, setRightTab] = useState<RightTabId>("details");
   const [copilotHasNew, setCopilotHasNew] = useState(false);
   const detailsPanelRef = useRef<HTMLDivElement>(null);
+  const canvasScrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const initializedRef = useRef(false);
+  const lastAutoOpenedPreEdaSourceRef = useRef<string | null>(null);
+
+  // Reset canvas view when pipeline state transitions forward
+  useEffect(() => {
+    if (state === "running" || state === "uploading") {
+      setCanvasView("current");
+    }
+  }, [state]);
+
+  useEffect(() => {
+    if (!selectedSourceId || state !== "ready" || !selectedPreEdaProfile) {
+      if (!selectedSourceId) {
+        lastAutoOpenedPreEdaSourceRef.current = null;
+      }
+      return;
+    }
+
+    if (chatHistory.length > 0) {
+      return;
+    }
+
+    if (lastAutoOpenedPreEdaSourceRef.current === selectedSourceId) {
+      return;
+    }
+
+    lastAutoOpenedPreEdaSourceRef.current = selectedSourceId;
+    setCanvasView("pre-eda");
+  }, [selectedSourceId, selectedPreEdaProfile, state, chatHistory.length]);
+
+  useEffect(() => {
+    if (canvasView === "current") {
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      canvasScrollRef.current?.scrollTo({ top: 0, behavior: "auto" });
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [canvasView]);
+
+  // Wrap handleApprove to also reset canvas view so user sees the transition
+  const handleApproveAndReturn = useCallback(() => {
+    pipeline.handleApprove();
+    if (preprocessApproveStartsAnalysis) {
+      setCanvasView("current");
+      return;
+    }
+
+    setCanvasView("deep-eda");
+    toast.success("전처리 추천을 승인했습니다. 질문을 입력하면 Deep EDA를 시작합니다.");
+  }, [pipeline, preprocessApproveStartsAnalysis]);
 
   // Show NEW dot on Agent tab when tool calls arrive
   useEffect(() => {
@@ -134,12 +271,6 @@ export default function Workbench() {
   const handleTabChange = (tab: RightTabId) => {
     setRightTab(tab);
     if (tab === "agent") setCopilotHasNew(false);
-  };
-
-  const handleDetailsAction = (action: string) => {
-    if (action === "try-sample") pipeline.startWithSample();
-    if (action === "cancel-upload") pipeline.handleCancel();
-    if (action === "resolve-retry") pipeline.handleRetry();
   };
 
   const saveSessionSnapshot = useCallback(
@@ -209,8 +340,19 @@ export default function Workbench() {
             backendSessionId: targetSession.backendSessionId,
             context: nextContext,
           });
-        } catch {
-          toast.error("세션 히스토리를 불러오지 못했습니다.");
+        } catch (error) {
+          if (isApiErrorStatus(error, 404)) {
+            nextContext = {
+              ...nextContext,
+              backendSessionId: null,
+            };
+            updateSession(targetSessionId, {
+              backendSessionId: null,
+              context: nextContext,
+            });
+          } else {
+            toast.error("세션 히스토리를 불러오지 못했습니다.");
+          }
         }
       }
 
@@ -247,9 +389,19 @@ export default function Workbench() {
       if (targetSession.backendSessionId !== null) {
         try {
           await deleteChatSession(targetSession.backendSessionId);
-        } catch {
-          toast.error("서버 세션 삭제에 실패했습니다.");
-          return;
+        } catch (error) {
+          if (isApiErrorStatus(error, 404)) {
+            updateSession(targetSessionId, {
+              backendSessionId: null,
+              context: {
+                ...targetSession.context,
+                backendSessionId: null,
+              },
+            });
+          } else {
+            toast.error("서버 세션 삭제에 실패했습니다.");
+            return;
+          }
         }
       }
 
@@ -262,7 +414,6 @@ export default function Workbench() {
       }
 
       if (remaining.length === 0) {
-        createSession();
         clearForNewDraft();
         return;
       }
@@ -275,7 +426,6 @@ export default function Workbench() {
       sessions,
       activeSessionId,
       deleteSessionFromStore,
-      createSession,
       clearForNewDraft,
       selectSession,
       restoreSessionById,
@@ -307,7 +457,6 @@ export default function Workbench() {
       return;
     }
     if (sessions.length === 0) {
-      createSession();
       clearForNewDraft();
       initializedRef.current = true;
       return;
@@ -322,7 +471,7 @@ export default function Workbench() {
     }
     void restoreSessionById(initialSessionId);
     initializedRef.current = true;
-  }, [sessions, activeSessionId, createSession, clearForNewDraft, selectSession, restoreSessionById]);
+  }, [sessions, activeSessionId, clearForNewDraft, selectSession, restoreSessionById]);
 
   useEffect(() => {
     if (!initializedRef.current || !activeSessionId) {
@@ -392,6 +541,20 @@ export default function Workbench() {
     return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   };
 
+  const formatPercent = (value: number) => `${(value * 100).toFixed(2).replace(/\.00$/, "")}%`;
+
+  const formatUploadedAt = (value?: string) => {
+    if (!value) {
+      return "-";
+    }
+    return new Date(value).toLocaleString([], {
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  };
+
   const handleDeleteSelectedDataset = useCallback(() => {
     if (!selectedSourceId) {
       return;
@@ -402,15 +565,111 @@ export default function Workbench() {
   // Current running tool call for inline indicator
   const currentRunningTool = toolCalls.filter((tc) => tc.status === "running");
   const lastRunningTool = currentRunningTool[currentRunningTool.length - 1];
+  const currentDatasetLabel = selectedDataset?.fileName || fileName || "선택된 데이터셋 없음";
+  const sessionDisplayTitle =
+    activeSession?.title ||
+    (hasDatasetContext
+      ? currentDatasetLabel
+      : state === "empty"
+        ? "새 세션"
+        : "Gen-UI Workbench");
 
-  /* ── LEFT PANEL — Session + History ── */
+  const derivedRouteChips = hasUploadedDatasets
+    ? [
+        {
+          stage: "Pre-EDA",
+          value: "DONE" as const,
+          tooltip: "업로드 직후 데이터 미리보기와 구조/품질 요약을 먼저 확인합니다.",
+        },
+        {
+          stage: "Deep EDA",
+          value:
+            state === "ready"
+              ? "QUEUED" as const
+              : state === "running"
+                ? runningSubPhase === "report"
+                  ? "DONE" as const
+                  : "RUNNING" as const
+                : state === "needs-user"
+                  ? "BLOCKED" as const
+                  : state === "error"
+                    ? "FAILED" as const
+                    : state === "success"
+                      ? "DONE" as const
+                      : "QUEUED" as const,
+          tooltip: "사용자 질문 이후 분포, 상관관계, 이상치 탐지로 확장됩니다.",
+        },
+        {
+          stage: "Report",
+          value:
+            state === "success"
+              ? "DONE" as const
+              : state === "running" && runningSubPhase === "report"
+                ? "RUNNING" as const
+                : state === "error" && runningSubPhase === "report"
+                  ? "FAILED" as const
+                  : "QUEUED" as const,
+          tooltip: "Deep EDA가 끝나면 최종 요약과 후속 리포트 흐름을 남깁니다.",
+        },
+      ]
+    : [];
+
+  const preEdaSummarySections = [
+    { type: "heading" as const, content: "AI 분석 요약" },
+    {
+      type: "paragraph" as const,
+      content:
+        selectedPreEdaProfile?.qualitySummary
+          ?? (hasDatasetContext
+            ? `${currentDatasetLabel}이(가) 현재 source로 선택되어 있습니다. 질문 전에 구조와 품질 맥락을 먼저 확인하고, 이후 질문이 들어오면 Deep EDA와 report로 이어집니다.`
+            : "데이터 업로드는 완료됐지만 아직 source가 선택되지 않았습니다. 상단에서 source를 고르면 해당 데이터 기준으로 질문을 이어갈 수 있습니다."),
+    },
+    {
+      type: "checklist" as const,
+      items:
+        selectedPreEdaProfile?.summaryBullets ?? [
+          "상위 5개 row 미리보기와 데이터 개요 요약을 먼저 확인합니다.",
+          "컬럼 타입 분류와 결측치 분석은 Details 패널에서 drill-down 됩니다.",
+          "질문 이후에는 Deep EDA와 report 흐름으로 이어집니다.",
+        ],
+    },
+  ];
+
+  const headerSubtitle =
+    state === "empty"
+      ? "데이터 업로드 또는 일반 질문으로 새 세션을 시작할 수 있습니다."
+      : state === "uploading"
+        ? `${fileName || "dataset"} 업로드와 검증이 진행 중입니다.`
+        : state === "ready"
+          ? hasDatasetContext
+            ? `${currentDatasetLabel} 기준 Pre-EDA 레이아웃이 준비되었습니다.`
+            : "업로드는 완료됐지만 아직 source가 선택되지 않았습니다."
+          : state === "running"
+            ? `${currentDatasetLabel} 질문을 바탕으로 Deep EDA를 진행 중입니다.`
+            : state === "needs-user"
+              ? "전처리 필요성이 감지되어 HITL 승인 대기 상태입니다."
+              : state === "error"
+                ? "실패 원인과 복구 맥락을 우측 패널과 중앙 카드에서 함께 확인합니다."
+                : hasDatasetContext
+                  ? `${currentDatasetLabel} 기준 Deep EDA 결과와 report가 누적되고 있습니다.`
+                  : "일반 질문 결과가 준비되었습니다.";
+
+  /* ── LEFT PANEL — Session only ── */
   const LeftPanel = (
     <>
       <div className="h-10 border-b border-[var(--genui-border)] flex items-center px-4 gap-2 flex-shrink-0">
         <MessageSquare className="w-3.5 h-3.5 text-[var(--genui-running)]" />
         <span className="font-semibold text-sm text-[var(--genui-text)]">Session</span>
       </div>
-      <div className="p-2 border-b border-[var(--genui-border)] space-y-2">
+      <div className="flex-1 min-h-0 p-2 flex flex-col gap-2">
+        <div className="rounded-md border border-[var(--genui-border)] bg-[var(--genui-surface)] px-3 py-2">
+          <p className="text-[10px] font-semibold uppercase tracking-widest text-[var(--genui-muted)]">
+            Current
+          </p>
+          <p className="mt-1 text-[12px] font-medium text-[var(--genui-text)] truncate">
+            {activeSession?.title || "새 채팅"}
+          </p>
+        </div>
         <button
           type="button"
           onClick={handleNewChat}
@@ -419,7 +678,7 @@ export default function Workbench() {
           <Plus className="w-3.5 h-3.5" />
           새 채팅
         </button>
-        <div className="max-h-44 overflow-y-auto space-y-1">
+        <div className="flex-1 min-h-0 overflow-y-auto space-y-1 pr-1">
           {sessions.map((session) => {
             const isActive = session.id === activeSessionId;
             return (
@@ -468,63 +727,24 @@ export default function Workbench() {
           )}
         </div>
       </div>
-      <div className="h-10 border-b border-[var(--genui-border)] flex items-center px-4 gap-2 flex-shrink-0">
-        <Sparkles className="w-3.5 h-3.5 text-[var(--genui-running)]" />
-        <span className="font-semibold text-sm text-[var(--genui-text)]">History</span>
-      </div>
-      <div className="flex-1 overflow-y-auto p-2 space-y-1">
-        {state === "empty" && (
-          <div className="px-4 py-8 text-center opacity-50">
-            <div className="w-full h-2 bg-[var(--genui-surface)] rounded mb-2" />
-            <div className="w-2/3 h-2 bg-[var(--genui-surface)] rounded mx-auto" />
-          </div>
-        )}
-        {state === "uploading" && (
-          <>
-            <div className="px-2 py-2 text-[10px] font-semibold text-[var(--genui-muted)] uppercase tracking-wider">Today</div>
-            <TimelineItem status="running" title="Uploading dataset…" subtext={fileName} timestamp="Now" selected />
-          </>
-        )}
-        {milestones.length > 0 && (
-          <>
-            <div className="px-2 py-2 text-[10px] font-semibold text-[var(--genui-muted)] uppercase tracking-wider">Today</div>
-            {milestones.map((item, idx) => (
-              <TimelineItem
-                key={idx}
-                status={item.status}
-                title={item.title}
-                subtext={item.subtext}
-                timestamp={item.timestamp}
-                selected={item.selected}
-                onClick={
-                  (item.status === "failed" || item.status === "needs-user")
-                    ? focusDetails
-                    : undefined
-                }
-                statusBadge={
-                  item.status === "needs-user" ? "Awaiting" :
-                    item.status === "failed" ? "Error" :
-                      undefined
-                }
-              />
-            ))}
-            {history.map((item, idx) => <TimelineItem key={`h-${idx}`} {...item} />)}
-          </>
-        )}
+      <div className="border-t border-[var(--genui-border)] px-3 py-3 bg-[var(--genui-surface)]">
+        <p className="text-[10px] leading-relaxed text-[var(--genui-muted)]">
+          세션 전환과 삭제는 여기서만 처리하고, 실제 분석 흐름과 승인 결정은 중앙 캔버스에서 진행합니다.
+        </p>
       </div>
     </>
   );
 
   /* ── CENTER: Decision chips → centerSubHeader ── */
   const CenterSubHeader = (
-    <div className="w-full flex flex-wrap items-center justify-between gap-3 min-w-0">
+    <div className="grid w-full min-w-0 items-center gap-3 xl:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
       {hasUploadedDatasets ? (
-        <div className="flex items-center gap-2 min-w-0 flex-shrink-0">
+        <div className="flex min-w-0 items-center gap-2 overflow-hidden">
           <span className="text-[11px] font-medium text-[var(--genui-muted)] whitespace-nowrap">데이터 소스</span>
           <select
             value={selectedSourceId ?? ""}
             onChange={(e) => selectUploadedDataset(e.target.value || null)}
-            className="h-7 w-[200px] flex-shrink-0 max-w-[320px] rounded-md border border-[var(--genui-border)] bg-[var(--genui-surface)] px-2 text-xs text-[var(--genui-text)] focus:outline-none focus:ring-1 focus:ring-[var(--genui-focus-ring)] truncate"
+            className="h-7 w-[220px] max-w-full flex-shrink-0 rounded-md border border-[var(--genui-border)] bg-[var(--genui-surface)] px-2 text-xs text-[var(--genui-text)] focus:outline-none focus:ring-1 focus:ring-[var(--genui-focus-ring)] truncate"
           >
             <option value="">선택 안 함 (일반 질문)</option>
             {uploadedDatasets.map((dataset) => (
@@ -544,23 +764,40 @@ export default function Workbench() {
           </button>
         </div>
       ) : (
-        <span className="text-xs text-[var(--genui-muted)] whitespace-nowrap flex-shrink-0">
-          업로드 없이도 질문을 바로 보낼 수 있습니다.
+        <span className="text-xs text-[var(--genui-muted)] whitespace-nowrap">
+          업로드가 완료되면 선택된 source와 route 상태가 여기에 표시됩니다.
         </span>
       )}
 
-      {decisionChips.length > 0 ? (
-        <DecisionChips
-          className="flex-shrink flex-wrap justify-end min-w-0"
-          chips={decisionChips.map((c) => ({
-            ...c,
-            onNavigate:
-              c.value === "BLOCKED" || c.value === "FAILED"
-                ? focusDetails
-                : () => handleTabChange("agent"),
-          }))}
-        />
-      ) : null}
+      {derivedRouteChips.length > 0 ? (
+        <div className="justify-self-start xl:justify-self-center">
+          <DecisionChips
+            className="flex-wrap"
+            chips={derivedRouteChips.map((c) => {
+              const viewKey: CanvasView =
+                c.stage === "Pre-EDA" ? "pre-eda"
+                : c.stage === "Deep EDA" ? "deep-eda"
+                : c.stage === "Report" ? "report"
+                : "current";
+
+              // QUEUED 상태면 아직 데이터가 없으므로 클릭 불가
+              if (c.value === "QUEUED") return { ...c, onNavigate: undefined };
+
+              return {
+                ...c,
+                onNavigate: () => {
+                  // 토글: 같은 칩 다시 누르면 current로 복귀
+                  setCanvasView((prev) => prev === viewKey ? "current" : viewKey);
+                },
+              };
+            })}
+          />
+        </div>
+      ) : (
+        <div />
+      )}
+
+      <div className="hidden xl:block" />
     </div>
   );
 
@@ -574,7 +811,19 @@ export default function Workbench() {
   };
 
   const MainContent = (
-    <div className="max-w-3xl mx-auto w-full space-y-8 pb-32 pt-8 px-4">
+    <div
+      className={cn(
+        "mx-auto w-full space-y-4 pb-28 px-2 xl:px-3",
+        canvasView === "current" ? "pt-4" : "pt-2",
+        canvasView === "pre-eda"
+          ? "max-w-[1360px] 2xl:max-w-[1460px]"
+          : state === "empty" || state === "uploading"
+            ? "max-w-3xl"
+            : state === "ready"
+              ? "max-w-[1360px] 2xl:max-w-[1460px]"
+              : "max-w-[1120px]",
+      )}
+    >
       {/* Hidden file input for real file selection */}
       <input
         ref={fileInputRef}
@@ -586,7 +835,7 @@ export default function Workbench() {
 
       {state === "empty" && (
         <div className="flex flex-col items-center justify-center min-h-[50vh] animate-in fade-in zoom-in-95 duration-500">
-          <Dropzone status="idle" onDrop={handleDrop} onTrySample={() => pipeline.startWithSample()} />
+          <Dropzone status="idle" onDrop={handleDrop} />
         </div>
       )}
 
@@ -596,16 +845,25 @@ export default function Workbench() {
         </div>
       )}
 
-      {/* ── CHAT HISTORY (Past Turns) ── */}
-      {chatHistory.length > 0 && (
-        <div className="space-y-6 mb-8 w-full max-w-3xl animate-in fade-in duration-500">
+      {/* ── CHAT HISTORY (Past Turns) — 스냅샷 뷰에서는 숨김 ── */}
+      {canvasView === "current" && chatHistory.length > 0 && (
+        <div className="space-y-5 mb-8 w-full max-w-3xl mx-auto animate-in fade-in duration-500">
           {chatHistory.map((msg) => {
             if (msg.role === "user") {
               return (
-                <div key={msg.id} className="flex justify-end">
-                  <div className="max-w-[80%] rounded-2xl bg-[var(--genui-surface)] text-[var(--genui-text)] px-4 py-2.5 text-[13px] leading-relaxed border border-[var(--genui-border)] shadow-[0_2px_12px_rgba(0,0,0,0.06)] dark:shadow-[0_2px_12px_rgba(0,0,0,0.4)] relative">
-                    {msg.content}
-                    <div className="absolute top-1/2 -right-1.5 -translate-y-1/2 w-3 h-3 bg-[var(--genui-surface)] border-r border-b border-[var(--genui-border)] transform rotate-45 rounded-sm z-[-1]" />
+                <div key={msg.id} className="flex items-start gap-3 justify-end">
+                  <div className="max-w-[75%] space-y-1">
+                    <div className="flex items-center justify-end gap-2 px-1">
+                      <span className="text-[10px] font-medium text-[var(--genui-muted)]">
+                        {msg.created_at
+                          ? new Date(msg.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                          : ""}
+                      </span>
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--genui-running)]">You</span>
+                    </div>
+                    <div className="rounded-2xl rounded-tr-md bg-[var(--genui-running)]/10 border border-[var(--genui-running)]/25 text-[var(--genui-text)] px-4 py-3 text-[14px] leading-relaxed shadow-sm">
+                      {msg.content}
+                    </div>
                   </div>
                 </div>
               );
@@ -629,107 +887,212 @@ export default function Workbench() {
         </div>
       )}
 
-      {state === "ready" && (
-        <div className="flex flex-col items-center justify-center min-h-[50vh] animate-in fade-in zoom-in-95 duration-300">
-          <div className="w-full max-w-2xl rounded-xl border border-[var(--genui-border)] bg-[var(--genui-panel)] p-6 space-y-2">
-            <h2 className="text-lg font-semibold text-[var(--genui-text)]">
-              업로드 완료, 질문 대기 중
-            </h2>
-            <p className="text-sm text-[var(--genui-muted)] leading-relaxed">
-              {selectedDataset
-                ? `${selectedDataset.fileName}이(가) 선택되었습니다. 질문을 보내면 LangGraph가 라우팅합니다.`
-                : "상단에서 파일을 선택하면 해당 source로 질문이 전송됩니다. 선택 없이 질문하면 일반 질의로 처리됩니다."}
-            </p>
-          </div>
-        </div>
-      )}
+      {/* ── CANVAS VIEW: Route 칩 스냅샷 뷰 ── */}
+      {canvasView !== "current" && (
+        <div className="animate-in fade-in duration-300">
+          {/* 뒤로가기 바 */}
+          <button
+            type="button"
+            onClick={() => setCanvasView("current")}
+            className="mb-4 inline-flex items-center gap-1.5 rounded-lg border border-[var(--genui-border)] bg-[var(--genui-panel)] px-3 py-1.5 text-xs font-medium text-[var(--genui-muted)] hover:text-[var(--genui-text)] hover:bg-[var(--genui-surface)] transition-colors"
+          >
+            <span className="text-sm">←</span>
+            현재 상태로 돌아가기
+          </button>
 
-      {/* RUNNING */}
-      {state === "running" && (
-        <div className="space-y-4 animate-in slide-in-from-bottom-4 fade-in duration-500">
-          <AssistantReportMessage
-            variant="streaming"
-            title={hasDatasetContext ? `Analyzing ${selectedDataset?.fileName || fileName || "Dataset"}` : "질문 처리 중"}
-            subtitle={hasDatasetContext ? selectedDataset?.fileName || fileName : "AI가 답변을 생성하고 있습니다."}
-            timestamp="Now"
-            sections={reportSections}
-            maxBodyHeight={300}
-            evidence={evidenceWithNav}
-          />
-          {lastRunningTool && (
-            <div className="flex justify-center">
-              <div className="inline-flex items-center gap-3 px-4 py-2 bg-[var(--genui-panel)] border border-[var(--genui-border)] rounded-full shadow-sm">
-                <ToolCallIndicator status="running" label={lastRunningTool.name} sublabel="Processing..." />
+          {canvasView === "pre-eda" && (
+            <div className="space-y-6">
+              <div className="flex items-center gap-2 mb-2">
+                <StatusBadge status="success" />
+                <span className="text-xs font-semibold text-[var(--genui-text)]">Pre-EDA</span>
+                <span className="text-sm text-[var(--genui-muted)]">업로드 직후 데이터 프로파일 스냅샷</span>
               </div>
+              {selectedPreEdaProfile ? (
+                <PreEdaBoard
+                  profile={selectedPreEdaProfile}
+                  summarySections={preEdaSummarySections}
+                  onApprovePreprocess={canApprovePreprocessFromBoard ? handleApproveAndReturn : undefined}
+                  approveActionMode={preprocessBoardActionMode}
+                />
+              ) : (
+                <AssistantReportMessage
+                  title="Pre-EDA"
+                  subtitle="프로파일 데이터가 없습니다."
+                  sections={[{ type: "paragraph", content: "데이터셋을 업로드하면 Pre-EDA 프로파일이 생성됩니다." }]}
+                />
+              )}
+            </div>
+          )}
+
+          {canvasView === "deep-eda" && (
+            <div className="space-y-6">
+              <div className="flex items-center gap-2 mb-2">
+                <StatusBadge
+                  status={state === "success" || (state === "running" && runningSubPhase === "report") ? "success" : state === "error" ? "error" : "running"}
+                />
+                <span className="text-xs font-semibold text-[var(--genui-text)]">Deep EDA</span>
+                <span className="text-sm text-[var(--genui-muted)]">질문 기반 분석 결과 스냅샷</span>
+              </div>
+              {reportSections.length > 0 ? (
+                <AssistantReportMessage
+                  variant="final"
+                  title="Deep EDA 결과"
+                  subtitle={hasDatasetContext ? currentDatasetLabel : undefined}
+                  sections={reportSections}
+                  maxBodyHeight={600}
+                  evidence={evidenceWithNav}
+                />
+              ) : (
+                <AssistantReportMessage
+                  title="Deep EDA"
+                  subtitle="아직 분석 결과가 없습니다."
+                  sections={[{ type: "paragraph", content: "질문을 전송하면 Deep EDA 결과가 여기에 표시됩니다." }]}
+                />
+              )}
+              {latestVisualizationResult?.artifact?.image_base64 && (
+                <CardShell>
+                  <CardHeader title="시각화 결과" meta={latestVisualizationResult.chart?.chart_type} />
+                  <CardBody>
+                    <img
+                      src={`data:${latestVisualizationResult.artifact.mime_type ?? "image/png"};base64,${latestVisualizationResult.artifact.image_base64}`}
+                      alt="Visualization"
+                      className="w-full rounded-lg"
+                    />
+                  </CardBody>
+                </CardShell>
+              )}
+            </div>
+          )}
+
+          {canvasView === "report" && (
+            <div className="space-y-6">
+              <div className="flex items-center gap-2 mb-2">
+                <StatusBadge
+                  status={state === "success" ? "success" : "ready"}
+                />
+                <span className="text-xs font-semibold text-[var(--genui-text)]">Report</span>
+                <span className="text-sm text-[var(--genui-muted)]">최종 리포트 스냅샷</span>
+              </div>
+              {state === "success" && reportSections.length > 0 ? (
+                <AssistantReportMessage
+                  variant="final"
+                  title="최종 리포트"
+                  subtitle={hasDatasetContext ? currentDatasetLabel : undefined}
+                  sections={reportSections}
+                  maxBodyHeight={600}
+                  evidence={evidenceWithNav}
+                />
+              ) : (
+                <AssistantReportMessage
+                  title="Report"
+                  subtitle="아직 리포트가 생성되지 않았습니다."
+                  sections={[{ type: "paragraph", content: "Deep EDA 완료 후 리포트가 자동 생성됩니다." }]}
+                />
+              )}
             </div>
           )}
         </div>
       )}
 
-      {/* NEEDS-USER */}
-      {state === "needs-user" && (
-        <div className="space-y-4 animate-in slide-in-from-bottom-4 fade-in duration-500">
-          <AssistantReportMessage
-            variant="final"
-            accentVariant="needs-user"
-            title={pendingApproval?.title ?? "Plan review"}
-            subtitle={
-              pendingApproval?.stage === "report"
-                ? "Waiting for report review"
-                : "Waiting for approval"
-            }
-            timestamp="Now"
-            sections={reportSections}
-            maxBodyHeight={300}
-            evidence={evidenceWithNav}
-          />
-          <div className="flex justify-center">
-            <div className="inline-flex items-center gap-3 px-4 py-2 bg-[var(--genui-panel)] border border-[var(--genui-needs-user)]/30 rounded-full shadow-sm">
-              <ToolCallIndicator
-                status="needs-user"
-                label={
+      {/* ── CURRENT VIEW: 기존 상태 기반 렌더링 ── */}
+      {canvasView === "current" && (
+        <>
+          {state === "ready" && (
+            <div className="space-y-6 animate-in fade-in zoom-in-95 duration-300">
+              {selectedPreEdaProfile ? (
+                <PreEdaBoard
+                  profile={selectedPreEdaProfile}
+                  summarySections={preEdaSummarySections}
+                  onApprovePreprocess={canApprovePreprocessFromBoard ? handleApproveAndReturn : undefined}
+                  approveActionMode={preprocessBoardActionMode}
+                />
+              ) : (
+                <AssistantReportMessage
+                  className="max-w-none mx-0"
+                  title="Pre-EDA Summary"
+                  subtitle={hasDatasetContext ? currentDatasetLabel : "Select source"}
+                  sections={preEdaSummarySections}
+                  maxBodyHeight={420}
+                />
+              )}
+            </div>
+          )}
+
+          {/* RUNNING */}
+          {state === "running" && (
+            <div className="space-y-4 animate-in slide-in-from-bottom-4 fade-in duration-500">
+              <AssistantReportMessage
+                variant="streaming"
+                title={hasDatasetContext ? `Analyzing ${selectedDataset?.fileName || fileName || "Dataset"}` : "질문 처리 중"}
+                subtitle={hasDatasetContext ? selectedDataset?.fileName || fileName : "AI가 답변을 생성하고 있습니다."}
+                timestamp="Now"
+                sections={reportSections}
+                maxBodyHeight={300}
+                evidence={evidenceWithNav}
+              />
+              {lastRunningTool && (
+                <div className="rounded-xl border border-[var(--genui-border)] bg-[var(--genui-panel)] px-4 py-3 shadow-sm">
+                  <ToolCallIndicator status="running" label={lastRunningTool.name} sublabel="현재 질문 범위를 기준으로 계산 중입니다." />
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* NEEDS-USER */}
+          {state === "needs-user" && (
+            <div className="space-y-4 animate-in slide-in-from-bottom-4 fade-in duration-500">
+              {pendingApproval && (
+                <ApprovalCard
+                  title={pendingApproval.title}
+                  description={pendingApproval.summary}
+                  changes={buildPendingApprovalChanges(pendingApproval)}
+                  hideActions
+                />
+              )}
+
+              <AssistantReportMessage
+                variant="final"
+                accentVariant="needs-user"
+                title={pendingApproval?.title ?? "Plan review"}
+                subtitle={
                   pendingApproval?.stage === "report"
-                    ? "report_draft_review"
-                    : pendingApproval?.stage === "visualization"
-                      ? "visualization_plan_review"
-                      : "preprocess_plan_review"
+                    ? "Waiting for report review"
+                    : "Waiting for approval"
                 }
-                sublabel={pendingApproval?.summary ?? "Awaiting user decision"}
+                timestamp="Now"
+                sections={reportSections}
+                maxBodyHeight={300}
+                evidence={evidenceWithNav}
               />
             </div>
-          </div>
-          <p className="text-center text-[11px] text-[var(--genui-muted)]">
-            Review the current plan below and approve, request changes, or cancel the run.
-          </p>
-        </div>
-      )}
+          )}
 
-      {/* ERROR */}
-      {state === "error" && (
-        <div className="space-y-4 animate-in slide-in-from-bottom-4 fade-in duration-500">
-          <AssistantReportMessage
-            variant="error"
-            title="Analysis Failed"
-            sections={reportSections}
-            onReviewDetails={focusDetails}
-            evidence={evidenceWithNav}
-          />
-        </div>
-      )}
+          {/* ERROR */}
+          {state === "error" && (
+            <div className="space-y-4 animate-in slide-in-from-bottom-4 fade-in duration-500">
+              <AssistantReportMessage
+                variant="error"
+                title="Analysis Failed"
+                sections={reportSections}
+                onReviewDetails={focusDetails}
+                evidence={evidenceWithNav}
+              />
+            </div>
+          )}
 
-      {/* SUCCESS */}
-      {state === "success" && chatHistory.length === 0 && (
-        <div className="space-y-4 animate-in slide-in-from-bottom-4 fade-in duration-500">
-          <AssistantReportMessage
-            variant="final"
-            title={hasDatasetContext ? "Analysis Complete" : "AI 답변"}
-            subtitle={hasDatasetContext ? selectedDataset?.fileName || fileName : undefined}
-            timestamp="Now"
-            sections={reportSections}
-            maxBodyHeight={400}
-            evidence={evidenceWithNav}
-          />
-        </div>
+          {/* SUCCESS */}
+          {state === "success" && chatHistory.length === 0 && (
+            <div className="space-y-4 animate-in slide-in-from-bottom-4 fade-in duration-500">
+              <AssistantReportMessage
+                title="AI 답변"
+                subtitle={hasDatasetContext ? currentDatasetLabel : undefined}
+                sections={reportSections}
+                maxBodyHeight={400}
+                evidence={evidenceWithNav}
+              />
+            </div>
+          )}
+        </>
       )}
     </div>
   );
@@ -740,11 +1103,13 @@ export default function Workbench() {
       status={state === "empty" ? "empty" : state === "running" ? "streaming" : "idle"}
       placeholder={
         state === "empty" ? "Upload a dataset or ask a question..." :
-          state === "ready" ? "파일을 선택하거나, 바로 질문을 입력하세요..." :
+          state === "ready" ? "Pre-EDA를 확인한 뒤 질문을 이어서 입력하세요..." :
             state === "needs-user"
               ? pendingApproval?.stage === "report"
-                ? "Review the report draft below to continue..."
-                : "Review the current plan below to continue..."
+                ? "리포트 초안을 검토하고 승인 또는 수정 의견을 입력하세요..."
+                : pendingApproval?.stage === "visualization"
+                  ? "시각화 계획을 검토하고 승인 또는 수정 지시를 입력하세요..."
+                  : "전처리 계획을 검토하거나 수정 지시를 입력하세요..."
               :
               state === "error" ? "Type to discuss the error..." :
                 "Ask Gen-UI to analyze, visualize, or transform..."
@@ -752,7 +1117,6 @@ export default function Workbench() {
       onSend={handleSendMessage}
       onStop={() => pipeline.handleCancel()}
       onUploadDataset={openFilePicker}
-      onUseSample={() => pipeline.startWithSample()}
     />
   );
 
@@ -782,7 +1146,10 @@ export default function Workbench() {
       onTabChange={handleTabChange}
       agentHasNew={copilotHasNew}
       detailsContent={
-        <div ref={detailsPanelRef}>
+        <div
+          ref={detailsPanelRef}
+          className="h-full min-h-0 overflow-y-auto overscroll-contain p-4 pr-3 space-y-4"
+        >
           {highlightDetails && (
             <div className="mx-4 mt-3 mb-0 px-3 py-2 rounded-lg border border-[var(--genui-error)]/40 bg-[var(--genui-error)]/5 flex items-center gap-2 animate-in fade-in duration-200">
               <span className="text-[10px] font-semibold text-[var(--genui-error)] animate-pulse">
@@ -790,11 +1157,307 @@ export default function Workbench() {
               </span>
             </div>
           )}
-          <DetailsPanel
-            state={state === "running" || state === "success" ? "streaming" : state}
-            selectedItem={{ visualization: latestVisualizationResult, hasDatasetContext, pendingApproval }}
-            onAction={handleDetailsAction}
-          />
+          {state === "empty" && (
+            <>
+              <CardShell>
+                <CardHeader title="업로드 규칙" meta="Details" statusLabel="CSV · JSON · XLSX" statusVariant="neutral" />
+                <CardBody className="space-y-2 text-sm text-[var(--genui-text)]">
+                  <p>파일당 최대 200MB까지 업로드할 수 있습니다.</p>
+                  <p>업로드 후에는 선택된 source와 Pre-EDA 맥락이 중앙과 이 패널에 함께 표시됩니다.</p>
+                </CardBody>
+              </CardShell>
+              <CardShell>
+                <CardHeader title="질문 흐름" meta="Before dataset" statusLabel="Optional" statusVariant="neutral" />
+                <CardBody className="space-y-2 text-sm text-[var(--genui-text)]">
+                  <p>데이터 없이도 일반 질문은 가능하지만, Pre-EDA와 Deep EDA 흐름은 업로드 후에만 활성화됩니다.</p>
+                </CardBody>
+              </CardShell>
+            </>
+          )}
+
+          {state === "ready" && (
+            <>
+              <CardShell>
+                <CardHeader
+                  title="컬럼 타입 분해"
+                  meta="DETAILS"
+                  statusLabel={`${selectedPreEdaProfile?.columnCount ?? 0} Columns`}
+                  statusVariant="neutral"
+                />
+                <CardBody className="space-y-3">
+                  {selectedPreEdaProfile ? (
+                    <>
+                      {[
+                        {
+                          label: `numeric ${selectedPreEdaProfile.numericColumns.length}개`,
+                          detail: "기본 통계 / 상관관계 / 이상치 대상",
+                        },
+                        {
+                          label: `categorical ${selectedPreEdaProfile.categoricalColumns.length}개`,
+                          detail: "빈도 분석 / bar chart 대상",
+                        },
+                        {
+                          label: `boolean ${selectedPreEdaProfile.booleanColumns.length}개`,
+                          detail: "categorical로 간주하여 빈도 분석 포함",
+                        },
+                        {
+                          label: `datetime ${selectedPreEdaProfile.datetimeColumns.length}개`,
+                          detail: "시계열 흐름 / key 후보",
+                        },
+                        {
+                          label: `group key ${selectedPreEdaProfile.groupKeyColumns.length}개`,
+                          detail: "그룹별 비교 기준 컬럼",
+                        },
+                        {
+                          label: `identifier ${selectedPreEdaProfile.identifierColumns.length}개`,
+                          detail: "미리보기 전용 / 통계·상관관계 제외",
+                        },
+                      ].map((item) => (
+                        <div key={item.label} className="rounded-xl border border-[var(--genui-border)] bg-[var(--genui-surface)] px-4 py-3">
+                          <p className="text-sm font-medium text-[var(--genui-text)]">{item.label}</p>
+                          <p className="mt-1 text-xs text-[var(--genui-muted)]">{item.detail}</p>
+                        </div>
+                      ))}
+                    </>
+                  ) : (
+                    <p className="text-sm text-[var(--genui-text)]">선택된 source의 Pre-EDA 정보가 아직 없습니다.</p>
+                  )}
+                </CardBody>
+              </CardShell>
+
+              <CardShell>
+                <CardHeader
+                  title="선택 source 메타데이터"
+                  meta="SOURCE"
+                  statusLabel={selectedDataset?.sourceId ?? "-"}
+                  statusVariant="neutral"
+                />
+                <CardBody className="space-y-3 text-sm text-[var(--genui-text)]">
+                  <div className="space-y-2">
+                    <p>업로드 시각: {formatUploadedAt(selectedDataset?.uploadedAt)}</p>
+                    <p>source_id: {selectedDataset?.sourceId ?? "-"}</p>
+                    <p>
+                      group key 후보: {selectedPreEdaProfile?.groupKeyColumns.length
+                        ? selectedPreEdaProfile.groupKeyColumns.join(", ")
+                        : "없음"}
+                    </p>
+                  </div>
+                </CardBody>
+              </CardShell>
+            </>
+          )}
+
+          {state === "running" && (
+            <>
+              <CardShell>
+                <CardHeader title="실행 현황" meta="Live" statusLabel="Running" statusVariant="running" />
+                <CardBody className="space-y-3 text-sm text-[var(--genui-text)]">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-[var(--genui-muted)]">데이터셋</span>
+                    <span className="text-xs font-medium truncate max-w-[160px]">{selectedDataset?.fileName ?? "없음"}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-[var(--genui-muted)]">현재 단계</span>
+                    <span className="text-xs font-medium">{runningSubPhase}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-[var(--genui-muted)]">경과 시간</span>
+                    <span className="text-xs font-mono">{formatElapsed(elapsedSeconds)}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-[var(--genui-muted)]">Tool Calls</span>
+                    <span className="text-xs font-medium">{toolCalls.length}개</span>
+                  </div>
+                </CardBody>
+              </CardShell>
+              {toolCalls.length > 0 && (
+                <CardShell>
+                  <CardHeader title="최근 Tool Calls" meta="Log" />
+                  <CardBody className="space-y-2">
+                    {toolCalls.slice(-5).map((tc) => (
+                      <div key={tc.id} className="flex items-center justify-between gap-2 rounded-lg border border-[var(--genui-border)] bg-[var(--genui-surface)] px-3 py-2">
+                        <div className="min-w-0">
+                          <p className="text-xs font-medium text-[var(--genui-text)] truncate">{tc.name}</p>
+                          {tc.result && <p className="text-[10px] text-[var(--genui-muted)] truncate mt-0.5">{tc.result}</p>}
+                        </div>
+                        <span className={cn(
+                          "text-[10px] font-medium shrink-0 px-1.5 py-0.5 rounded",
+                          tc.status === "completed" ? "bg-[var(--genui-success)]/10 text-[var(--genui-success)]"
+                            : tc.status === "failed" ? "bg-[var(--genui-error)]/10 text-[var(--genui-error)]"
+                            : "bg-[var(--genui-running)]/10 text-[var(--genui-running)]"
+                        )}>
+                          {tc.status === "completed" ? "Done" : tc.status === "failed" ? "Fail" : "..."}
+                          {tc.duration ? ` ${tc.duration}` : ""}
+                        </span>
+                      </div>
+                    ))}
+                  </CardBody>
+                </CardShell>
+              )}
+            </>
+          )}
+
+          {state === "needs-user" && pendingApproval && (
+            <>
+              <CardShell>
+                <CardHeader
+                  title={pendingApproval.stage === "report" ? "리포트 검토" : pendingApproval.stage === "visualization" ? "시각화 검토" : "전처리 검토"}
+                  meta={pendingApproval.stage.toUpperCase()}
+                  statusLabel="Needs Approval"
+                  statusVariant="needs-user"
+                />
+                <CardBody className="space-y-3 text-sm text-[var(--genui-text)]">
+                  <p className="text-xs text-[var(--genui-muted)]">{pendingApproval.summary}</p>
+                  {pendingApproval.stage === "preprocess" && (
+                    <div className="space-y-2">
+                      {pendingApproval.plan.operations.map((op, i) => (
+                        <div key={i} className="rounded-lg border border-[var(--genui-border)] bg-[var(--genui-surface)] px-3 py-2">
+                          <p className="text-xs font-medium">{typeof op.op === "string" ? op.op : "operation"}</p>
+                          {typeof op.column === "string" && <p className="text-[10px] text-[var(--genui-muted)] mt-0.5">컬럼: {op.column}</p>}
+                          {typeof op.strategy === "string" && <p className="text-[10px] text-[var(--genui-muted)]">전략: {op.strategy}</p>}
+                        </div>
+                      ))}
+                      {(pendingApproval.plan.top_missing_columns ?? []).length > 0 && (
+                        <div className="mt-2">
+                          <p className="text-[10px] font-semibold text-[var(--genui-muted)] uppercase tracking-wider mb-1">Top Missing</p>
+                          {(pendingApproval.plan.top_missing_columns ?? []).map((c) => (
+                            <div key={c.column} className="flex items-center justify-between text-xs py-1">
+                              <span className="font-medium">{c.column}</span>
+                              <span className="text-[var(--genui-error)]">{formatPercent(c.missing_rate)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {pendingApproval.stage === "visualization" && (
+                    <div className="space-y-1 text-xs">
+                      <div className="flex justify-between"><span className="text-[var(--genui-muted)]">Chart</span><span className="font-medium">{pendingApproval.plan.chart_type || "-"}</span></div>
+                      <div className="flex justify-between"><span className="text-[var(--genui-muted)]">X</span><span className="font-medium">{pendingApproval.plan.x_key || "-"}</span></div>
+                      <div className="flex justify-between"><span className="text-[var(--genui-muted)]">Y</span><span className="font-medium">{pendingApproval.plan.y_key || "-"}</span></div>
+                      {pendingApproval.plan.reason && <p className="text-[10px] text-[var(--genui-muted)] mt-1">{pendingApproval.plan.reason}</p>}
+                    </div>
+                  )}
+                </CardBody>
+              </CardShell>
+              <CardShell>
+                <CardHeader title="실행 경과" meta="Context" />
+                <CardBody className="space-y-2 text-xs text-[var(--genui-text)]">
+                  <div className="flex justify-between">
+                    <span className="text-[var(--genui-muted)]">경과 시간</span>
+                    <span className="font-mono">{formatElapsed(elapsedSeconds)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-[var(--genui-muted)]">Tool Calls</span>
+                    <span>{toolCalls.length}개</span>
+                  </div>
+                  {selectedDataset && (
+                    <div className="flex justify-between">
+                      <span className="text-[var(--genui-muted)]">데이터셋</span>
+                      <span className="truncate max-w-[140px]">{selectedDataset.fileName}</span>
+                    </div>
+                  )}
+                </CardBody>
+              </CardShell>
+            </>
+          )}
+
+          {state === "success" && (
+            <>
+              <CardShell>
+                <CardHeader title="분석 결과 요약" meta="Result" statusLabel="Complete" statusVariant="success" />
+                <CardBody className="space-y-3 text-sm text-[var(--genui-text)]">
+                  <div className="flex justify-between text-xs">
+                    <span className="text-[var(--genui-muted)]">총 Tool Calls</span>
+                    <span className="font-medium">{toolCalls.length}개</span>
+                  </div>
+                  {selectedDataset && (
+                    <div className="flex justify-between text-xs">
+                      <span className="text-[var(--genui-muted)]">데이터셋</span>
+                      <span className="font-medium truncate max-w-[140px]">{selectedDataset.fileName}</span>
+                    </div>
+                  )}
+                  {latestVisualizationResult?.chart?.chart_type && (
+                    <div className="flex justify-between text-xs">
+                      <span className="text-[var(--genui-muted)]">시각화</span>
+                      <span className="font-medium">{latestVisualizationResult.chart.chart_type} ({latestVisualizationResult.chart.x_key} × {latestVisualizationResult.chart.y_key})</span>
+                    </div>
+                  )}
+                  {latestVisualizationResult?.summary && (
+                    <p className="text-xs text-[var(--genui-muted)] border-t border-[var(--genui-border)] pt-2">{latestVisualizationResult.summary}</p>
+                  )}
+                </CardBody>
+              </CardShell>
+              {latestVisualizationResult?.artifact?.image_base64 && (
+                <CardShell>
+                  <CardHeader title="시각화 미리보기" meta={latestVisualizationResult.chart?.chart_type ?? "Chart"} />
+                  <CardBody>
+                    <img
+                      src={`data:${latestVisualizationResult.artifact.mime_type ?? "image/png"};base64,${latestVisualizationResult.artifact.image_base64}`}
+                      alt="Visualization"
+                      className="w-full rounded-lg"
+                    />
+                  </CardBody>
+                </CardShell>
+              )}
+              {toolCalls.filter((tc) => tc.status === "completed").length > 0 && (
+                <CardShell>
+                  <CardHeader title="완료된 Tool Calls" meta="Log" />
+                  <CardBody className="space-y-1.5">
+                    {toolCalls.filter((tc) => tc.status === "completed").slice(-5).map((tc) => (
+                      <div key={tc.id} className="flex items-center justify-between gap-2 text-xs py-1">
+                        <span className="font-medium truncate">{tc.name}</span>
+                        <span className="text-[var(--genui-muted)] shrink-0">{tc.duration}</span>
+                      </div>
+                    ))}
+                  </CardBody>
+                </CardShell>
+              )}
+            </>
+          )}
+
+          {state === "error" && (
+            <>
+              <CardShell status="error">
+                <CardHeader title="오류 상세" meta="Error" statusLabel="Failed" statusVariant="error" />
+                <CardBody className="space-y-3 text-sm text-[var(--genui-text)]">
+                  {pipeline.runningSubPhase && (
+                    <div className="flex justify-between text-xs">
+                      <span className="text-[var(--genui-muted)]">실패 단계</span>
+                      <span className="font-medium text-[var(--genui-error)]">{pipeline.runningSubPhase}</span>
+                    </div>
+                  )}
+                  {reportSections.length > 0 && reportSections[0]?.type === "paragraph" && (
+                    <div className="rounded-lg border border-[var(--genui-error)]/20 bg-[var(--genui-error)]/5 px-3 py-2">
+                      <p className="text-xs text-[var(--genui-error)] break-words">{reportSections[0].content}</p>
+                    </div>
+                  )}
+                  <div className="flex justify-between text-xs">
+                    <span className="text-[var(--genui-muted)]">경과 시간</span>
+                    <span className="font-mono">{formatElapsed(elapsedSeconds)}</span>
+                  </div>
+                  <div className="flex justify-between text-xs">
+                    <span className="text-[var(--genui-muted)]">Tool Calls</span>
+                    <span>{toolCalls.length}개</span>
+                  </div>
+                </CardBody>
+              </CardShell>
+              {toolCalls.filter((tc) => tc.status === "failed").length > 0 && (
+                <CardShell status="error">
+                  <CardHeader title="실패한 Tool Calls" meta="Log" />
+                  <CardBody className="space-y-2">
+                    {toolCalls.filter((tc) => tc.status === "failed").map((tc) => (
+                      <div key={tc.id} className="rounded-lg border border-[var(--genui-error)]/20 bg-[var(--genui-error)]/5 px-3 py-2">
+                        <p className="text-xs font-medium text-[var(--genui-error)]">{tc.name}</p>
+                        {tc.result && <p className="text-[10px] text-[var(--genui-error)]/70 mt-0.5 break-words">{tc.result}</p>}
+                        {tc.duration && <p className="text-[10px] text-[var(--genui-muted)] mt-0.5">{tc.duration}</p>}
+                      </div>
+                    ))}
+                  </CardBody>
+                </CardShell>
+              )}
+            </>
+          )}
         </div>
       }
       toolsContent={
@@ -819,13 +1482,23 @@ export default function Workbench() {
 
   /* ── HEADER ── */
   const Header = (
-    <div className="h-full flex items-center justify-between px-4 w-full">
-      <div className="flex items-center gap-3">
-        <span className="font-semibold text-[var(--genui-text)]">
-          {activeSession?.title || (state === "empty" ? "새 세션" : selectedDataset?.fileName || fileName || "채팅 세션")}
-        </span>
-        <StatusBadge status={state} />
+    <div className="h-full flex items-center justify-between gap-4 px-4 w-full min-w-0">
+      <div className="min-w-0">
+        <div className="flex items-center gap-3 min-w-0">
+          <span className="truncate text-[15px] font-semibold tracking-tight text-[var(--genui-text)]">
+            {sessionDisplayTitle}
+          </span>
+          <StatusBadge status={state} className="shrink-0" />
+        </div>
+        <p className="mt-0.5 truncate text-[11px] text-[var(--genui-muted)]">
+          {headerSubtitle}
+        </p>
       </div>
+      {hasDatasetContext && (
+        <div className="hidden xl:flex items-center gap-2 rounded-full border border-[var(--genui-border)] bg-[var(--genui-surface)] px-3 py-1.5 text-[11px] text-[var(--genui-muted)]">
+          <span className="font-medium text-[var(--genui-text)] truncate max-w-[220px]">{currentDatasetLabel}</span>
+        </div>
+      )}
     </div>
   );
 
@@ -911,6 +1584,7 @@ export default function Workbench() {
       leftPanel={LeftPanel}
       mainContent={MainContent}
       rightPanel={RightPanel}
+      contentScrollRef={canvasScrollRef}
       centerSubHeader={CenterSubHeader}
       bottomBar={BottomBar}
       gateBar={GateBarComponent}

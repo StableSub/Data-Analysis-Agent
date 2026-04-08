@@ -18,8 +18,6 @@ interface WorkbenchCommandBarProps {
   onStop?: () => void;
   /** Called when "Upload dataset" is selected from the attach menu */
   onUploadDataset?: () => void;
-  /** Called when "Use sample dataset" is selected from the attach menu */
-  onUseSample?: () => void;
   className?: string;
 }
 
@@ -36,8 +34,7 @@ export function WorkbenchCommandBar({
   onSend, 
   onStop,
   onUploadDataset,
-  onUseSample,
-  className 
+  className
 }: WorkbenchCommandBarProps) {
   const [value, setValue] = useState("");
   const [isFocused, setIsFocused] = useState(false);
@@ -178,10 +175,6 @@ export function WorkbenchCommandBar({
                   setIsAttachMenuOpen(false);
                 }}
                 onAddFiles={() => setIsAttachMenuOpen(false)}
-                onUseSample={() => {
-                  onUseSample?.();
-                  setIsAttachMenuOpen(false);
-                }}
               />
             </div>
 

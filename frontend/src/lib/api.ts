@@ -1,5 +1,19 @@
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 
+export class ApiError extends Error {
+  status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
+export function isApiErrorStatus(error: unknown, status: number): boolean {
+  return error instanceof ApiError && error.status === status;
+}
+
 export function buildApiUrl(path: string): string {
   return path.startsWith("http") ? path : `${API_BASE}${path}`;
 }
@@ -16,7 +30,7 @@ export async function apiRequest<T>(path: string, options?: RequestInit): Promis
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(body.detail ?? `HTTP ${res.status}`);
+    throw new ApiError(res.status, body.detail ?? `HTTP ${res.status}`);
   }
 
   if (res.status === 204) return undefined as T;
@@ -312,6 +326,235 @@ export function exportCsv(resultId: string): Promise<Blob> {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res.blob();
   });
+}
+
+// --- Analysis Run API (target contract from spec) ---
+
+export interface ApiEnvelope<T> {
+  status: string;
+  message: string;
+  data: T;
+}
+
+export interface AnalysisRunAccepted {
+  analysis_run_id: string;
+  final_status: string;
+}
+
+export interface AnalysisRunStatus {
+  analysis_run_id: string;
+  final_status: string;
+  current_stage: string;
+  retry_count: number;
+  analysis_error?: string | null;
+  clarification_message?: string | null;
+  analysis_result_id?: string | null;
+}
+
+export interface AnalysisResultResponse {
+  analysis_result_id: string;
+  source_id: string;
+  question: string;
+  analysis_type: string;
+  execution_status: string;
+  result_json: unknown;
+  table?: unknown;
+  chart_data?: unknown;
+  error_stage?: string | null;
+  error_message?: string | null;
+  created_at: string;
+}
+
+export interface VisualizationFromAnalysisResponse {
+  visualization_status: string;
+  chart_data?: unknown;
+  fallback_table?: unknown;
+}
+
+export interface AnalysisRunRequest {
+  question: string;
+  source_id: string;
+  session_id?: number;
+  model_id?: string;
+}
+
+export interface ClarificationRequest {
+  answer: string;
+}
+
+/** POST /api/analysis/run */
+export function startAnalysisRun(
+  req: AnalysisRunRequest,
+): Promise<ApiEnvelope<AnalysisRunAccepted>> {
+  return apiRequest<ApiEnvelope<AnalysisRunAccepted>>("/api/analysis/run", {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
+}
+
+/** GET /api/analysis/runs/{analysis_run_id} */
+export function getAnalysisRunStatus(
+  analysisRunId: string,
+): Promise<ApiEnvelope<AnalysisRunStatus>> {
+  return apiRequest<ApiEnvelope<AnalysisRunStatus>>(
+    `/api/analysis/runs/${analysisRunId}`,
+  );
+}
+
+/** POST /api/analysis/runs/{analysis_run_id}/clarification */
+export function submitClarification(
+  analysisRunId: string,
+  req: ClarificationRequest,
+): Promise<ApiEnvelope<AnalysisRunAccepted>> {
+  return apiRequest<ApiEnvelope<AnalysisRunAccepted>>(
+    `/api/analysis/runs/${analysisRunId}/clarification`,
+    { method: "POST", body: JSON.stringify(req) },
+  );
+}
+
+/** GET /api/analysis/results/{analysis_result_id} */
+export function getAnalysisResult(
+  analysisResultId: string,
+): Promise<ApiEnvelope<AnalysisResultResponse>> {
+  return apiRequest<ApiEnvelope<AnalysisResultResponse>>(
+    `/api/analysis/results/${analysisResultId}`,
+  );
+}
+
+/** POST /api/visualization/from-analysis */
+export function createVisualizationFromAnalysis(
+  analysisResultId: string,
+): Promise<ApiEnvelope<VisualizationFromAnalysisResponse>> {
+  return apiRequest<ApiEnvelope<VisualizationFromAnalysisResponse>>(
+    "/api/visualization/from-analysis",
+    { method: "POST", body: JSON.stringify({ analysis_result_id: analysisResultId }) },
+  );
+}
+
+/** Build SSE URL for /api/analysis/runs/{id}/stream */
+export function buildAnalysisStreamUrl(analysisRunId: string): string {
+  return buildApiUrl(`/api/analysis/runs/${analysisRunId}/stream`);
+}
+
+// --- EDA API (server-driven Pre-EDA) ---
+
+export interface EdaSummary {
+  row_count: number;
+  column_count: number;
+  numeric_columns: string[];
+  categorical_columns: string[];
+  datetime_columns: string[];
+  boolean_columns: string[];
+  identifier_columns: string[];
+  group_key_columns: string[];
+  quality_summary: string;
+  summary_bullets: string[];
+}
+
+export interface EdaQualityColumn {
+  column: string;
+  missing_count: number;
+  missing_rate: number;
+}
+
+export interface EdaQuality {
+  total_rows: number;
+  missing_columns: EdaQualityColumn[];
+}
+
+export interface EdaCorrelationPair {
+  col_a: string;
+  col_b: string;
+  correlation: number;
+}
+
+export interface EdaCorrelations {
+  top_pairs: EdaCorrelationPair[];
+}
+
+export interface EdaOutlierColumn {
+  column: string;
+  outlier_count: number;
+  lower_bound: number;
+  upper_bound: number;
+}
+
+export interface EdaOutliers {
+  outlier_columns: EdaOutlierColumn[];
+}
+
+export interface EdaDistributionBin {
+  label: string;
+  count: number;
+}
+
+export interface EdaDistribution {
+  column: string;
+  bins: EdaDistributionBin[];
+}
+
+export interface EdaInsight {
+  summary: string;
+  preprocess_recommendation: EdaPreprocessRecommendation | null;
+}
+
+export interface EdaPreprocessRecommendation {
+  summary: string;
+  operations: EdaRecommendedOperation[];
+}
+
+export interface EdaRecommendedOperation {
+  op: string;
+  target_columns: string[];
+  reason: string;
+  priority: "high" | "medium" | "low";
+}
+
+/** GET /eda/{source_id}/summary */
+export function fetchEdaSummary(
+  sourceId: string,
+): Promise<ApiEnvelope<EdaSummary>> {
+  return apiRequest<ApiEnvelope<EdaSummary>>(`/eda/${sourceId}/summary`);
+}
+
+/** GET /eda/{source_id}/quality */
+export function fetchEdaQuality(
+  sourceId: string,
+): Promise<ApiEnvelope<EdaQuality>> {
+  return apiRequest<ApiEnvelope<EdaQuality>>(`/eda/${sourceId}/quality`);
+}
+
+/** GET /eda/{source_id}/correlations/top */
+export function fetchEdaCorrelations(
+  sourceId: string,
+): Promise<ApiEnvelope<EdaCorrelations>> {
+  return apiRequest<ApiEnvelope<EdaCorrelations>>(
+    `/eda/${sourceId}/correlations/top`,
+  );
+}
+
+/** GET /eda/{source_id}/outliers */
+export function fetchEdaOutliers(
+  sourceId: string,
+): Promise<ApiEnvelope<EdaOutliers>> {
+  return apiRequest<ApiEnvelope<EdaOutliers>>(`/eda/${sourceId}/outliers`);
+}
+
+/** GET /eda/{source_id}/distribution?column=... */
+export function fetchEdaDistribution(
+  sourceId: string,
+  column: string,
+): Promise<ApiEnvelope<EdaDistribution>> {
+  return apiRequest<ApiEnvelope<EdaDistribution>>(
+    `/eda/${sourceId}/distribution?column=${encodeURIComponent(column)}`,
+  );
+}
+
+/** GET /eda/{source_id}/insights */
+export function fetchEdaInsights(
+  sourceId: string,
+): Promise<ApiEnvelope<EdaInsight>> {
+  return apiRequest<ApiEnvelope<EdaInsight>>(`/eda/${sourceId}/insights`);
 }
 
 // --- Upload with XHR progress tracking ---
