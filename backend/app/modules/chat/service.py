@@ -32,6 +32,7 @@ class ChatService:
         source_id: Optional[str] = None,
         trace_id: Optional[str] = None,
     ) -> AsyncIterator[Dict[str, Any]]:
+        source_id = (source_id or "").strip() or None
         session = self._get_or_create_session(session_id=session_id, title=question)
         dataset = self.dataset_repository.get_by_source_id(source_id) if source_id else None
 

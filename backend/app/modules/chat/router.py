@@ -53,8 +53,8 @@ async def ask_chat_stream(
     request: ChatRequest,
     chat_service: ChatService = Depends(get_chat_service),
 ):
-    requested_source_id = (request.source_id or "").strip()
-    if requested_source_id and not chat_service.has_dataset_source(requested_source_id):
+    normalized_source_id = (request.source_id or "").strip() or None
+    if normalized_source_id and not chat_service.has_dataset_source(normalized_source_id):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="데이터셋을 찾을 수 없습니다.",
@@ -65,7 +65,7 @@ async def ask_chat_stream(
             question=request.question,
             session_id=request.session_id,
             model_id=request.model_id,
-            source_id=request.source_id,
+            source_id=normalized_source_id,
             trace_id=request.trace_id,
         )
     )
