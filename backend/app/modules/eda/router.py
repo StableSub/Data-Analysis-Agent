@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
+from ..datasets.service import DATASET_READ_ERROR_DETAIL, DatasetReadError
 from .dependencies import get_eda_service
 from .schemas import (
     EDAAISummaryResponse,
@@ -18,12 +19,22 @@ from .service import EDAInvalidRequestError, EDAService, EDAUnsupportedRequestEr
 router = APIRouter(prefix="/eda", tags=["eda"])
 
 
+def _raise_dataset_read_http_error(exc: DatasetReadError) -> None:
+    raise HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail=DATASET_READ_ERROR_DETAIL,
+    ) from exc
+
+
 @router.get("/{source_id}/profile", response_model=EDAProfileResponse)
 def get_eda_profile(
     source_id: str,
     service: EDAService = Depends(get_eda_service),
 ):
-    profile = service.get_profile(source_id)
+    try:
+        profile = service.get_profile(source_id)
+    except DatasetReadError as exc:
+        _raise_dataset_read_http_error(exc)
     if not profile.available:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -37,7 +48,10 @@ def get_eda_summary(
     source_id: str,
     service: EDAService = Depends(get_eda_service),
 ):
-    summary = service.get_summary(source_id)
+    try:
+        summary = service.get_summary(source_id)
+    except DatasetReadError as exc:
+        _raise_dataset_read_http_error(exc)
     if summary is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -51,7 +65,10 @@ def get_eda_quality(
     source_id: str,
     service: EDAService = Depends(get_eda_service),
 ):
-    quality = service.get_quality(source_id)
+    try:
+        quality = service.get_quality(source_id)
+    except DatasetReadError as exc:
+        _raise_dataset_read_http_error(exc)
     if quality is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -65,7 +82,10 @@ def get_eda_column_types(
     source_id: str,
     service: EDAService = Depends(get_eda_service),
 ):
-    column_types = service.get_column_types(source_id)
+    try:
+        column_types = service.get_column_types(source_id)
+    except DatasetReadError as exc:
+        _raise_dataset_read_http_error(exc)
     if column_types is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -79,7 +99,10 @@ def get_eda_stats(
     source_id: str,
     service: EDAService = Depends(get_eda_service),
 ):
-    stats = service.get_stats(source_id)
+    try:
+        stats = service.get_stats(source_id)
+    except DatasetReadError as exc:
+        _raise_dataset_read_http_error(exc)
     if stats is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -93,7 +116,10 @@ def get_eda_top_correlations(
     source_id: str,
     service: EDAService = Depends(get_eda_service),
 ):
-    correlations = service.get_top_correlations(source_id, limit=3)
+    try:
+        correlations = service.get_top_correlations(source_id, limit=3)
+    except DatasetReadError as exc:
+        _raise_dataset_read_http_error(exc)
     if correlations is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -107,7 +133,10 @@ def get_eda_outliers(
     source_id: str,
     service: EDAService = Depends(get_eda_service),
 ):
-    outliers = service.get_outliers(source_id)
+    try:
+        outliers = service.get_outliers(source_id)
+    except DatasetReadError as exc:
+        _raise_dataset_read_http_error(exc)
     if outliers is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -131,6 +160,8 @@ def get_eda_distribution(
             bins=bins,
             top_n=top_n,
         )
+    except DatasetReadError as exc:
+        _raise_dataset_read_http_error(exc)
     except EDAInvalidRequestError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -157,7 +188,10 @@ def get_eda_preprocess_recommendations(
     source_id: str,
     service: EDAService = Depends(get_eda_service),
 ):
-    recommendations = service.get_preprocess_recommendations(source_id)
+    try:
+        recommendations = service.get_preprocess_recommendations(source_id)
+    except DatasetReadError as exc:
+        _raise_dataset_read_http_error(exc)
     if recommendations is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -172,7 +206,10 @@ def get_eda_insights(
     model_id: str | None = Query(default=None, description="Optional model override"),
     service: EDAService = Depends(get_eda_service),
 ):
-    summary = service.get_ai_summary(source_id, model_id=model_id)
+    try:
+        summary = service.get_ai_summary(source_id, model_id=model_id)
+    except DatasetReadError as exc:
+        _raise_dataset_read_http_error(exc)
     if summary is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

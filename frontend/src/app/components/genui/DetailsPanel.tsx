@@ -99,7 +99,7 @@ export function DetailsPanel({ state, selectedItem, onAction, className }: Detai
               {
                 step: "1",
                 title: "Upload Data",
-                desc: "Drag & drop a CSV or Excel file into the center panel, or use the + button in the command bar.",
+                desc: "Drag & drop a CSV file into the center panel, or use the + button in the command bar.",
               },
               {
                 step: "2",

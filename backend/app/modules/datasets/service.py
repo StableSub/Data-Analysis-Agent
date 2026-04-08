@@ -1,6 +1,6 @@
 import uuid
 from pathlib import Path
-from typing import IO, Any, List, Optional
+from typing import IO, Any, Iterator, List, Optional
 
 import pandas as pd
 
@@ -8,6 +8,12 @@ from .models import Dataset
 from .repository import DatasetRepository
 
 ALLOWED_DATASET_EXTENSIONS = {".csv"}
+DATASET_READ_ERROR_DETAIL = "데이터셋을 읽을 수 없습니다. UTF-8 CSV인지 확인해 주세요."
+UTF8_CSV_UPLOAD_ERROR_DETAIL = "UTF-8 CSV만 업로드할 수 있습니다."
+
+
+class DatasetReadError(Exception):
+    """Raised when a stored dataset cannot be read as a UTF-8 CSV."""
 
 
 class DatasetStorage:
@@ -39,6 +45,13 @@ class DatasetStorage:
 class DatasetReader:
     """CSV 읽기 책임만 담당한다."""
 
+    @staticmethod
+    def _resolve_file(storage_path: str) -> Path:
+        file_path = Path(storage_path)
+        if not file_path.exists() or not file_path.is_file():
+            raise FileNotFoundError("파일이 존재하지 않습니다.")
+        return file_path
+
     def read_csv(
         self,
         storage_path: str,
@@ -47,17 +60,46 @@ class DatasetReader:
         usecols: Optional[List[str]] = None,
         encoding: str = "utf-8",
     ) -> pd.DataFrame:
-        file_path = Path(storage_path)
-        if not file_path.exists() or not file_path.is_file():
-            raise FileNotFoundError("파일이 존재하지 않습니다.")
+        file_path = self._resolve_file(storage_path)
+        try:
+            return pd.read_csv(
+                file_path,
+                encoding=encoding,
+                sep=",",
+                nrows=nrows,
+                usecols=usecols,
+            )
+        except (UnicodeDecodeError, pd.errors.EmptyDataError, pd.errors.ParserError) as exc:
+            raise DatasetReadError(DATASET_READ_ERROR_DETAIL) from exc
 
-        return pd.read_csv(
-            file_path,
-            encoding=encoding,
-            sep=",",
-            nrows=nrows,
-            usecols=usecols,
-        )
+    def read_csv_chunks(
+        self,
+        storage_path: str,
+        *,
+        chunksize: int,
+        usecols: Optional[List[str]] = None,
+        encoding: str = "utf-8",
+    ) -> Iterator[pd.DataFrame]:
+        file_path = self._resolve_file(storage_path)
+        try:
+            reader = pd.read_csv(
+                file_path,
+                encoding=encoding,
+                sep=",",
+                chunksize=chunksize,
+                usecols=usecols,
+            )
+        except (UnicodeDecodeError, pd.errors.EmptyDataError, pd.errors.ParserError) as exc:
+            raise DatasetReadError(DATASET_READ_ERROR_DETAIL) from exc
+
+        def iterator() -> Iterator[pd.DataFrame]:
+            try:
+                for chunk in reader:
+                    yield chunk
+            except (UnicodeDecodeError, pd.errors.EmptyDataError, pd.errors.ParserError) as exc:
+                raise DatasetReadError(DATASET_READ_ERROR_DETAIL) from exc
+
+        return iterator()
 
 class DatasetService:
     """데이터셋 흐름만 담당한다."""
@@ -84,6 +126,15 @@ class DatasetService:
             raise ValueError("CSV 파일만 업로드할 수 있습니다.")
 
         storage_path, size = self.storage.persist_file(file_stream, original_filename)
+        try:
+            self.reader.read_csv(str(storage_path), nrows=5)
+        except DatasetReadError as exc:
+            try:
+                self.storage.delete_file(str(storage_path))
+            except FileNotFoundError:
+                pass
+            raise ValueError(UTF8_CSV_UPLOAD_ERROR_DETAIL) from exc
+
         dataset = Dataset(
             filename=display_name or original_filename,
             storage_path=str(storage_path),

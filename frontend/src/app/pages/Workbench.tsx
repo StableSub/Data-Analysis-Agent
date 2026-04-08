@@ -828,7 +828,7 @@ export default function Workbench() {
       <input
         ref={fileInputRef}
         type="file"
-        accept=".csv,.json,.xlsx,.xls"
+        accept=".csv"
         className="hidden"
         onChange={handleFileSelected}
       />

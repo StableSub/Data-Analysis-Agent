@@ -1,13 +1,12 @@
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import Response
-import pandas as pd
 
 from .dependencies import get_dataset_service
 from ..rag.dependencies import get_dataset_rag_sync_service
 from ..rag.errors import RagEmbeddingError
 from ..rag.service import DatasetRagSyncService
 from .schemas import DatasetBase, DatasetListResponse, DatasetSampleResponse
-from .service import DatasetService
+from .service import DATASET_READ_ERROR_DETAIL, DatasetReadError, DatasetService
 
 router = APIRouter(prefix="/datasets", tags=["datasets"])
 
@@ -76,10 +75,10 @@ async def get_dataset_sample(
 ):
     try:
         sample_data = service.get_dataset_sample(source_id, n_rows=5)
-    except (FileNotFoundError, UnicodeDecodeError, pd.errors.EmptyDataError, pd.errors.ParserError) as exc:
+    except (FileNotFoundError, DatasetReadError) as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="데이터셋 샘플을 읽을 수 없습니다.",
+            detail=DATASET_READ_ERROR_DETAIL,
         ) from exc
 
     if not sample_data:

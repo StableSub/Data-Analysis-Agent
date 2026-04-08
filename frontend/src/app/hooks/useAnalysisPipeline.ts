@@ -1129,6 +1129,12 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
       setPendingApproval(null);
       setUploadProgress(0);
       setFileName(file.name);
+
+      if (!file.name.toLowerCase().endsWith(".csv")) {
+        transitionToError("upload", "CSV 파일만 업로드할 수 있습니다.");
+        return;
+      }
+
       setState("uploading");
 
       const uploadedAt = new Date().toISOString();

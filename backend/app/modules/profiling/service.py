@@ -156,8 +156,8 @@ class DatasetProfileService:
             column_profiles=column_profiles,
         )
 
-    @staticmethod
     def _compute_missing_statistics(
+        self,
         storage_path: str,
         *,
         columns: list[str],
@@ -168,10 +168,8 @@ class DatasetProfileService:
 
         total_rows = 0
         missing_counts = {column: 0 for column in columns}
-        for chunk in pd.read_csv(
+        for chunk in self.reader.read_csv_chunks(
             storage_path,
-            encoding="utf-8",
-            sep=",",
             chunksize=chunksize,
             usecols=columns,
         ):
