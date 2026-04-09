@@ -7,12 +7,12 @@ from .schemas import (
     EDAColumnTypesResponse,
     EDACorrelationsResponse,
     EDADistributionResponse,
-    EDAPreprocessRecommendationsResponse,
     EDAOutliersResponse,
     EDAProfileResponse,
     EDAQualityResponse,
     EDAStatsResponse,
     EDASummaryResponse,
+    PreprocessRecommendationResponse,
 )
 from .service import EDAInvalidRequestError, EDAService, EDAUnsupportedRequestError
 
@@ -182,14 +182,14 @@ def get_eda_distribution(
 
 @router.get(
     "/{source_id}/preprocess-recommendations",
-    response_model=EDAPreprocessRecommendationsResponse,
+    response_model=PreprocessRecommendationResponse,
 )
 def get_eda_preprocess_recommendations(
     source_id: str,
     service: EDAService = Depends(get_eda_service),
 ):
     try:
-        recommendations = service.get_preprocess_recommendations(source_id)
+        recommendations = service.get_preprocess_recommendation(source_id)
     except DatasetReadError as exc:
         _raise_dataset_read_http_error(exc)
     if recommendations is None:
@@ -197,7 +197,10 @@ def get_eda_preprocess_recommendations(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="데이터셋을 찾을 수 없거나 전처리 추천을 생성할 수 없습니다.",
         )
-    return recommendations
+    return PreprocessRecommendationResponse(
+        source_id=source_id,
+        recommendation=recommendations,
+    )
 
 
 @router.get("/{source_id}/insights", response_model=EDAAISummaryResponse)
