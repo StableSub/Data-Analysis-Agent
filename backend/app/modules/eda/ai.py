@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Literal
 import logging
+from dataclasses import dataclass
+from typing import Any, Literal
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -10,6 +11,13 @@ from .schemas import RecommendedOperation, PreprocessRecommendation
 from ...core.ai import LLMGateway, PromptRegistry
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class RecommendationResult:
+    recommendation: PreprocessRecommendation
+    generation_mode: Literal["llm", "fallback", "none"]
+    warning: str | None = None
 
 PROMPTS = PromptRegistry(
     {
@@ -172,16 +180,18 @@ def detect_issues(
                 values.append((col.column, col.max - col.min))
 
         if len(values) >= 2:
-            max_range = max(v for _, v in values)
-            min_range = min(v for _, v in values if v > 0)
+            positive_ranges = [value for _, value in values if value > 0]
+            if len(positive_ranges) >= 2:
+                max_range = max(positive_ranges)
+                min_range = min(positive_ranges)
 
-            if min_range > 0 and max_range / min_range > 100:
-                cols = [c for c, _ in values]
-                issues.append({
-                    "issue": "scale_imbalance",
-                    "cols": cols,
-                    "ratio": max_range / min_range,
-                })
+                if min_range > 0 and max_range / min_range > 100:
+                    cols = [c for c, _ in values]
+                    issues.append({
+                        "issue": "scale_imbalance",
+                        "cols": cols,
+                        "ratio": max_range / min_range,
+                    })
 
     return issues
 
@@ -349,7 +359,7 @@ def recommend(
     rag_context: str,
     default_model: str,
     model_id: str | None = None,  
-) -> PreprocessRecommendation:
+) -> RecommendationResult:
     """
     EDA 결과와 감지된 문제를 바탕으로 전처리 방안을 추천한다.
 
@@ -358,9 +368,12 @@ def recommend(
     3. 실패 시 rule-based 결과만 반환 (서비스 중단 없음)
     """
     if not detected_issues:
-        return PreprocessRecommendation(
-            operations=[],
-            summary="현재 데이터에서 필수 전처리 항목이 감지되지 않았습니다.",
+        return RecommendationResult(
+            recommendation=PreprocessRecommendation(
+                operations=[],
+                summary="현재 데이터에서 필수 전처리 항목이 감지되지 않았습니다.",
+            ),
+            generation_mode="none",
         )
 
     prompt = _build_prompt(eda_summary, detected_issues, rag_context)
@@ -383,15 +396,30 @@ def recommend(
         raw = result.content if isinstance(result.content, str) else str(result.content)
         parsed = json.loads(raw)
         try:
-            return PreprocessRecommendation(**parsed)
+            return RecommendationResult(
+                recommendation=PreprocessRecommendation(**parsed),
+                generation_mode="llm",
+            )
         except Exception as e:
             logger.warning("LLM 응답 스키마 불일치. fallback. error=%s", e)
-            return _issues_to_recommendation(detected_issues)
+            return RecommendationResult(
+                recommendation=_issues_to_recommendation(detected_issues),
+                generation_mode="fallback",
+                warning="LLM 응답 형식이 올바르지 않아 rule-based 추천으로 대체했습니다.",
+            )
 
     except json.JSONDecodeError:
         logger.warning("LLM 응답 JSON 파싱 실패. rule-based 결과로 fallback.\nraw=%s", raw)
-        return _issues_to_recommendation(detected_issues)
+        return RecommendationResult(
+            recommendation=_issues_to_recommendation(detected_issues),
+            generation_mode="fallback",
+            warning="LLM 응답을 해석하지 못해 rule-based 추천으로 대체했습니다.",
+        )
 
     except Exception as exc:
         logger.warning("LLM 호출 실패. rule-based 결과로 fallback. error=%s", exc)
-        return _issues_to_recommendation(detected_issues)
+        return RecommendationResult(
+            recommendation=_issues_to_recommendation(detected_issues),
+            generation_mode="fallback",
+            warning="LLM 추천 생성에 실패해 rule-based 추천으로 대체했습니다.",
+        )

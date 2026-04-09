@@ -1,17 +1,23 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import {
+  applyPreprocessRecommendation,
   uploadFile,
   buildApiUrl,
   deleteDataset,
   resumeChatRun,
-  fetchEdaSummary,
+  fetchEdaProfile,
   fetchEdaQuality,
   fetchEdaCorrelations,
   fetchEdaOutliers,
+  fetchEdaPreprocessRecommendations,
   fetchEdaInsights,
   type DatasetResponse,
   type ChatResponse,
   type ChatHistoryMessage,
+  type EdaInsightResponse,
+  type EdaPreprocessRecommendation,
+  type EdaProfileResponse,
+  type EdaRecommendedOperation,
   type PendingApprovalPayload,
   type ThoughtStepPayload,
 } from "../../lib/api";
@@ -31,10 +37,15 @@ import type { RawLogEntry } from "../components/genui/MCPPanel";
 import type { TimelineItemStatus } from "../components/genui/TimelineItem";
 import type { PipelineStepStatus } from "../components/genui/PipelineTracker";
 import {
-  buildPreEdaProfile,
+  buildLegacyRecommendationFromServerRecommendation,
   type PreEdaProfile,
-  type PreprocessRecommendation,
 } from "../lib/preEdaProfile";
+import {
+  buildSingleOperationRecommendation,
+  countAutoApplicableRecommendedOperations,
+  getRecommendedOperationKey,
+  isAutoApplicableRecommendedOperation,
+} from "../lib/preprocessRecommendation";
 
 /* ─────────────────────────────────────────────
    Types
@@ -70,8 +81,23 @@ export interface UploadedDatasetMeta {
   fileName: string;
   uploadedAt: string;
   preEdaProfile: PreEdaProfile | null;
+  preEdaStatus: "ready" | "unavailable";
+  preEdaWarning: string | null;
+  recommendationMode: "llm" | "fallback" | "none" | null;
   preprocessApproved: boolean;
 }
+
+type PreEdaLoadResult =
+  | {
+    status: "ready";
+    profile: PreEdaProfile;
+    recommendationMode: "llm" | "fallback" | "none";
+    warning: string | null;
+  }
+  | {
+    status: "unavailable";
+    message: string;
+  };
 
 export type PipelineSessionStateHint = "empty" | "ready" | "success" | "error" | "needs-user";
 
@@ -127,6 +153,8 @@ export interface UseAnalysisPipelineReturn {
   rawLogs: RawLogEntry[];
   latestVisualizationResult: VisualizationResultPayload | null;
   selectedPreEdaProfile: PreEdaProfile | null;
+  selectedPreEdaApplyError: string | null;
+  selectedApplyingPreEdaOperationKey: string | null;
 
   // Upload selection
   uploadedDatasets: UploadedDatasetMeta[];
@@ -137,10 +165,15 @@ export interface UseAnalysisPipelineReturn {
   // Actions
   startUpload: (file: File) => void;
   resumeRun: (decision: "approve" | "revise" | "cancel", instruction?: string) => void;
-  handleApprove: () => void;
+  handleApprove: () => Promise<"approved" | "failed" | "noop">;
   handleReject: () => void;
   handleEditInstruction: (text: string) => void;
   handleRetry: () => void;
+  retrySelectedPreEda: () => Promise<"ready" | "unavailable" | "noop">;
+  applyRecommendedOperation: (
+    operation: EdaRecommendedOperation,
+    index: number,
+  ) => Promise<"applied" | "failed" | "noop">;
   handleSend: (message: string) => void;
   handleCancel: () => void;
   reset: () => void;
@@ -244,40 +277,178 @@ function makeRawLog(
   };
 }
 
-function buildLocalPreprocessPendingApproval(
-  recommendation: PreprocessRecommendation,
+function mapProfileColumnRole(
+  inferredType: EdaProfileResponse["column_profiles"][number]["inferred_type"],
+): PreEdaProfile["columnRoleSummaries"][number]["role"] {
+  switch (inferredType) {
+    case "numerical":
+      return "numeric";
+    case "group_key":
+      return "group-key";
+    default:
+      return inferredType;
+  }
+}
+
+function normalizeProfileSampleRows(
+  sampleRows: EdaProfileResponse["sample_rows"],
+): PreEdaProfile["sampleRows"] {
+  return sampleRows.map((row) => {
+    const normalized: Record<string, string | null> = {};
+    Object.entries(row).forEach(([key, value]) => {
+      normalized[key] = value == null ? null : String(value);
+    });
+    return normalized;
+  });
+}
+
+function buildServerQualitySummary(
+  profile: EdaProfileResponse,
+  insight: EdaInsightResponse,
+): string {
+  const summary = insight.structure_summary.trim();
+  if (summary) {
+    return summary;
+  }
+  return [
+    `전체 ${profile.row_count.toLocaleString()} rows / ${profile.column_count.toLocaleString()} columns입니다.`,
+    `numeric ${profile.numeric_columns.length}개, categorical ${profile.categorical_columns.length}개, datetime ${profile.datetime_columns.length}개입니다.`,
+  ].join(" ");
+}
+
+function buildServerSummaryBullets(
+  profile: EdaProfileResponse,
+  insight: EdaInsightResponse,
+): string[] {
+  const bullets = [...insight.quality_issues, ...insight.key_insights]
+    .map((item) => item.trim())
+    .filter(Boolean);
+  if (bullets.length > 0) {
+    return bullets;
+  }
+  return [
+    `${profile.columns.length.toLocaleString()}개 컬럼의 구조와 품질 정보를 기반으로 질문 전 맥락을 준비했습니다.`,
+  ];
+}
+
+function getRecommendationWarning(
+  recommendation: EdaPreprocessRecommendation | null | undefined,
+): string | null {
+  if (!recommendation || recommendation.operations.length === 0) {
+    return null;
+  }
+  const autoApplicableCount = countAutoApplicableRecommendedOperations(recommendation);
+  if (autoApplicableCount === recommendation.operations.length) {
+    return null;
+  }
+  if (autoApplicableCount > 0) {
+    return "자동 적용 가능한 작업만 개별 적용할 수 있습니다. 나머지 작업은 수동 검토가 필요합니다.";
+  }
+  return "이 추천에는 자동 적용할 수 없는 작업만 포함되어 있어 현재는 검토만 가능합니다.";
+}
+
+function isRecommendationExhausted(
+  recommendationMode: "llm" | "fallback" | "none" | null,
+  recommendation: EdaPreprocessRecommendation | null | undefined,
+): boolean {
+  return recommendationMode === "none" || countAutoApplicableRecommendedOperations(recommendation) === 0;
+}
+
+async function loadServerPreEdaProfile(
   sourceId: string,
-): PendingApprovalPayload {
-  return {
-    stage: "preprocess",
-    kind: "plan_review",
-    title: "Preprocess plan review",
-    summary: `${recommendation.column} 컬럼의 결측 ${recommendation.missingCount}건 (${recommendation.missingPercent.toFixed(1)}%)을 ${
-      recommendation.strategy
-    } 방식으로 처리한 뒤 Deep EDA를 진행합니다.`,
-    source_id: sourceId,
-    plan: {
-      operations: [
-        {
-          op: "impute",
-          column: recommendation.column,
-          strategy: recommendation.strategy,
-          fill_value: recommendation.fillValue,
-          missing_count: recommendation.missingCount,
-          missing_percent: recommendation.missingPercent,
-        },
-      ],
-      planner_comment: `추천 전략: ${recommendation.strategy} -> ${recommendation.fillValue}`,
-      top_missing_columns: [
-        {
-          column: recommendation.column,
-          missing_rate: recommendation.missingPercent / 100,
-        },
-      ],
-      affected_columns: [recommendation.column],
-      row_count: null,
-    },
-  };
+  sourceLabel: string,
+  uploadedAt: string,
+): Promise<PreEdaLoadResult> {
+  try {
+    const [profile, quality, correlations, outliers, preprocessRecommendationResponse, insights] =
+      await Promise.all([
+        fetchEdaProfile(sourceId),
+        fetchEdaQuality(sourceId),
+        fetchEdaCorrelations(sourceId),
+        fetchEdaOutliers(sourceId),
+        fetchEdaPreprocessRecommendations(sourceId),
+        fetchEdaInsights(sourceId),
+      ]);
+
+    const missingColumns = quality.columns.map((column) => ({
+      column: column.column,
+      missingCount: column.null_count,
+      missingRate: column.null_ratio,
+    }));
+    const topMissingColumns = quality.top_missing_columns.map((column) => ({
+      column: column.column,
+      missingCount: column.null_count,
+      missingRate: column.null_ratio,
+    }));
+    const serverRecommendation = preprocessRecommendationResponse.recommendation;
+    const recommendation = buildLegacyRecommendationFromServerRecommendation(
+      serverRecommendation,
+      {
+        missingColumns,
+        numericColumns: profile.numeric_columns,
+        categoricalColumns: profile.categorical_columns,
+        datetimeColumns: profile.datetime_columns,
+        booleanColumns: profile.boolean_columns,
+      },
+    );
+    const recommendationWarning =
+      preprocessRecommendationResponse.warning ?? getRecommendationWarning(serverRecommendation);
+
+    return {
+      status: "ready",
+      profile: {
+        sourceLabel,
+        uploadedAt,
+        rowCount: profile.row_count,
+        columnCount: profile.column_count,
+        columns: profile.columns,
+        sampleRows: normalizeProfileSampleRows(profile.sample_rows),
+        numericColumns: profile.numeric_columns,
+        categoricalColumns: profile.categorical_columns,
+        datetimeColumns: profile.datetime_columns,
+        identifierColumns: profile.identifier_columns,
+        booleanColumns: profile.boolean_columns,
+        groupKeyColumns: profile.group_key_columns,
+        groupKeyCandidates: profile.group_key_columns,
+        columnRoleSummaries: profile.column_profiles.map((column) => ({
+          column: column.name,
+          role: mapProfileColumnRole(column.inferred_type),
+          note: column.raw_dtype,
+          missingCount: column.null_count,
+          missingRate: column.missing_rate,
+          uniqueCount: column.unique_count,
+        })),
+        missingColumns,
+        topMissingColumns,
+        numericSnapshots: [],
+        numericColumnStats: [],
+        distributions: [],
+        correlationTopPairs: correlations.pairs.map((pair) => ({
+          left: pair.column_1,
+          right: pair.column_2,
+          value: pair.correlation,
+        })),
+        outlierSummaries: outliers.columns.map((column) => ({
+          column: column.column,
+          outlierCount: column.outlier_count,
+          outlierRate: column.outlier_ratio,
+          lowerBound: column.lower_bound ?? 0,
+          upperBound: column.upper_bound ?? 0,
+        })),
+        qualitySummary: buildServerQualitySummary(profile, insights),
+        summaryBullets: buildServerSummaryBullets(profile, insights),
+        serverRecommendation,
+        recommendation,
+      },
+      recommendationMode: preprocessRecommendationResponse.generation_mode,
+      warning: recommendationWarning,
+    };
+  } catch (error: unknown) {
+    return {
+      status: "unavailable",
+      message: error instanceof Error ? error.message : "Pre-EDA 정보를 불러오지 못했습니다.",
+    };
+  }
 }
 
 function parseThoughtStep(payload: unknown): ThoughtStep | null {
@@ -583,6 +754,9 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
   const [rawLogs, setRawLogs] = useState<RawLogEntry[]>([]);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [errorStep, setErrorStep] = useState<string | null>(null);
+  const [preEdaApplyErrors, setPreEdaApplyErrors] = useState<Record<string, string | null>>({});
+  const [applyingPreEdaSourceId, setApplyingPreEdaSourceId] = useState<string | null>(null);
+  const [applyingPreEdaOperationKey, setApplyingPreEdaOperationKey] = useState<string | null>(null);
 
   // --- Completed stage tracking ---
   const completedStagesRef = useRef<Set<string>>(new Set());
@@ -657,14 +831,95 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
     });
   }, []);
 
-  const updateUploadedDataset = useCallback(
-    (sourceId: string, updater: (current: UploadedDatasetMeta) => UploadedDatasetMeta) => {
-      setUploadedDatasets((prev) =>
-        prev.map((item) => (item.sourceId === sourceId ? updater(item) : item)),
-      );
+  const activateProcessedDataset = useCallback(
+    async ({
+      sourceId,
+      fileName: nextFileName,
+      uploadedAt,
+    }: {
+      sourceId: string;
+      fileName: string;
+      uploadedAt: string;
+    }) => {
+      const preEdaResult = await loadServerPreEdaProfile(sourceId, nextFileName, uploadedAt);
+      const preEdaProfile = preEdaResult.status === "ready" ? preEdaResult.profile : null;
+      const preEdaWarning = preEdaResult.status === "ready"
+        ? preEdaResult.warning
+        : preEdaResult.message;
+      const recommendationMode = preEdaResult.status === "ready"
+        ? preEdaResult.recommendationMode
+        : null;
+
+      if (preEdaResult.status === "unavailable") {
+        addLog(makeRawLog("eda_unavailable", {
+          reason: preEdaResult.message,
+          source_id: sourceId,
+        }));
+      }
+
+      setSelectedSourceId(sourceId);
+      setFileName(nextFileName);
+      upsertUploadedDataset({
+        datasetId: 0,
+        sourceId,
+        fileName: nextFileName,
+        uploadedAt,
+        preEdaProfile,
+        preEdaStatus: preEdaResult.status,
+        preEdaWarning,
+        recommendationMode,
+        preprocessApproved:
+          preEdaResult.status === "ready"
+            ? isRecommendationExhausted(
+              preEdaResult.recommendationMode,
+              preEdaResult.profile.serverRecommendation,
+            )
+            : false,
+      });
     },
-    [],
+    [addLog, upsertUploadedDataset],
   );
+
+  const retrySelectedPreEda = useCallback(async (): Promise<"ready" | "unavailable" | "noop"> => {
+    if (!selectedSourceId) {
+      return "noop";
+    }
+    const selectedDataset = uploadedDatasets.find((item) => item.sourceId === selectedSourceId) ?? null;
+    if (!selectedDataset) {
+      return "noop";
+    }
+
+    const preEdaResult = await loadServerPreEdaProfile(
+      selectedSourceId,
+      selectedDataset.fileName,
+      selectedDataset.uploadedAt,
+    );
+
+    if (preEdaResult.status === "ready") {
+      upsertUploadedDataset({
+        ...selectedDataset,
+        preEdaProfile: preEdaResult.profile,
+        preEdaStatus: "ready",
+        preEdaWarning: preEdaResult.warning,
+        recommendationMode: preEdaResult.recommendationMode,
+        preprocessApproved: isRecommendationExhausted(
+          preEdaResult.recommendationMode,
+          preEdaResult.profile.serverRecommendation,
+        ),
+      });
+      setPreEdaApplyErrors((prev) => ({ ...prev, [selectedSourceId]: null }));
+      return "ready";
+    }
+
+    upsertUploadedDataset({
+      ...selectedDataset,
+      preEdaProfile: null,
+      preEdaStatus: "unavailable",
+      preEdaWarning: preEdaResult.message,
+      recommendationMode: null,
+    });
+    return "unavailable";
+  }, [selectedSourceId, uploadedDatasets, upsertUploadedDataset]);
 
   const appendThoughtStep = useCallback(
     (step: ThoughtStep) => {
@@ -723,7 +978,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
       let terminalErrorStep: string | null = null;
       let terminalErrorMessage: string | null = null;
 
-      const handleEvent = (rawEvent: string) => {
+      const handleEvent = async (rawEvent: string) => {
         const lines = rawEvent.split("\n");
         let eventName = "message";
         const dataLines: string[] = [];
@@ -946,17 +1201,14 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
               typeof preprocess.output_source_id === "string" &&
               preprocess.output_source_id
             ) {
-              setSelectedSourceId(preprocess.output_source_id);
-              upsertUploadedDataset({
-                datasetId: 0,
+              const outputFileName =
+                typeof preprocess.output_filename === "string" && preprocess.output_filename
+                  ? preprocess.output_filename
+                  : `processed_${preprocess.output_source_id}`;
+              await activateProcessedDataset({
                 sourceId: preprocess.output_source_id,
-                fileName:
-                  typeof preprocess.output_filename === "string" && preprocess.output_filename
-                    ? preprocess.output_filename
-                    : `processed_${preprocess.output_source_id}`,
+                fileName: outputFileName,
                 uploadedAt: new Date().toISOString(),
-                preEdaProfile: null,
-                preprocessApproved: true,
               });
             }
           }
@@ -1010,7 +1262,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
           if (!rawEvent) {
             continue;
           }
-          handleEvent(rawEvent);
+          await handleEvent(rawEvent);
         }
       }
 
@@ -1019,7 +1271,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
         buffer += tail.replace(/\r\n/g, "\n");
       }
       if (buffer.trim()) {
-        handleEvent(buffer.trim());
+        await handleEvent(buffer.trim());
       }
 
       if (approvalReceived) {
@@ -1082,11 +1334,11 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
       addLog,
       addMilestone,
       appendThoughtStep,
+      activateProcessedDataset,
       nextLocalMessageId,
       runId,
       sessionId,
       updateToolCall,
-      upsertUploadedDataset,
       transitionToError,
     ],
   );
@@ -1155,8 +1407,6 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
       setState("uploading");
 
       const uploadedAt = new Date().toISOString();
-      // 로컬 프로파일은 서버 EDA 실패 시 폴백용으로 병렬 준비
-      const localProfilePromise = buildPreEdaProfile(file).catch(() => null);
 
       uploadFile(file, (percent) => {
         setUploadProgress(percent);
@@ -1174,102 +1424,31 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
             timestamp: now(),
           });
 
-          // 서버 EDA 우선 조회 시도
           let preEdaProfile: PreEdaProfile | null = null;
-          try {
-            const [summaryRes, qualityRes, corrRes, outlierRes, insightRes] =
-              await Promise.all([
-                fetchEdaSummary(dataset.source_id),
-                fetchEdaQuality(dataset.source_id),
-                fetchEdaCorrelations(dataset.source_id),
-                fetchEdaOutliers(dataset.source_id),
-                fetchEdaInsights(dataset.source_id),
-              ]);
-
-            const summary = summaryRes.data;
-            const quality = qualityRes.data;
-            const correlations = corrRes.data;
-            const outliers = outlierRes.data;
-            const insight = insightRes.data;
-
-            preEdaProfile = {
-              sourceLabel: dataset.filename || file.name,
-              uploadedAt,
-              rowCount: summary.row_count,
-              columnCount: summary.column_count,
-              columns: [
-                ...summary.numeric_columns,
-                ...summary.categorical_columns,
-                ...summary.datetime_columns,
-                ...summary.boolean_columns,
-                ...summary.identifier_columns,
-                ...summary.group_key_columns,
-              ],
-              sampleRows: [], // 서버 EDA는 sampleRows 미포함 — fetchSample로 별도 조회 가능
-              numericColumns: summary.numeric_columns,
-              categoricalColumns: summary.categorical_columns,
-              datetimeColumns: summary.datetime_columns,
-              identifierColumns: summary.identifier_columns,
-              booleanColumns: summary.boolean_columns,
-              groupKeyColumns: summary.group_key_columns,
-              groupKeyCandidates: summary.group_key_columns,
-              columnRoleSummaries: [],
-              missingColumns: quality.missing_columns.map((c) => ({
-                column: c.column,
-                missingCount: c.missing_count,
-                missingRate: c.missing_rate,
-              })),
-              topMissingColumns: quality.missing_columns
-                .sort((a, b) => b.missing_rate - a.missing_rate)
-                .slice(0, 3)
-                .map((c) => ({
-                  column: c.column,
-                  missingCount: c.missing_count,
-                  missingRate: c.missing_rate,
-                })),
-              numericSnapshots: [],
-              numericColumnStats: [],
-              distributions: [],
-              correlationTopPairs: correlations.top_pairs.map((p) => ({
-                left: p.col_a,
-                right: p.col_b,
-                value: p.correlation,
-              })),
-              outlierSummaries: outliers.outlier_columns.map((o) => ({
-                column: o.column,
-                outlierCount: o.outlier_count,
-                outlierRate: 0,
-                lowerBound: o.lower_bound,
-                upperBound: o.upper_bound,
-              })),
-              qualitySummary: summary.quality_summary,
-              summaryBullets: summary.summary_bullets,
-              recommendation: insight.preprocess_recommendation
-                ? {
-                    column: insight.preprocess_recommendation.operations[0]?.target_columns[0] ?? "",
-                    columnType: "categorical" as const,
-                    strategy: insight.preprocess_recommendation.operations[0]?.op ?? "",
-                    fillValue: "",
-                    missingCount: 0,
-                    missingPercent: 0,
-                    rationale: "",
-                    domainWarning: null,
-                    alternativeStrategies: [],
-                  }
-                : null,
-            };
-
+          let preEdaStatus: UploadedDatasetMeta["preEdaStatus"] = "unavailable";
+          let preEdaWarning: string | null = null;
+          let recommendationMode: UploadedDatasetMeta["recommendationMode"] = null;
+          const preEdaResult = await loadServerPreEdaProfile(
+            dataset.source_id,
+            dataset.filename || file.name,
+            uploadedAt,
+          );
+          if (preEdaResult.status === "ready") {
+            preEdaProfile = preEdaResult.profile;
+            preEdaStatus = "ready";
+            preEdaWarning = preEdaResult.warning;
+            recommendationMode = preEdaResult.recommendationMode;
             addMilestone({
               status: "completed",
               title: "Server EDA loaded",
-              subtext: `${summary.row_count} rows · ${summary.column_count} cols`,
+              subtext: `${preEdaProfile.rowCount} rows · ${preEdaProfile.columnCount} cols`,
               timestamp: now(),
             });
-          } catch {
-            // 서버 EDA 미구현 또는 실패 → 로컬 프로파일로 폴백
-            preEdaProfile = await localProfilePromise;
-            addLog(makeRawLog("eda_fallback", {
-              reason: "Server EDA unavailable, using local profile",
+          } else {
+            preEdaWarning = preEdaResult.message;
+            addLog(makeRawLog("eda_unavailable", {
+              reason: preEdaResult.message,
+              source_id: dataset.source_id,
             }));
           }
 
@@ -1280,8 +1459,15 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
             fileName: dataset.filename || file.name,
             uploadedAt,
             preEdaProfile,
-            preprocessApproved: !preEdaProfile?.recommendation,
+            preEdaStatus,
+            preEdaWarning,
+            recommendationMode,
+            preprocessApproved: isRecommendationExhausted(
+              recommendationMode,
+              preEdaProfile?.serverRecommendation,
+            ),
           });
+          setPreEdaApplyErrors((prev) => ({ ...prev, [dataset.source_id]: null }));
         })
         .catch((err: Error) => {
           transitionToError("upload", err.message);
@@ -1490,32 +1676,14 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
 
       setErrorMessage(null);
       setErrorStep(null);
-      const selectedDataset =
-        uploadedDatasets.find((item) => item.sourceId === selectedSourceId) ?? null;
-      const recommendation = selectedDataset?.preEdaProfile?.recommendation ?? null;
-
-      if (selectedSourceId && recommendation && !selectedDataset?.preprocessApproved) {
-        setErrorMessage(null);
-        setErrorStep(null);
-        setChatResponse(null);
-        setStreamingAnswer("");
-        setThoughtSteps([]);
-        setRunningSubPhase("preprocessing");
-        setPendingApproval(buildLocalPreprocessPendingApproval(recommendation, selectedSourceId));
-        setState("needs-user");
-        completedStagesRef.current = new Set(["intake"]);
-        return;
-      }
-
       runQuestionStream(question, selectedSourceId);
     },
-    [pendingApproval, nextLocalMessageId, uploadedDatasets, selectedSourceId, runQuestionStream],
+    [pendingApproval, nextLocalMessageId, selectedSourceId, runQuestionStream],
   );
 
-  const handleApprove = useCallback(() => {
-    if (pendingApproval && sessionId !== null && runId) {
-      resumeRun("approve");
-      return;
+  const handleApprove = useCallback(async (): Promise<"approved" | "failed" | "noop"> => {
+    if (!pendingApproval || sessionId === null || !runId) {
+      return "noop";
     }
 
     setHistory((prev) => [
@@ -1523,40 +1691,66 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
       {
         status: "completed" as TimelineItemStatus,
         title: "Approved",
-        subtext: pendingApproval?.title ?? "User confirmed strategy",
+        subtext: pendingApproval.title,
         timestamp: now(),
       },
     ]);
+    resumeRun("approve");
+    return "approved";
+  }, [pendingApproval, resumeRun, runId, sessionId]);
 
-    if (pendingApproval?.source_id) {
-      setSelectedSourceId(pendingApproval.source_id);
-      updateUploadedDataset(pendingApproval.source_id, (current) => ({
-        ...current,
-        preprocessApproved: true,
-      }));
-    }
+  const applyRecommendedOperation = useCallback(
+    async (
+      operation: EdaRecommendedOperation,
+      index: number,
+    ): Promise<"applied" | "failed" | "noop"> => {
+      if (!selectedSourceId || !isAutoApplicableRecommendedOperation(operation)) {
+        return "noop";
+      }
 
-    setPendingApproval(null);
+      const operationKey = getRecommendedOperationKey(operation, index);
+      setPreEdaApplyErrors((prev) => ({ ...prev, [selectedSourceId]: null }));
+      setApplyingPreEdaSourceId(selectedSourceId);
+      setApplyingPreEdaOperationKey(operationKey);
 
-    if (lastQuestionRef.current?.question.trim()) {
-      runQuestionStream(
-        lastQuestionRef.current.question,
-        pendingApproval?.source_id ?? lastQuestionRef.current.sourceId,
-      );
-      return;
-    }
+      try {
+        const response = await applyPreprocessRecommendation({
+          source_id: selectedSourceId,
+          recommendation: buildSingleOperationRecommendation(operation),
+        });
+        const outputFileName = response.output_filename.trim()
+          ? response.output_filename
+          : `processed_${response.output_source_id}`;
 
-    setState(uploadedDatasets.length > 0 ? "ready" : "empty");
-  }, [
-    pendingApproval,
-    sessionId,
-    runId,
-    resumeRun,
-    setSelectedSourceId,
-    updateUploadedDataset,
-    runQuestionStream,
-    uploadedDatasets.length,
-  ]);
+        await activateProcessedDataset({
+          sourceId: response.output_source_id,
+          fileName: outputFileName,
+          uploadedAt: new Date().toISOString(),
+        });
+
+        setPreEdaApplyErrors((prev) => ({
+          ...prev,
+          [selectedSourceId]: null,
+          [response.output_source_id]: null,
+        }));
+        addMilestone({
+          status: "completed",
+          title: "Preprocess applied",
+          subtext: operation.reason.trim() || operation.op,
+          timestamp: now(),
+        });
+        return "applied";
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : "전처리 적용에 실패했습니다.";
+        setPreEdaApplyErrors((prev) => ({ ...prev, [selectedSourceId]: message }));
+        return "failed";
+      } finally {
+        setApplyingPreEdaSourceId(null);
+        setApplyingPreEdaOperationKey(null);
+      }
+    },
+    [activateProcessedDataset, addMilestone, selectedSourceId],
+  );
 
   const handleReject = useCallback(() => {
     setHistory((prev) => [
@@ -1651,6 +1845,9 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
     lastQuestionRef.current = null;
     localMessageIdRef.current = 0;
     completedStagesRef.current = new Set();
+    setPreEdaApplyErrors({});
+    setApplyingPreEdaSourceId(null);
+    setApplyingPreEdaOperationKey(null);
   }, []);
 
   const captureSessionContext = useCallback((): PipelineSessionContext => {
@@ -1790,17 +1987,33 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
 
   const selectedPreEdaProfile =
     uploadedDatasets.find((item) => item.sourceId === selectedSourceId)?.preEdaProfile ?? null;
+  const selectedPreEdaApplyError =
+    selectedSourceId ? (preEdaApplyErrors[selectedSourceId] ?? null) : null;
+  const selectedApplyingPreEdaOperationKey =
+    applyingPreEdaSourceId === selectedSourceId ? applyingPreEdaOperationKey : null;
 
   const reportSections: ReportSection[] = (() => {
     if (state === "ready") {
       const selected = uploadedDatasets.find((item) => item.sourceId === selectedSourceId);
+      const preEdaUnavailable = selected?.preEdaStatus === "unavailable";
       return [
         {
           type: "paragraph" as const,
-          content: selectedPreEdaProfile?.qualitySummary
+          content: preEdaUnavailable
+            ? (selected?.preEdaWarning ?? "Pre-EDA 정보를 아직 불러오지 못했습니다. Retry EDA로 다시 시도할 수 있습니다.")
+            : selectedPreEdaProfile?.qualitySummary
             ?? "업로드가 완료되었습니다. 파일을 선택한 뒤 질문하면 해당 데이터셋 기준으로 Deep EDA와 리포트가 이어집니다.",
         },
-        ...(selectedPreEdaProfile?.summaryBullets?.length
+        ...(preEdaUnavailable
+          ? [{
+              type: "checklist" as const,
+              items: [
+                "데이터셋 업로드는 정상적으로 완료되었습니다.",
+                "Pre-EDA/추천 정보만 일시적으로 unavailable 상태입니다.",
+                "Retry EDA로 같은 source의 canonical EDA endpoint를 다시 조회할 수 있습니다.",
+              ],
+            }]
+          : selectedPreEdaProfile?.summaryBullets?.length
           ? [{ type: "checklist" as const, items: selectedPreEdaProfile.summaryBullets }]
           : [
               {
@@ -2086,6 +2299,8 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
     rawLogs,
     latestVisualizationResult,
     selectedPreEdaProfile,
+    selectedPreEdaApplyError,
+    selectedApplyingPreEdaOperationKey,
 
     uploadedDatasets,
     selectedSourceId,
@@ -2098,6 +2313,8 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
     handleReject,
     handleEditInstruction,
     handleRetry,
+    retrySelectedPreEda,
+    applyRecommendedOperation,
     handleSend,
     handleCancel,
     reset,

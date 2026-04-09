@@ -177,3 +177,5 @@ class PreprocessRecommendation(BaseModel):
 class PreprocessRecommendationResponse(BaseModel):
     source_id: str
     recommendation: PreprocessRecommendation
+    generation_mode: Literal["llm", "fallback", "none"]
+    warning: str | None = None

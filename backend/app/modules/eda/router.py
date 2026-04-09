@@ -189,18 +189,15 @@ def get_eda_preprocess_recommendations(
     service: EDAService = Depends(get_eda_service),
 ):
     try:
-        recommendations = service.get_preprocess_recommendation(source_id)
+        recommendation_response = service.get_preprocess_recommendation_response(source_id)
     except DatasetReadError as exc:
         _raise_dataset_read_http_error(exc)
-    if recommendations is None:
+    if recommendation_response is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="데이터셋을 찾을 수 없거나 전처리 추천을 생성할 수 없습니다.",
         )
-    return PreprocessRecommendationResponse(
-        source_id=source_id,
-        recommendation=recommendations,
-    )
+    return recommendation_response
 
 
 @router.get("/{source_id}/insights", response_model=EDAAISummaryResponse)

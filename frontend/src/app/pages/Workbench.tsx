@@ -14,10 +14,12 @@ import { ApprovalCard } from "../components/genui/ApprovalCard";
 import { CardShell, CardHeader, CardBody } from "../components/genui/CardShell";
 import { PreEdaBoard } from "../components/genui/PreEdaBoard";
 import {
+  AlertTriangle,
   CheckCircle2,
   FileText,
   MessageSquare,
   Plus,
+  RefreshCw,
   Trash2,
 } from "lucide-react";
 import { cn } from "../../lib/utils";
@@ -26,6 +28,7 @@ import { useAnalysisPipeline, type PipelineSessionContext } from "../hooks/useAn
 import { useWorkbenchSessionStore } from "../hooks/useWorkbenchSessionStore";
 import {
   deleteChatSession,
+  type EdaRecommendedOperation,
   fetchPendingApproval,
   getChatHistory,
   isApiErrorStatus,
@@ -153,6 +156,8 @@ export default function Workbench() {
     rawLogs,
     latestVisualizationResult,
     selectedPreEdaProfile,
+    selectedPreEdaApplyError,
+    selectedApplyingPreEdaOperationKey,
     chatHistory,
     fileName,
     uploadedDatasets,
@@ -161,6 +166,7 @@ export default function Workbench() {
     removeUploadedDataset,
     sessionId,
     handleSend,
+    applyRecommendedOperation,
     captureSessionContext,
     restoreSessionContext,
     clearForNewDraft,
@@ -183,16 +189,6 @@ export default function Workbench() {
   const preprocessApproveStartsAnalysis =
     pendingApproval?.stage === "preprocess" && state === "needs-user";
   const isDatasetSelectorLocked = preprocessApproveStartsAnalysis;
-  const preprocessBoardActionMode =
-    selectedDataset?.preprocessApproved
-      ? "approved"
-      : preprocessApproveStartsAnalysis
-        ? "run"
-        : "prepare";
-  const canApprovePreprocessFromBoard =
-    Boolean(selectedPreEdaProfile?.recommendation)
-    && !selectedDataset?.preprocessApproved
-    && (!pendingApproval || pendingApproval.stage === "preprocess");
 
   // UI-only local state
   type CanvasView = "current" | "pre-eda" | "deep-eda" | "report";
@@ -245,17 +241,28 @@ export default function Workbench() {
     return () => window.cancelAnimationFrame(frame);
   }, [canvasView]);
 
-  // Wrap handleApprove to also reset canvas view so user sees the transition
-  const handleApproveAndReturn = useCallback(() => {
-    pipeline.handleApprove();
-    if (preprocessApproveStartsAnalysis) {
-      setCanvasView("current");
+  const handleApplyRecommendedOperation = useCallback(
+    async (operation: EdaRecommendedOperation, index: number) => {
+      const result = await applyRecommendedOperation(operation, index);
+      if (result !== "applied") {
+        return;
+      }
+      setCanvasView("pre-eda");
+      toast.success("선택한 전처리 작업을 적용했습니다.");
+    },
+    [applyRecommendedOperation],
+  );
+
+  const handleRetryPreEda = useCallback(async () => {
+    const result = await pipeline.retrySelectedPreEda();
+    if (result === "ready") {
+      toast.success("Pre-EDA 정보를 다시 불러왔습니다.");
       return;
     }
-
-    setCanvasView("deep-eda");
-    toast.success("전처리 추천을 승인했습니다. 질문을 입력하면 Deep EDA를 시작합니다.");
-  }, [pipeline, preprocessApproveStartsAnalysis]);
+    if (result === "unavailable") {
+      toast.error("Pre-EDA 정보를 다시 불러오지 못했습니다.");
+    }
+  }, [pipeline]);
 
   // Show NEW dot on Agent tab when tool calls arrive
   useEffect(() => {
@@ -634,6 +641,40 @@ export default function Workbench() {
     },
   ];
 
+  const preEdaUnavailableCard = selectedDataset?.preEdaStatus === "unavailable" ? (
+    <CardShell status="needs-user" className="max-w-none mx-0">
+      <CardHeader
+        title="Pre-EDA unavailable"
+        meta="WARNING"
+        statusLabel="Unavailable"
+        statusVariant="needs-user"
+      />
+      <CardBody className="space-y-3">
+        <div className="flex items-start gap-3 rounded-xl border border-[var(--genui-warning)]/30 bg-[var(--genui-warning)]/8 px-4 py-3">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-[var(--genui-warning)]" />
+          <div className="space-y-1">
+            <p className="text-sm font-medium text-[var(--genui-text)]">
+              EDA 또는 전처리 추천 정보를 아직 불러오지 못했습니다.
+            </p>
+            <p className="text-xs text-[var(--genui-muted)]">
+              {selectedDataset.preEdaWarning ?? "잠시 후 다시 시도하면 최신 Pre-EDA 상태를 다시 조회합니다."}
+            </p>
+          </div>
+        </div>
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={handleRetryPreEda}
+            className="inline-flex items-center gap-2 rounded-md border border-[var(--genui-border)] bg-[var(--genui-panel)] px-3 py-2 text-xs font-medium text-[var(--genui-text)] hover:bg-[var(--genui-surface)]"
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+            Retry EDA
+          </button>
+        </div>
+      </CardBody>
+    </CardShell>
+  ) : null;
+
   const headerSubtitle =
     state === "empty"
       ? "데이터 업로드 또는 일반 질문으로 새 세션을 시작할 수 있습니다."
@@ -911,9 +952,14 @@ export default function Workbench() {
                 <PreEdaBoard
                   profile={selectedPreEdaProfile}
                   summarySections={preEdaSummarySections}
-                  onApprovePreprocess={canApprovePreprocessFromBoard ? handleApproveAndReturn : undefined}
-                  approveActionMode={preprocessBoardActionMode}
+                  recommendationMode={selectedDataset?.recommendationMode ?? null}
+                  recommendationWarning={selectedDataset?.preEdaWarning ?? null}
+                  applyError={selectedPreEdaApplyError}
+                  applyingOperationKey={selectedApplyingPreEdaOperationKey}
+                  onApplyOperation={handleApplyRecommendedOperation}
                 />
+              ) : preEdaUnavailableCard ? (
+                preEdaUnavailableCard
               ) : (
                 <AssistantReportMessage
                   title="Pre-EDA"
@@ -1003,9 +1049,14 @@ export default function Workbench() {
                 <PreEdaBoard
                   profile={selectedPreEdaProfile}
                   summarySections={preEdaSummarySections}
-                  onApprovePreprocess={canApprovePreprocessFromBoard ? handleApproveAndReturn : undefined}
-                  approveActionMode={preprocessBoardActionMode}
+                  recommendationMode={selectedDataset?.recommendationMode ?? null}
+                  recommendationWarning={selectedDataset?.preEdaWarning ?? null}
+                  applyError={selectedPreEdaApplyError}
+                  applyingOperationKey={selectedApplyingPreEdaOperationKey}
+                  onApplyOperation={handleApplyRecommendedOperation}
                 />
+              ) : preEdaUnavailableCard ? (
+                preEdaUnavailableCard
               ) : (
                 <AssistantReportMessage
                   className="max-w-none mx-0"

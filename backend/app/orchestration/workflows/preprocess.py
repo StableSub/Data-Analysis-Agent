@@ -21,7 +21,6 @@ from backend.app.modules.preprocess.planner import (
 )
 from backend.app.modules.eda.service import EDAService
 from backend.app.modules.preprocess.service import PreprocessService
-from backend.app.modules.profiling.schemas import DatasetProfile
 from backend.app.orchestration.state import PreprocessGraphState
 
 
@@ -63,15 +62,13 @@ def build_preprocess_workflow(
         set_trace_stage("preprocess_plan")
         dataset_profile = dict(state.get("dataset_profile") or {})
         if "preprocess_recommendations" not in dataset_profile:
-            profile_model = DatasetProfile.model_validate(dataset_profile)
-            recommendations = eda_service.get_preprocess_recommendations(
+            recommendation = eda_service.get_preprocess_recommendation(
                 str(state.get("source_id") or ""),
-                profile=profile_model,
-                include_outlier_analysis=False,
+                model_id=state.get("model_id"),
             )
             dataset_profile["preprocess_recommendations"] = (
-                recommendations.model_dump().get("recommendations", [])
-                if recommendations is not None
+                [operation.model_dump() for operation in recommendation.operations]
+                if recommendation is not None
                 else []
             )
 

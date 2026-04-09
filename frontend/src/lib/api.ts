@@ -201,20 +201,32 @@ export type PreprocessOpType =
   | "drop_columns"
   | "rename_columns"
   | "scale"
-  | "derived_column";
+  | "derived_column"
+  | "encode_categorical"
+  | "parse_datetime"
+  | "outlier";
 
-export interface PreprocessOperation {
+export type PreprocessOperation = {
   op: PreprocessOpType;
-  params: Record<string, unknown>;
-}
+} & Record<string, unknown>;
 
 export interface PreprocessApplyRequest {
-  dataset_id: number;
+  source_id: string;
   operations: PreprocessOperation[];
 }
 
 export interface PreprocessApplyResponse {
-  dataset_id: number;
+  input_source_id: string;
+  output_source_id: string;
+  output_filename: string;
+  summary_before?: Record<string, unknown> | null;
+  summary_after?: Record<string, unknown> | null;
+  summary_diff?: Record<string, unknown> | null;
+}
+
+export interface PreprocessApplyRecommendationRequest {
+  source_id: string;
+  recommendation: EdaPreprocessRecommendation;
 }
 
 export interface ReportCreateRequest {
@@ -300,6 +312,16 @@ export function queryRag(req: RagQueryRequest): Promise<RagResponse> {
 /** POST /preprocess/apply */
 export function applyPreprocess(req: PreprocessApplyRequest): Promise<PreprocessApplyResponse> {
   return apiRequest<PreprocessApplyResponse>("/preprocess/apply", {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
+}
+
+/** POST /preprocess/apply-recommendation */
+export function applyPreprocessRecommendation(
+  req: PreprocessApplyRecommendationRequest,
+): Promise<PreprocessApplyResponse> {
+  return apiRequest<PreprocessApplyResponse>("/preprocess/apply-recommendation", {
     method: "POST",
     body: JSON.stringify(req),
   });
@@ -446,64 +468,100 @@ export function buildAnalysisStreamUrl(analysisRunId: string): string {
 
 // --- EDA API (server-driven Pre-EDA) ---
 
-export interface EdaSummary {
+export type EdaColumnProfileType =
+  | "numerical"
+  | "categorical"
+  | "identifier"
+  | "datetime"
+  | "boolean"
+  | "group_key";
+
+export interface EdaSummaryCounts {
+  numerical: number;
+  categorical: number;
+  datetime: number;
+  boolean: number;
+  identifier: number;
+  group_key: number;
+}
+
+export interface EdaSummaryResponse {
+  source_id: string;
   row_count: number;
   column_count: number;
-  numeric_columns: string[];
-  categorical_columns: string[];
-  datetime_columns: string[];
-  boolean_columns: string[];
-  identifier_columns: string[];
-  group_key_columns: string[];
-  quality_summary: string;
-  summary_bullets: string[];
+  sample_row_count: number;
+  type_counts: EdaSummaryCounts;
+  columns: string[];
 }
 
 export interface EdaQualityColumn {
   column: string;
-  missing_count: number;
-  missing_rate: number;
+  inferred_type: EdaColumnProfileType;
+  null_count: number;
+  null_ratio: number;
 }
 
-export interface EdaQuality {
-  total_rows: number;
-  missing_columns: EdaQualityColumn[];
+export interface EdaQualityResponse {
+  source_id: string;
+  row_count: number;
+  column_count: number;
+  missing_total: number;
+  missing_ratio: number;
+  top_missing_columns: EdaQualityColumn[];
+  columns: EdaQualityColumn[];
 }
 
 export interface EdaCorrelationPair {
-  col_a: string;
-  col_b: string;
+  column_1: string;
+  column_2: string;
   correlation: number;
 }
 
-export interface EdaCorrelations {
-  top_pairs: EdaCorrelationPair[];
+export interface EdaCorrelationsResponse {
+  source_id: string;
+  pairs: EdaCorrelationPair[];
 }
 
 export interface EdaOutlierColumn {
   column: string;
   outlier_count: number;
-  lower_bound: number;
-  upper_bound: number;
+  outlier_ratio: number;
+  q1: number | null;
+  q3: number | null;
+  iqr: number | null;
+  lower_bound: number | null;
+  upper_bound: number | null;
 }
 
-export interface EdaOutliers {
-  outlier_columns: EdaOutlierColumn[];
+export interface EdaOutliersResponse {
+  source_id: string;
+  numeric_column_count: number;
+  columns: EdaOutlierColumn[];
 }
 
 export interface EdaDistributionBin {
   label: string;
-  count: number;
+  value: number;
+  lower?: number | null;
+  upper?: number | null;
 }
 
-export interface EdaDistribution {
+export interface EdaDistributionResponse {
+  source_id: string;
   column: string;
+  inferred_type: EdaColumnProfileType;
+  chart_type: string;
+  total_count: number;
+  other_count: number;
+  truncated: boolean;
   bins: EdaDistributionBin[];
 }
 
-export interface EdaInsight {
-  summary: string;
-  preprocess_recommendation: EdaPreprocessRecommendation | null;
+export interface EdaInsightResponse {
+  source_id: string;
+  structure_summary: string;
+  quality_issues: string[];
+  key_insights: string[];
 }
 
 export interface EdaPreprocessRecommendation {
@@ -512,31 +570,85 @@ export interface EdaPreprocessRecommendation {
 }
 
 export interface EdaRecommendedOperation {
-  op: string;
+  op:
+    | "drop_missing"
+    | "impute"
+    | "drop_columns"
+    | "scale"
+    | "encode_categorical"
+    | "outlier"
+    | "parse_datetime"
+    | "derived_column";
   target_columns: string[];
   reason: string;
   priority: "high" | "medium" | "low";
 }
 
+export interface EdaPreprocessRecommendationResponse {
+  source_id: string;
+  recommendation: EdaPreprocessRecommendation;
+  generation_mode: "llm" | "fallback" | "none";
+  warning: string | null;
+}
+
+export interface EdaProfileColumn {
+  name: string;
+  raw_dtype: string;
+  inferred_type: EdaColumnProfileType;
+  null_count: number;
+  missing_rate: number;
+  unique_count: number;
+  unique_ratio: number;
+  sample_values: unknown[];
+}
+
+export interface EdaProfileResponse {
+  source_id: string;
+  available: boolean;
+  row_count: number;
+  sample_row_count: number;
+  column_count: number;
+  columns: string[];
+  dtypes: Record<string, string>;
+  missing_rates: Record<string, number>;
+  sample_rows: Record<string, unknown>[];
+  numeric_columns: string[];
+  datetime_columns: string[];
+  categorical_columns: string[];
+  boolean_columns: string[];
+  identifier_columns: string[];
+  group_key_columns: string[];
+  type_columns: Record<string, string[]>;
+  logical_types: Record<string, EdaColumnProfileType>;
+  column_profiles: EdaProfileColumn[];
+}
+
+/** GET /eda/{source_id}/profile */
+export function fetchEdaProfile(
+  sourceId: string,
+): Promise<EdaProfileResponse> {
+  return apiRequest<EdaProfileResponse>(`/eda/${sourceId}/profile`);
+}
+
 /** GET /eda/{source_id}/summary */
 export function fetchEdaSummary(
   sourceId: string,
-): Promise<ApiEnvelope<EdaSummary>> {
-  return apiRequest<ApiEnvelope<EdaSummary>>(`/eda/${sourceId}/summary`);
+): Promise<EdaSummaryResponse> {
+  return apiRequest<EdaSummaryResponse>(`/eda/${sourceId}/summary`);
 }
 
 /** GET /eda/{source_id}/quality */
 export function fetchEdaQuality(
   sourceId: string,
-): Promise<ApiEnvelope<EdaQuality>> {
-  return apiRequest<ApiEnvelope<EdaQuality>>(`/eda/${sourceId}/quality`);
+): Promise<EdaQualityResponse> {
+  return apiRequest<EdaQualityResponse>(`/eda/${sourceId}/quality`);
 }
 
 /** GET /eda/{source_id}/correlations/top */
 export function fetchEdaCorrelations(
   sourceId: string,
-): Promise<ApiEnvelope<EdaCorrelations>> {
-  return apiRequest<ApiEnvelope<EdaCorrelations>>(
+): Promise<EdaCorrelationsResponse> {
+  return apiRequest<EdaCorrelationsResponse>(
     `/eda/${sourceId}/correlations/top`,
   );
 }
@@ -544,25 +656,34 @@ export function fetchEdaCorrelations(
 /** GET /eda/{source_id}/outliers */
 export function fetchEdaOutliers(
   sourceId: string,
-): Promise<ApiEnvelope<EdaOutliers>> {
-  return apiRequest<ApiEnvelope<EdaOutliers>>(`/eda/${sourceId}/outliers`);
+): Promise<EdaOutliersResponse> {
+  return apiRequest<EdaOutliersResponse>(`/eda/${sourceId}/outliers`);
 }
 
 /** GET /eda/{source_id}/distribution?column=... */
 export function fetchEdaDistribution(
   sourceId: string,
   column: string,
-): Promise<ApiEnvelope<EdaDistribution>> {
-  return apiRequest<ApiEnvelope<EdaDistribution>>(
+): Promise<EdaDistributionResponse> {
+  return apiRequest<EdaDistributionResponse>(
     `/eda/${sourceId}/distribution?column=${encodeURIComponent(column)}`,
+  );
+}
+
+/** GET /eda/{source_id}/preprocess-recommendations */
+export function fetchEdaPreprocessRecommendations(
+  sourceId: string,
+): Promise<EdaPreprocessRecommendationResponse> {
+  return apiRequest<EdaPreprocessRecommendationResponse>(
+    `/eda/${sourceId}/preprocess-recommendations`,
   );
 }
 
 /** GET /eda/{source_id}/insights */
 export function fetchEdaInsights(
   sourceId: string,
-): Promise<ApiEnvelope<EdaInsight>> {
-  return apiRequest<ApiEnvelope<EdaInsight>>(`/eda/${sourceId}/insights`);
+): Promise<EdaInsightResponse> {
+  return apiRequest<EdaInsightResponse>(`/eda/${sourceId}/insights`);
 }
 // --- Upload with XHR progress tracking ---
 

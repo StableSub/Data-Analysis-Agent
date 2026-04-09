@@ -4,6 +4,8 @@ from typing import Annotated, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from ..eda.schemas import PreprocessRecommendation
+
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -110,6 +112,11 @@ PreprocessOperation = Annotated[
 class PreprocessApplyRequest(StrictModel):
     source_id: str
     operations: list[PreprocessOperation] = Field(default_factory=list)
+
+
+class PreprocessApplyRecommendationRequest(StrictModel):
+    source_id: str
+    recommendation: PreprocessRecommendation
 
 
 class PreprocessApplyResponse(StrictModel):
