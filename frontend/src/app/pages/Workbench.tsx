@@ -25,13 +25,14 @@ import {
 import { cn } from "../../lib/utils";
 import { PipelineBar, type PipelineBarVariant } from "../components/genui/PipelineBar";
 import { useAnalysisPipeline, type PipelineSessionContext } from "../hooks/useAnalysisPipeline";
-import { useWorkbenchSessionStore } from "../hooks/useWorkbenchSessionStore";
+import { useWorkbenchSessionStore, type WorkbenchSessionItem } from "../hooks/useWorkbenchSessionStore";
 import {
   deleteChatSession,
   type EdaRecommendedOperation,
   fetchPendingApproval,
   getChatHistory,
   isApiErrorStatus,
+  listDatasets,
   type PendingApprovalPayload,
 } from "../../lib/api";
 import { toast } from "sonner";
@@ -158,6 +159,9 @@ export default function Workbench() {
     selectedPreEdaProfile,
     selectedPreEdaApplyError,
     selectedApplyingPreEdaOperationKey,
+    isPreEdaApplying,
+    selectedPreEdaDistributionLoadingColumn,
+    selectedPreEdaDistributionError,
     chatHistory,
     fileName,
     uploadedDatasets,
@@ -167,6 +171,7 @@ export default function Workbench() {
     sessionId,
     handleSend,
     applyRecommendedOperation,
+    loadSelectedPreEdaDistribution,
     captureSessionContext,
     restoreSessionContext,
     clearForNewDraft,
@@ -188,7 +193,7 @@ export default function Workbench() {
     uploadedDatasets.find((item) => item.sourceId === selectedSourceId) ?? null;
   const preprocessApproveStartsAnalysis =
     pendingApproval?.stage === "preprocess" && state === "needs-user";
-  const isDatasetSelectorLocked = preprocessApproveStartsAnalysis;
+  const isDatasetSelectorLocked = preprocessApproveStartsAnalysis || isPreEdaApplying;
 
   // UI-only local state
   type CanvasView = "current" | "pre-eda" | "deep-eda" | "report";
@@ -296,6 +301,110 @@ export default function Workbench() {
     [captureSessionContext, updateSession],
   );
 
+  const ensureActiveSessionForInteraction = useCallback((): WorkbenchSessionItem => {
+    if (activeSessionId) {
+      const currentSession = sessions.find((item) => item.id === activeSessionId);
+      if (currentSession) {
+        return currentSession;
+      }
+    }
+
+    const fallbackSession = sessions[0] ?? null;
+    if (fallbackSession) {
+      selectSession(fallbackSession.id);
+      return fallbackSession;
+    }
+
+    const nextSession = createSession();
+    selectSession(nextSession.id);
+    return nextSession;
+  }, [activeSessionId, sessions, selectSession, createSession]);
+
+  const reconcileSessionDatasets = useCallback(
+    async (
+      context: PipelineSessionContext,
+    ): Promise<{ context: PipelineSessionContext; changed: boolean }> => {
+      if (context.uploadedDatasets.length === 0) {
+        return { context, changed: false };
+      }
+
+      const requestedSourceIds = new Set(
+        context.uploadedDatasets
+          .map((dataset) => dataset.sourceId)
+          .filter((sourceId): sourceId is string => Boolean(sourceId)),
+      );
+
+      if (requestedSourceIds.size === 0) {
+        return { context, changed: false };
+      }
+
+      const foundSourceIds = new Set<string>();
+      const limit = Math.min(100, Math.max(requestedSourceIds.size, 20));
+      let skip = 0;
+      let total = 0;
+
+      try {
+        do {
+          const response = await listDatasets(skip, limit);
+          total = response.total;
+          response.items.forEach((item) => {
+            if (requestedSourceIds.has(item.source_id)) {
+              foundSourceIds.add(item.source_id);
+            }
+          });
+          skip += response.items.length;
+
+          if (foundSourceIds.size === requestedSourceIds.size || response.items.length === 0) {
+            break;
+          }
+        } while (skip < total);
+      } catch {
+        return { context, changed: false };
+      }
+
+      const nextUploadedDatasets = context.uploadedDatasets.filter((dataset) =>
+        foundSourceIds.has(dataset.sourceId),
+      );
+      const nextSelectedSourceId =
+        typeof context.selectedSourceId === "string"
+        && nextUploadedDatasets.some((dataset) => dataset.sourceId === context.selectedSourceId)
+          ? context.selectedSourceId
+          : nextUploadedDatasets[0]?.sourceId ?? null;
+      const nextSelectedDataset =
+        nextUploadedDatasets.find((dataset) => dataset.sourceId === nextSelectedSourceId) ?? null;
+      const hasConversation =
+        context.chatHistory.length > 0 || Boolean(context.latestAssistantAnswer);
+      const nextStateHint =
+        nextUploadedDatasets.length > 0
+          ? context.stateHint
+          : hasConversation
+            ? "success"
+            : "empty";
+      const nextFileName = nextSelectedDataset?.fileName ?? "";
+      const changed =
+        nextUploadedDatasets.length !== context.uploadedDatasets.length
+        || nextSelectedSourceId !== context.selectedSourceId
+        || nextStateHint !== context.stateHint
+        || nextFileName !== context.fileName;
+
+      if (!changed) {
+        return { context, changed: false };
+      }
+
+      return {
+        changed: true,
+        context: {
+          ...context,
+          uploadedDatasets: nextUploadedDatasets,
+          selectedSourceId: nextSelectedSourceId,
+          stateHint: nextStateHint,
+          fileName: nextFileName,
+        },
+      };
+    },
+    [],
+  );
+
   const restoreSessionById = useCallback(
     async (targetSessionId: string) => {
       const targetSession = sessions.find((item) => item.id === targetSessionId);
@@ -304,6 +413,11 @@ export default function Workbench() {
       }
 
       let nextContext: PipelineSessionContext = targetSession.context;
+      let shouldPersistContext = false;
+
+      const reconciled = await reconcileSessionDatasets(nextContext);
+      nextContext = reconciled.context;
+      shouldPersistContext = reconciled.changed;
 
       if (targetSession.backendSessionId !== null) {
         try {
@@ -320,13 +434,19 @@ export default function Workbench() {
               const pending = await fetchPendingApproval(nextContext.runId);
               restoredPendingApproval = pending.pending_approval;
               stateHint = "needs-user";
-            } catch {
-              restoredPendingApproval = null;
-              stateHint = msgs.length > 0
-                ? "success"
-                : nextContext.uploadedDatasets.length > 0
-                  ? "ready"
-                  : "empty";
+            } catch (error) {
+              if (isApiErrorStatus(error, 404)) {
+                restoredPendingApproval = null;
+                stateHint = msgs.length > 0
+                  ? "success"
+                  : nextContext.uploadedDatasets.length > 0
+                    ? "ready"
+                    : "empty";
+              } else {
+                restoredPendingApproval = nextContext.pendingApproval;
+                stateHint = "needs-user";
+                toast.error("승인 대기 상태를 다시 확인하지 못했습니다. 현재 상태를 유지합니다.");
+              }
             }
           } else if (msgs.length > 0) {
             stateHint = "success";
@@ -341,30 +461,30 @@ export default function Workbench() {
             stateHint,
             errorMessage: nextContext.stateHint === "error" ? nextContext.errorMessage : null,
           };
-
-          updateSession(targetSessionId, {
-            backendSessionId: targetSession.backendSessionId,
-            context: nextContext,
-          });
+          shouldPersistContext = true;
         } catch (error) {
           if (isApiErrorStatus(error, 404)) {
             nextContext = {
               ...nextContext,
               backendSessionId: null,
             };
-            updateSession(targetSessionId, {
-              backendSessionId: null,
-              context: nextContext,
-            });
+            shouldPersistContext = true;
           } else {
             toast.error("세션 히스토리를 불러오지 못했습니다.");
           }
         }
       }
 
+      if (shouldPersistContext) {
+        updateSession(targetSessionId, {
+          backendSessionId: nextContext.backendSessionId,
+          context: nextContext,
+        });
+      }
+
       restoreSessionContext(nextContext);
     },
-    [sessions, updateSession, restoreSessionContext],
+    [sessions, reconcileSessionDatasets, updateSession, restoreSessionContext],
   );
 
   const handleNewChat = useCallback(() => {
@@ -445,17 +565,15 @@ export default function Workbench() {
         return;
       }
 
-      if (activeSessionId) {
-        const currentSession = sessions.find((item) => item.id === activeSessionId);
-        if (currentSession && currentSession.title === "새 채팅") {
-          const title = question.length > 30 ? `${question.slice(0, 30)}...` : question;
-          updateSession(activeSessionId, { title });
-        }
+      const targetSession = ensureActiveSessionForInteraction();
+      if (targetSession.title === "새 채팅") {
+        const title = question.length > 30 ? `${question.slice(0, 30)}...` : question;
+        updateSession(targetSession.id, { title });
       }
 
       handleSend(value);
     },
-    [activeSessionId, sessions, updateSession, handleSend],
+    [ensureActiveSessionForInteraction, sessions, updateSession, handleSend],
   );
 
   useEffect(() => {
@@ -522,11 +640,14 @@ export default function Workbench() {
   const handleFileSelected = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
-      if (file) pipeline.startUpload(file);
+      if (file) {
+        ensureActiveSessionForInteraction();
+        pipeline.startUpload(file);
+      }
       // Reset so the same file can be re-selected
       if (fileInputRef.current) fileInputRef.current.value = "";
     },
-    [pipeline],
+    [ensureActiveSessionForInteraction, pipeline],
   );
 
   /** Handle Dropzone onDrop — if FileList is empty (button click), open picker */
@@ -534,12 +655,13 @@ export default function Workbench() {
     (files: FileList) => {
       const file = files[0]; // noUncheckedIndexedAccess: may be undefined
       if (file) {
+        ensureActiveSessionForInteraction();
         pipeline.startUpload(file);
       } else {
         openFilePicker();
       }
     },
-    [pipeline, openFilePicker],
+    [ensureActiveSessionForInteraction, pipeline, openFilePicker],
   );
 
   const formatSessionUpdatedAt = (value: string) => {
@@ -562,11 +684,11 @@ export default function Workbench() {
   };
 
   const handleDeleteSelectedDataset = useCallback(() => {
-    if (!selectedSourceId) {
+    if (!selectedSourceId || isPreEdaApplying) {
       return;
     }
     void removeUploadedDataset(selectedSourceId);
-  }, [selectedSourceId, removeUploadedDataset]);
+  }, [isPreEdaApplying, selectedSourceId, removeUploadedDataset]);
 
   // Current running tool call for inline indicator
   const currentRunningTool = toolCalls.filter((tc) => tc.status === "running");
@@ -797,7 +919,7 @@ export default function Workbench() {
           <button
             type="button"
             onClick={handleDeleteSelectedDataset}
-            disabled={!selectedSourceId}
+            disabled={!selectedSourceId || isPreEdaApplying}
             className="h-7 px-2 rounded-md border border-[var(--genui-border)] bg-[var(--genui-panel)] text-xs text-[var(--genui-text)] inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[var(--genui-surface)] whitespace-nowrap flex-shrink-0"
           >
             <Trash2 className="w-3.5 h-3.5" />
@@ -957,6 +1079,9 @@ export default function Workbench() {
                   applyError={selectedPreEdaApplyError}
                   applyingOperationKey={selectedApplyingPreEdaOperationKey}
                   onApplyOperation={handleApplyRecommendedOperation}
+                  onSelectDistributionColumn={loadSelectedPreEdaDistribution}
+                  distributionLoadingColumn={selectedPreEdaDistributionLoadingColumn}
+                  distributionError={selectedPreEdaDistributionError}
                 />
               ) : preEdaUnavailableCard ? (
                 preEdaUnavailableCard
@@ -1054,6 +1179,9 @@ export default function Workbench() {
                   applyError={selectedPreEdaApplyError}
                   applyingOperationKey={selectedApplyingPreEdaOperationKey}
                   onApplyOperation={handleApplyRecommendedOperation}
+                  onSelectDistributionColumn={loadSelectedPreEdaDistribution}
+                  distributionLoadingColumn={selectedPreEdaDistributionLoadingColumn}
+                  distributionError={selectedPreEdaDistributionError}
                 />
               ) : preEdaUnavailableCard ? (
                 preEdaUnavailableCard
@@ -1151,9 +1279,18 @@ export default function Workbench() {
   /* ── BOTTOM BAR ── */
   const BottomBar = (
     <WorkbenchCommandBar
-      status={state === "empty" ? "empty" : state === "running" ? "streaming" : "idle"}
+      status={
+        state === "empty"
+          ? "empty"
+          : state === "running"
+            ? "streaming"
+            : isPreEdaApplying
+              ? "disabled"
+              : "idle"
+      }
       placeholder={
         state === "empty" ? "Upload a dataset or ask a question..." :
+          isPreEdaApplying ? "선택한 전처리 작업을 적용하는 중입니다..." :
           state === "ready" ? "Pre-EDA를 확인한 뒤 질문을 이어서 입력하세요..." :
             state === "needs-user"
               ? pendingApproval?.stage === "report"

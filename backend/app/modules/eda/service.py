@@ -1,3 +1,4 @@
+import math
 from pathlib import Path
 
 import pandas as pd
@@ -55,6 +56,26 @@ def _serialize_label_value(value: object) -> str:
     if hasattr(value, "item"):
         value = value.item()
     return str(value)
+
+
+def _is_integer_display_series(
+    series: pd.Series,
+    *,
+    tolerance: float = 1e-9,
+    threshold: float = 0.95,
+) -> bool:
+    if series.empty:
+        return False
+    rounded = series.round()
+    integer_like_ratio = float(((series - rounded).abs() <= tolerance).sum()) / float(len(series))
+    return integer_like_ratio >= threshold
+
+
+def _format_integer_display_value(value: float, *, tolerance: float = 1e-9) -> int:
+    rounded = round(value)
+    if math.isclose(value, rounded, abs_tol=tolerance):
+        return int(rounded)
+    return math.floor(value)
 
 
 class EDAService:
@@ -231,8 +252,21 @@ class EDAService:
                     truncated=False,
                     bins=[],
                 )
+            integer_display = _is_integer_display_series(numeric_series)
 
-            if numeric_series.nunique() == 1:
+            if integer_display:
+                integer_series = numeric_series.map(_format_integer_display_value)
+                integer_counts = integer_series.value_counts(sort=False).sort_index()
+                distribution_bins = [
+                    EDADistributionBin(
+                        label=str(int(value)),
+                        value=int(count),
+                        lower=float(value),
+                        upper=float(value),
+                    )
+                    for value, count in integer_counts.items()
+                ]
+            elif numeric_series.nunique() == 1:
                 value = float(numeric_series.iloc[0])
                 distribution_bins = [
                     EDADistributionBin(
@@ -243,7 +277,7 @@ class EDAService:
                     )
                 ]
             else:
-                cut_result, edges = pd.cut(
+                cut_result, _ = pd.cut(
                     numeric_series,
                     bins=max(1, bins),
                     include_lowest=True,

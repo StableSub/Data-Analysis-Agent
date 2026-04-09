@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from langchain_core.messages import HumanMessage, SystemMessage
+from pydantic import ValidationError
 
 from .schemas import RecommendedOperation, PreprocessRecommendation
 from ...core.ai import LLMGateway, PromptRegistry
@@ -434,7 +435,7 @@ def recommend(
                 recommendation=PreprocessRecommendation(**parsed),
                 generation_mode="llm",
             )
-        except Exception as e:
+        except ValidationError as e:
             logger.warning("LLM 응답 스키마 불일치. fallback. error=%s", e)
             return RecommendationResult(
                 recommendation=_issues_to_recommendation(detected_issues),

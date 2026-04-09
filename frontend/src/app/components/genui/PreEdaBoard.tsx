@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
 import {
   AlertTriangle,
@@ -41,6 +41,9 @@ interface PreEdaBoardProps {
   applyError?: string | null;
   applyingOperationKey?: string | null;
   onApplyOperation?: (operation: EdaRecommendedOperation, index: number) => void;
+  onSelectDistributionColumn?: (column: string) => void;
+  distributionLoadingColumn?: string | null;
+  distributionError?: string | null;
 }
 
 function formatPercent(value: number): string {
@@ -68,26 +71,32 @@ function formatDistributionBound(value: number): string {
     return "-";
   }
 
-  return value.toLocaleString(undefined, {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  });
+  return formatMetric(value);
 }
 
 function formatDistributionLabel(label: string): string {
-  if (!label.includes("-")) {
-    return label;
+  const intervalMatch = label.match(/^[\[(]\s*([^,]+)\s*,\s*([^\])]+)\s*[\])]\s*$/);
+  if (intervalMatch) {
+    const [, startRaw, endRaw] = intervalMatch;
+    const start = Number(startRaw);
+    const end = Number(endRaw);
+
+    if (Number.isFinite(start) && Number.isFinite(end)) {
+      return `${formatDistributionBound(start)}~${formatDistributionBound(end)}`;
+    }
   }
 
-  const [startRaw, endRaw] = label.split("-");
-  const start = Number(startRaw);
-  const end = Number(endRaw);
+  if (label.includes("-")) {
+    const [startRaw, endRaw] = label.split("-");
+    const start = Number(startRaw);
+    const end = Number(endRaw);
 
-  if (!Number.isFinite(start) || !Number.isFinite(end)) {
-    return label;
+    if (Number.isFinite(start) && Number.isFinite(end)) {
+      return `${formatDistributionBound(start)}~${formatDistributionBound(end)}`;
+    }
   }
 
-  return `${formatDistributionBound(start)}~${formatDistributionBound(end)}`;
+  return label;
 }
 
 function formatBarChartAxisLabel(label: string): string {
@@ -103,13 +112,37 @@ const DISTRIBUTION_VISIBLE_BAR_COUNT = 8;
 const DISTRIBUTION_BAR_SLOT_WIDTH = 72;
 const DISTRIBUTION_BAR_MAX_WIDTH = 30;
 const PREVIEW_DISTRIBUTION_BAR_MAX_WIDTH = 19;
+const NUMERIC_DISTRIBUTION_SCROLL_THRESHOLD = 24;
+const NUMERIC_DISTRIBUTION_BAR_SLOT_WIDTH = 22;
+
+function getRenderableDistributionColumns(profile: PreEdaProfile): string[] {
+  const seen = new Set<string>();
+
+  return [
+    ...profile.numericColumns,
+    ...profile.categoricalColumns,
+    ...profile.datetimeColumns,
+    ...profile.booleanColumns,
+    ...profile.groupKeyColumns,
+  ].filter((column) => {
+    if (!column || profile.identifierColumns.includes(column) || seen.has(column)) {
+      return false;
+    }
+    seen.add(column);
+    return true;
+  });
+}
 
 function getDistributionChartMinWidth(kind: "numeric" | "categorical", count: number): number | undefined {
-  if (kind !== "categorical") {
-    return undefined;
+  if (kind === "categorical") {
+    return Math.max(count, DISTRIBUTION_VISIBLE_BAR_COUNT) * DISTRIBUTION_BAR_SLOT_WIDTH;
   }
 
-  return Math.max(count, DISTRIBUTION_VISIBLE_BAR_COUNT) * DISTRIBUTION_BAR_SLOT_WIDTH;
+  if (count > NUMERIC_DISTRIBUTION_SCROLL_THRESHOLD) {
+    return count * NUMERIC_DISTRIBUTION_BAR_SLOT_WIDTH;
+  }
+
+  return undefined;
 }
 
 function getDistributionBarMaxWidth(kind: "numeric" | "categorical", compact = false): number | undefined {
@@ -314,6 +347,7 @@ function PreprocessRecommendationCard({
   onApplyOperation?: (operation: EdaRecommendedOperation, index: number) => void;
 }) {
   const serverRecommendation = profile.serverRecommendation;
+  const primaryServerOperation = serverRecommendation?.operations[0] ?? null;
   const legacyRecommendation = profile.recommendation;
   const [selectedStrategyId, setSelectedStrategyId] = useState<string | null>(null);
   const [showPreview, setShowPreview] = useState(false);
@@ -390,6 +424,12 @@ function PreprocessRecommendationCard({
     (legacyRecommendation?.columnType ?? "categorical") === "numeric" ? "수치형" :
     (legacyRecommendation?.columnType ?? "categorical") === "categorical" ? "범주형" :
     (legacyRecommendation?.columnType ?? "categorical") === "datetime" ? "날짜형" : "불리언";
+  const canRenderLegacyPreview = Boolean(
+    legacyRecommendation
+    && primaryServerOperation
+    && (primaryServerOperation.op === "impute" || primaryServerOperation.op === "drop_missing")
+    && profile.columns.includes(legacyRecommendation.column),
+  );
 
   return (
     <div className="grid gap-4 xl:grid-cols-12">
@@ -638,7 +678,7 @@ function PreprocessRecommendationCard({
             </div>
           </div>
 
-          {legacyRecommendation && (
+          {canRenderLegacyPreview && legacyRecommendation && (
             <div>
               <div className="flex items-center gap-2 mb-2 px-0.5">
                 <Lightbulb className="w-3.5 h-3.5 text-[var(--genui-muted)]" />
@@ -782,8 +822,8 @@ function PreprocessRecommendationCard({
                                 tickLine={false}
                                 axisLine={false}
                                 tick={{ fontSize: 8, fill: "var(--genui-muted)" }}
-                                interval={0}
-                                minTickGap={4}
+                                interval={targetDistribution.kind === "numeric" ? "preserveStartEnd" : 0}
+                                minTickGap={targetDistribution.kind === "numeric" ? 24 : 4}
                                 tickFormatter={(label) => formatDistributionAxisLabel(String(label), targetDistribution.kind)}
                               />
                               <YAxis allowDecimals={false} tickLine={false} axisLine={false} width={36} tick={{ fontSize: 9, fill: "var(--genui-muted)" }} />
@@ -817,8 +857,8 @@ function PreprocessRecommendationCard({
                                 tickLine={false}
                                 axisLine={false}
                                 tick={{ fontSize: 8, fill: "var(--genui-muted)" }}
-                                interval={0}
-                                minTickGap={4}
+                                interval={targetDistribution.kind === "numeric" ? "preserveStartEnd" : 0}
+                                minTickGap={targetDistribution.kind === "numeric" ? 24 : 4}
                                 tickFormatter={(label) => formatDistributionAxisLabel(String(label), targetDistribution.kind)}
                               />
                               <YAxis allowDecimals={false} tickLine={false} axisLine={false} width={36} tick={{ fontSize: 9, fill: "var(--genui-muted)" }} />
@@ -853,29 +893,63 @@ export function PreEdaBoard({
   applyError = null,
   applyingOperationKey = null,
   onApplyOperation,
+  onSelectDistributionColumn,
+  distributionLoadingColumn = null,
+  distributionError = null,
 }: PreEdaBoardProps) {
-  const previewColumns = profile.columns.slice(0, 5);
-  const distributionOptions = profile.distributions;
+  const previewColumns = profile.columns;
+  const distributionOptions = useMemo(() => getRenderableDistributionColumns(profile), [profile]);
   const [selectedDistributionColumn, setSelectedDistributionColumn] = useState(
-    distributionOptions[0]?.column ?? "",
+    distributionOptions[0] ?? "",
   );
+
+  useEffect(() => {
+    setSelectedDistributionColumn(distributionOptions[0] ?? "");
+  }, [profile.sourceLabel, profile.uploadedAt]);
 
   useEffect(() => {
     if (
       !selectedDistributionColumn ||
-      !distributionOptions.some((item) => item.column === selectedDistributionColumn)
+      !distributionOptions.includes(selectedDistributionColumn)
     ) {
-      setSelectedDistributionColumn(distributionOptions[0]?.column ?? "");
+      setSelectedDistributionColumn(distributionOptions[0] ?? "");
     }
   }, [distributionOptions, selectedDistributionColumn]);
 
   const selectedDistribution = useMemo(
     () =>
-      distributionOptions.find((item) => item.column === selectedDistributionColumn)
-      ?? distributionOptions[0]
+      profile.distributions.find((item) => item.column === selectedDistributionColumn)
       ?? null,
-    [distributionOptions, selectedDistributionColumn],
+    [profile.distributions, selectedDistributionColumn],
   );
+  const isDistributionLoading =
+    selectedDistributionColumn.length > 0
+    && distributionLoadingColumn === selectedDistributionColumn;
+  const showDistributionLoading =
+    distributionOptions.length > 0
+    && selectedDistributionColumn.length > 0
+    && !distributionError
+    && (isDistributionLoading || selectedDistribution === null);
+
+  useEffect(() => {
+    if (
+      !selectedDistributionColumn ||
+      selectedDistribution !== null ||
+      isDistributionLoading ||
+      distributionError ||
+      !onSelectDistributionColumn
+    ) {
+      return;
+    }
+
+    void onSelectDistributionColumn(selectedDistributionColumn);
+  }, [
+    distributionError,
+    isDistributionLoading,
+    onSelectDistributionColumn,
+    selectedDistribution,
+    selectedDistributionColumn,
+  ]);
 
   const chartConfig = useMemo(
     () => ({
@@ -886,6 +960,19 @@ export function PreEdaBoard({
     }),
     [],
   );
+  const distributionScrollRef = useRef<HTMLDivElement | null>(null);
+  const distributionDragRef = useRef({
+    active: false,
+    startX: 0,
+    startScrollLeft: 0,
+  });
+  const isDistributionScrollable =
+    selectedDistribution !== null
+    && getDistributionChartMinWidth(selectedDistribution.kind, selectedDistribution.bins.length) !== undefined;
+
+  useEffect(() => {
+    distributionDragRef.current.active = false;
+  }, [selectedDistributionColumn]);
 
   return (
     <div className="space-y-3 animate-in fade-in zoom-in-95 duration-300">
@@ -1082,33 +1169,88 @@ export function PreEdaBoard({
           <CardHeader
             title="분포 시각화"
             meta="COLUMN DISTRIBUTION"
-            statusLabel={selectedDistribution?.kind === "numeric" ? "Histogram" : "Bar Chart"}
-            statusVariant="neutral"
+            statusLabel={distributionOptions.length === 0
+              ? "Empty"
+              : showDistributionLoading
+                ? "Loading"
+                : distributionError
+                  ? "Error"
+                  : selectedDistribution?.kind === "numeric"
+                    ? "Histogram"
+                    : "Bar Chart"}
+            statusVariant={distributionError ? "warning" : "neutral"}
             className="px-3.5 py-2.5"
           >
             {distributionOptions.length > 0 ? (
               <select
-                value={selectedDistribution?.column ?? ""}
-                onChange={(event) => setSelectedDistributionColumn(event.target.value)}
+                value={selectedDistributionColumn}
+                onChange={(event) => {
+                  const nextColumn = event.target.value;
+                  setSelectedDistributionColumn(nextColumn);
+                  void onSelectDistributionColumn?.(nextColumn);
+                }}
                 className="h-8 rounded-md border border-[var(--genui-border)] bg-[var(--genui-panel)] px-2 text-xs text-[var(--genui-text)] focus:outline-none focus:ring-1 focus:ring-[var(--genui-focus-ring)]"
               >
-                {distributionOptions.map((item) => (
-                  <option key={item.column} value={item.column}>
-                    {item.column}
+                {distributionOptions.map((column) => (
+                  <option key={column} value={column}>
+                    {column}
                   </option>
                 ))}
               </select>
             ) : null}
           </CardHeader>
           <CardBody className="space-y-2.5 p-3">
-            {selectedDistribution ? (
+            {distributionOptions.length === 0 ? (
+              <div className="rounded-xl border border-[var(--genui-border)] bg-[var(--genui-surface)] px-4 py-4 text-sm text-[var(--genui-text)]">
+                분포를 표시할 컬럼이 없습니다.
+              </div>
+            ) : showDistributionLoading ? (
+              <div className="flex min-h-[220px] items-center justify-center rounded-xl border border-[var(--genui-border)] bg-[var(--genui-surface)] px-4 py-4 text-sm text-[var(--genui-text)]">
+                <div className="flex items-center gap-2">
+                  <LoaderCircle className="h-4 w-4 animate-spin" />
+                  <span>분포를 불러오는 중입니다.</span>
+                </div>
+              </div>
+            ) : distributionError ? (
+              <div className="rounded-xl border border-[var(--genui-border)] bg-[var(--genui-surface)] px-4 py-4 text-sm text-[var(--genui-text)]">
+                {distributionError}
+              </div>
+            ) : selectedDistribution ? (
               <>
-                <div className={cn(selectedDistribution.kind === "categorical" && "overflow-x-auto")}>
+                <div
+                  ref={distributionScrollRef}
+                  className={cn(
+                    isDistributionScrollable && "overflow-x-auto cursor-grab active:cursor-grabbing select-none",
+                  )}
+                  onMouseDown={(event) => {
+                    if (!isDistributionScrollable || !distributionScrollRef.current) {
+                      return;
+                    }
+                    distributionDragRef.current = {
+                      active: true,
+                      startX: event.clientX,
+                      startScrollLeft: distributionScrollRef.current.scrollLeft,
+                    };
+                  }}
+                  onMouseMove={(event) => {
+                    if (!distributionDragRef.current.active || !distributionScrollRef.current) {
+                      return;
+                    }
+                    const delta = event.clientX - distributionDragRef.current.startX;
+                    distributionScrollRef.current.scrollLeft = distributionDragRef.current.startScrollLeft - delta;
+                  }}
+                  onMouseUp={() => {
+                    distributionDragRef.current.active = false;
+                  }}
+                  onMouseLeave={() => {
+                    distributionDragRef.current.active = false;
+                  }}
+                >
                   <ChartContainer
                     config={chartConfig}
                     className={cn(
                       "h-[220px] aspect-auto rounded-lg border border-[var(--genui-border)] bg-[var(--genui-surface)] px-2 py-2 [&_.recharts-tooltip-cursor]:opacity-0 [&_.recharts-rectangle.recharts-tooltip-cursor]:fill-transparent [&_.recharts-rectangle.recharts-tooltip-cursor]:stroke-transparent",
-                      selectedDistribution.kind === "categorical" ? "w-auto min-w-full" : "w-full",
+                      isDistributionScrollable ? "w-auto min-w-full" : "w-full",
                     )}
                     style={{
                       minWidth: getDistributionChartMinWidth(selectedDistribution.kind, selectedDistribution.bins.length),
@@ -1124,8 +1266,8 @@ export function PreEdaBoard({
                         dataKey="label"
                         tickLine={false}
                         axisLine={false}
-                        interval={0}
-                        minTickGap={8}
+                        interval={selectedDistribution.kind === "numeric" ? "preserveStartEnd" : 0}
+                        minTickGap={selectedDistribution.kind === "numeric" ? 32 : 8}
                         tickMargin={10}
                         tickFormatter={(label) => formatDistributionAxisLabel(String(label), selectedDistribution.kind)}
                         tick={{ fontSize: 9, fill: "var(--genui-muted)" }}
@@ -1151,6 +1293,9 @@ export function PreEdaBoard({
                     </BarChart>
                   </ChartContainer>
                 </div>
+                <p className="text-center text-sm font-medium text-[var(--genui-text)]">
+                  {selectedDistribution.column}
+                </p>
                 <p className="text-xs text-[var(--genui-muted)]">
                   {selectedDistribution.kind === "numeric"
                     ? "numeric 컬럼은 binning 후 histogram으로 표시합니다."
@@ -1159,7 +1304,7 @@ export function PreEdaBoard({
               </>
             ) : (
               <div className="rounded-xl border border-[var(--genui-border)] bg-[var(--genui-surface)] px-4 py-4 text-sm text-[var(--genui-text)]">
-                분포 시각화 대상 컬럼이 아직 없습니다.
+                분포를 불러오는 중입니다.
               </div>
             )}
           </CardBody>

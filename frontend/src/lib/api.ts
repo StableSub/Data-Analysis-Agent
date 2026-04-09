@@ -255,18 +255,22 @@ export function fetchSample(sourceId: string): Promise<SampleResponse> {
   return apiRequest<SampleResponse>(`/datasets/${sourceId}/sample`);
 }
 
+/** GET /datasets/ */
+export function listDatasets(
+  skip = 0,
+  limit = 20,
+): Promise<DatasetListResponse> {
+  const params = new URLSearchParams({
+    skip: String(skip),
+    limit: String(limit),
+  });
+  return apiRequest<DatasetListResponse>(`/datasets/?${params.toString()}`);
+}
+
 /** DELETE /datasets/{source_id} */
 export function deleteDataset(sourceId: string): Promise<void> {
   return apiRequest<void>(`/datasets/${sourceId}`, {
     method: "DELETE",
-  });
-}
-
-/** POST /chats/ */
-export function sendChat(req: ChatRequest): Promise<ChatResponse> {
-  return apiRequest<ChatResponse>("/chats/", {
-    method: "POST",
-    body: JSON.stringify(req),
   });
 }
 
@@ -327,32 +331,11 @@ export function applyPreprocessRecommendation(
   });
 }
 
-/** POST /report/ */
-export function createReport(req: ReportCreateRequest): Promise<ReportResponse> {
-  return apiRequest<ReportResponse>("/report/", {
-    method: "POST",
-    body: JSON.stringify(req),
-  });
-}
-
 /** POST /vizualization/manual (note: backend uses "vizualization") */
 export function createManualViz(req: ManualVizRequest): Promise<ManualVizResponse> {
   return apiRequest<ManualVizResponse>("/vizualization/manual", {
     method: "POST",
     body: JSON.stringify(req),
-  });
-}
-
-/** POST /export/csv — returns raw Blob for download */
-export function exportCsv(resultId: string): Promise<Blob> {
-  const url = `${API_BASE}/export/csv`;
-  return fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ result_id: resultId }),
-  }).then((res) => {
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return res.blob();
   });
 }
 
@@ -522,6 +505,26 @@ export interface EdaCorrelationsResponse {
   pairs: EdaCorrelationPair[];
 }
 
+export interface EdaStatsColumn {
+  column: string;
+  mean: number | null;
+  min: number | null;
+  max: number | null;
+  median: number | null;
+  std: number | null;
+  q1: number | null;
+  q3: number | null;
+  skew: number | null;
+}
+
+export interface EdaStatsResponse {
+  source_id: string;
+  row_count: number;
+  column_count: number;
+  numeric_column_count: number;
+  columns: EdaStatsColumn[];
+}
+
 export interface EdaOutlierColumn {
   column: string;
   outlier_count: number;
@@ -655,6 +658,13 @@ export function fetchEdaCorrelations(
   return apiRequest<EdaCorrelationsResponse>(
     `/eda/${sourceId}/correlations/top`,
   );
+}
+
+/** GET /eda/{source_id}/stats */
+export function fetchEdaStats(
+  sourceId: string,
+): Promise<EdaStatsResponse> {
+  return apiRequest<EdaStatsResponse>(`/eda/${sourceId}/stats`);
 }
 
 /** GET /eda/{source_id}/outliers */

@@ -57,7 +57,20 @@ export function isAutoApplicableRecommendedOperation(
     if (!derived.transform_type || !["log1p", "sum", "difference", "ratio"].includes(derived.transform_type)) {
       return false;
     }
-    return derived.source_columns.some((column) => typeof column === "string" && column.trim());
+    const sourceColumns = derived.source_columns
+      .filter((column) => typeof column === "string")
+      .map((column) => column.trim())
+      .filter(Boolean);
+    if (sourceColumns.length === 0) {
+      return false;
+    }
+    if (derived.transform_type === "log1p") {
+      return sourceColumns.length === 1;
+    }
+    if (derived.transform_type === "sum") {
+      return sourceColumns.length >= 2;
+    }
+    return sourceColumns.length === 2;
   }
   if (!AUTO_APPLICABLE_OPS.has(operation.op)) {
     return false;
