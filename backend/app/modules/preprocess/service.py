@@ -12,6 +12,7 @@ from ..profiling.service import DatasetProfileService
 from .processor import PreprocessProcessor
 from .schemas import (
     DataSummary,
+    DerivedColumnOperation,
     DropColumnsOperation,
     DropMissingOperation,
     EncodeCategoricalOperation,
@@ -173,9 +174,26 @@ class PreprocessService:
 
         for item in recommendation.operations:
             target_columns = [column for column in item.target_columns if str(column).strip()]
+            source_columns = [column for column in item.source_columns if str(column).strip()]
 
             if item.op == "derived_column":
-                raise ValueError("derived_column recommendation cannot be applied automatically")
+                target_column = item.target_column.strip()
+                if not target_column:
+                    raise ValueError("derived_column recommendation requires target_column")
+                if item.transform_type not in {"log1p", "sum", "difference", "ratio"}:
+                    raise ValueError("derived_column recommendation requires supported transform_type")
+                if not source_columns:
+                    raise ValueError("derived_column recommendation requires source_columns")
+                operations.append(
+                    DerivedColumnOperation(
+                        op="derived_column",
+                        name=target_column,
+                        source_columns=source_columns,
+                        transform_type=item.transform_type,
+                        params=item.params,
+                    )
+                )
+                continue
 
             if not target_columns:
                 raise ValueError(f"{item.op} recommendation requires target_columns")

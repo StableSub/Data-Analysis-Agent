@@ -532,7 +532,12 @@ export function buildLegacyRecommendationFromServerRecommendation(
   },
 ): PreprocessRecommendation | null {
   const primaryOperation = serverRecommendation?.operations[0];
-  const primaryColumn = primaryOperation?.target_columns[0]?.trim();
+  const primaryColumn = (
+    primaryOperation?.target_columns[0]
+    ?? primaryOperation?.target_column
+    ?? primaryOperation?.source_columns[0]
+    ?? ""
+  ).trim();
   if (!primaryOperation || !primaryColumn) {
     return null;
   }

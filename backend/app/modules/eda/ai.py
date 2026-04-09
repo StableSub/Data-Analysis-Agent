@@ -229,6 +229,10 @@ def _issues_to_recommendation(detected_issues: list[dict]) -> PreprocessRecommen
             operations.append(RecommendedOperation(
                 op=op,
                 target_columns=[issue["col"]],
+                source_columns=[],
+                target_column="",
+                transform_type=None,
+                params=None,
                 reason=f"결측치 비율 {ratio:.1%} — {'제거' if op == 'drop_missing' else 'median 대체'} 권장",
                 priority=priority,
             ))
@@ -238,6 +242,10 @@ def _issues_to_recommendation(detected_issues: list[dict]) -> PreprocessRecommen
             operations.append(RecommendedOperation(
                 op="outlier",
                 target_columns=[issue["col"]],
+                source_columns=[],
+                target_column="",
+                transform_type=None,
+                params=None,
                 reason=f"왜도 {skew:.2f} — IQR 기반 이상치 처리 권장",
                 priority="medium",
             ))
@@ -249,6 +257,10 @@ def _issues_to_recommendation(detected_issues: list[dict]) -> PreprocessRecommen
             operations.append(RecommendedOperation(
                 op="drop_columns",
                 target_columns=issue.get("cols", []),
+                source_columns=[],
+                target_column="",
+                transform_type=None,
+                params=None,
                 reason=f"상관계수 {corr:.2f} — 다중공선성 문제, 컬럼 제거 권장",
                 priority=priority,
             ))
@@ -257,6 +269,10 @@ def _issues_to_recommendation(detected_issues: list[dict]) -> PreprocessRecommen
             operations.append(RecommendedOperation(
                 op="encode_categorical",
                 target_columns=[issue["col"]],
+                source_columns=[],
+                target_column="",
+                transform_type=None,
+                params=None,
                 reason=f"범주형 컬럼 — 인코딩 필요 (고유값 {issue.get('cardinality')}개)",
                 priority="medium",
             ))
@@ -265,6 +281,10 @@ def _issues_to_recommendation(detected_issues: list[dict]) -> PreprocessRecommen
             operations.append(RecommendedOperation(
                 op="parse_datetime",
                 target_columns=[issue["col"]],
+                source_columns=[],
+                target_column="",
+                transform_type=None,
+                params=None,
                 reason="날짜 패턴이 감지된 object 컬럼 — datetime 변환 권장",
                 priority="low",
             ))
@@ -273,6 +293,10 @@ def _issues_to_recommendation(detected_issues: list[dict]) -> PreprocessRecommen
             operations.append(RecommendedOperation(
                 op="scale",
                 target_columns=issue.get("cols", []),
+                source_columns=[],
+                target_column="",
+                transform_type=None,
+                params=None,
                 reason=f"컬럼 간 스케일 차이 {issue.get('ratio', 0):.0f}배 — standardize 권장",
                 priority="medium",
             ))
@@ -329,6 +353,10 @@ def _build_prompt(
             {
                 "op": "op 값 (drop_missing | impute | drop_columns | scale | encode_categorical | outlier | parse_datetime | derived_column)",
                 "target_columns": ["컬럼명"],
+                "source_columns": ["derived_column일 때 원본 컬럼명"],
+                "target_column": "derived_column일 때 생성할 새 컬럼명",
+                "transform_type": "derived_column일 때 log1p | sum | difference | ratio 중 하나",
+                "params": {"ratio일 때 zero_division": "null"},
                 "reason": "추천 근거 (한국어)",
                 "priority": "high | medium | low",
             }
@@ -348,6 +376,12 @@ def _build_prompt(
 {rag_context or '검색 결과 없음'}
 
 위 정보를 바탕으로 필요한 전처리 연산을 추천하세요.
+derived_column은 반드시 실행 가능한 템플릿 기반으로만 제안하세요.
+- 허용 transform_type: log1p, sum, difference, ratio
+- derived_column일 때는 source_columns, target_column, transform_type를 반드시 채우세요.
+- ratio는 source_columns 길이 2, params.zero_division은 "null"로 두세요.
+- log1p는 source_columns 길이 1, target_column은 보통 "{{원본}}_log1p"로 제안하세요.
+다른 자유식 expression은 절대 만들지 마세요.
 반드시 아래 JSON 형식으로만 응답하세요. 다른 텍스트는 포함하지 마세요.
 
 {output_schema}"""

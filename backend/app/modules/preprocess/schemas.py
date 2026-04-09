@@ -44,7 +44,10 @@ class ScaleOperation(StrictModel):
 class DerivedColumnOperation(StrictModel):
     op: Literal["derived_column"]
     name: str
-    expression: str
+    expression: str | None = None
+    source_columns: list[str] = Field(default_factory=list)
+    transform_type: Literal["log1p", "sum", "difference", "ratio"] | None = None
+    params: dict[str, object] | None = None
 
 class EncodeCategoricalOperation(StrictModel):
     op: Literal["encode_categorical"]

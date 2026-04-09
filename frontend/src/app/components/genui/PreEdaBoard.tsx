@@ -317,6 +317,8 @@ function PreprocessRecommendationCard({
   const legacyRecommendation = profile.recommendation;
   const [selectedStrategyId, setSelectedStrategyId] = useState<string | null>(null);
   const [showPreview, setShowPreview] = useState(false);
+  const [editingDerivedKey, setEditingDerivedKey] = useState<string | null>(null);
+  const [derivedDrafts, setDerivedDrafts] = useState<Record<string, { targetColumn: string; zeroDivision: string }>>({});
   const operations = serverRecommendation?.operations ?? [];
   const recommendationSummary = buildRecommendationSummary(serverRecommendation);
   const autoApplicableCount = countAutoApplicableRecommendedOperations(serverRecommendation);
@@ -476,6 +478,14 @@ function PreprocessRecommendationCard({
                 const autoApplicable = isAutoApplicableRecommendedOperation(operation);
                 const operationKey = getRecommendedOperationKey(operation, index);
                 const isApplying = applyingOperationKey === operationKey;
+                const isDerived = operation.op === "derived_column";
+                const draft = derivedDrafts[operationKey] ?? {
+                  targetColumn: operation.target_column,
+                  zeroDivision:
+                    typeof operation.params?.zero_division === "string"
+                      ? operation.params.zero_division
+                      : "null",
+                };
 
                 return (
                   <div
@@ -503,11 +513,102 @@ function PreprocessRecommendationCard({
                     <p className="mt-2 text-sm leading-relaxed text-[var(--genui-text)]">
                       {operation.reason}
                     </p>
+                    {isDerived && (
+                      <div className="mt-2 text-xs text-[var(--genui-muted)]">
+                        원본: {operation.source_columns.join(", ")} · 변환: {operation.transform_type ?? "-"} · 결과: {operation.target_column}
+                      </div>
+                    )}
+                    {isDerived && editingDerivedKey === operationKey && (
+                      <div className="mt-3 rounded-lg border border-[var(--genui-border)] bg-[var(--genui-surface)] px-3 py-3">
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <label className="space-y-1">
+                            <span className="text-[11px] font-medium text-[var(--genui-muted)]">새 컬럼명</span>
+                            <input
+                              value={draft.targetColumn}
+                              onChange={(event) => {
+                                const value = event.target.value;
+                                setDerivedDrafts((prev) => ({
+                                  ...prev,
+                                  [operationKey]: { ...draft, targetColumn: value },
+                                }));
+                              }}
+                              className="w-full rounded-md border border-[var(--genui-border)] bg-[var(--genui-panel)] px-3 py-2 text-sm text-[var(--genui-text)]"
+                            />
+                          </label>
+                          {operation.transform_type === "ratio" ? (
+                            <label className="space-y-1">
+                              <span className="text-[11px] font-medium text-[var(--genui-muted)]">0 나누기 처리</span>
+                              <select
+                                value={draft.zeroDivision}
+                                onChange={(event) => {
+                                  const value = event.target.value;
+                                  setDerivedDrafts((prev) => ({
+                                    ...prev,
+                                    [operationKey]: { ...draft, zeroDivision: value },
+                                  }));
+                                }}
+                                className="w-full rounded-md border border-[var(--genui-border)] bg-[var(--genui-panel)] px-3 py-2 text-sm text-[var(--genui-text)]"
+                              >
+                                <option value="null">NaN으로 처리</option>
+                              </select>
+                            </label>
+                          ) : (
+                            <div className="space-y-1">
+                              <span className="text-[11px] font-medium text-[var(--genui-muted)]">변환 방식</span>
+                              <div className="rounded-md border border-[var(--genui-border)] bg-[var(--genui-panel)] px-3 py-2 text-sm text-[var(--genui-text)]">
+                                {operation.transform_type ?? "-"}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                        <div className="mt-3 flex items-center justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setEditingDerivedKey(null)}
+                            className="rounded-lg border border-[var(--genui-border)] bg-[var(--genui-panel)] px-3 py-2 text-xs font-semibold text-[var(--genui-text)]"
+                          >
+                            취소
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              onApplyOperation?.({
+                                ...operation,
+                                target_column: draft.targetColumn.trim(),
+                                target_columns: draft.targetColumn.trim() ? [draft.targetColumn.trim()] : [],
+                                params: operation.transform_type === "ratio"
+                                  ? { ...(operation.params ?? {}), zero_division: draft.zeroDivision }
+                                  : operation.params,
+                              }, index);
+                            }}
+                            disabled={!draft.targetColumn.trim() || hasRunningOperation}
+                            className={cn(
+                              "rounded-lg px-3 py-2 text-xs font-semibold text-white",
+                              !draft.targetColumn.trim() || hasRunningOperation
+                                ? "cursor-not-allowed bg-[var(--genui-muted)]/60"
+                                : "bg-[var(--genui-running)]",
+                            )}
+                          >
+                            확인 후 적용
+                          </button>
+                        </div>
+                      </div>
+                    )}
                     <div className="mt-3 flex items-center justify-end">
                       {autoApplicable ? (
                         <button
                           type="button"
-                          onClick={() => onApplyOperation?.(operation, index)}
+                          onClick={() => {
+                            if (isDerived) {
+                              setDerivedDrafts((prev) => ({
+                                ...prev,
+                                [operationKey]: prev[operationKey] ?? draft,
+                              }));
+                              setEditingDerivedKey((current) => current === operationKey ? null : operationKey);
+                              return;
+                            }
+                            onApplyOperation?.(operation, index);
+                          }}
                           disabled={!onApplyOperation || hasRunningOperation}
                           className={cn(
                             "inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-xs font-semibold text-white transition-all",
@@ -517,14 +618,14 @@ function PreprocessRecommendationCard({
                           )}
                         >
                           {isApplying ? (
-                            <>
-                              <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
-                              적용 중...
-                            </>
-                          ) : (
-                            "적용"
-                          )}
-                        </button>
+                          <>
+                            <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                            적용 중...
+                          </>
+                        ) : (
+                          isDerived ? "설정 후 적용" : "적용"
+                        )}
+                      </button>
                       ) : (
                         <span className="rounded-full border border-[var(--genui-warning)]/30 bg-[var(--genui-warning)]/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--genui-warning)]">
                           수동 작업 필요

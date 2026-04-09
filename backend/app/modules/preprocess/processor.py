@@ -1,10 +1,8 @@
-import re
-
+import math
+import numpy as np
 import pandas as pd
 
 from .schemas import PreprocessOperation
-
-_SAFE_EXPR_RE = re.compile(r"^[0-9a-zA-Z_+\-*/%().\s<>=!&|]+$")
 
 
 class PreprocessProcessor:
@@ -92,11 +90,75 @@ class PreprocessProcessor:
                 continue
 
             if operation.op == "derived_column":
-                if not operation.name or not operation.expression:
-                    raise ValueError("derived_column requires 'name' and 'expression'")
-                if not _SAFE_EXPR_RE.match(operation.expression):
-                    raise ValueError("derived_column.expression contains unsupported characters")
-                out[operation.name] = out.eval(operation.expression, engine="python")
+                if not operation.name.strip():
+                    raise ValueError("derived_column requires 'name'")
+                if operation.name in out.columns:
+                    raise ValueError(f"derived_column target already exists: {operation.name}")
+                if operation.expression:
+                    out[operation.name] = out.eval(operation.expression, engine="python")
+                    continue
+
+                source_columns = [column for column in operation.source_columns if column.strip()]
+                if not source_columns:
+                    raise ValueError("derived_column requires 'source_columns'")
+                for column in source_columns:
+                    if column not in out.columns:
+                        raise ValueError(f"Column not found: {column}")
+
+                if operation.transform_type == "log1p":
+                    if len(source_columns) != 1:
+                        raise ValueError("derived_column.log1p requires exactly one source column")
+                    source = self._numeric_series_or_raise(
+                        out[source_columns[0]],
+                        operation="derived_column.log1p",
+                        column=source_columns[0],
+                    )
+                    if (source.dropna() < 0).any():
+                        raise ValueError("derived_column.log1p requires non-negative values")
+                    out[operation.name] = np.log1p(source)
+                    continue
+
+                if operation.transform_type == "sum":
+                    if len(source_columns) < 2:
+                        raise ValueError("derived_column.sum requires at least two source columns")
+                    source_frame = out[source_columns].apply(pd.to_numeric, errors="coerce")
+                    out[operation.name] = source_frame.sum(axis=1)
+                    continue
+
+                if operation.transform_type == "difference":
+                    if len(source_columns) != 2:
+                        raise ValueError("derived_column.difference requires exactly two source columns")
+                    left = self._numeric_series_or_raise(
+                        out[source_columns[0]],
+                        operation="derived_column.difference",
+                        column=source_columns[0],
+                    )
+                    right = self._numeric_series_or_raise(
+                        out[source_columns[1]],
+                        operation="derived_column.difference",
+                        column=source_columns[1],
+                    )
+                    out[operation.name] = left - right
+                    continue
+
+                if operation.transform_type == "ratio":
+                    if len(source_columns) != 2:
+                        raise ValueError("derived_column.ratio requires exactly two source columns")
+                    numerator = self._numeric_series_or_raise(
+                        out[source_columns[0]],
+                        operation="derived_column.ratio",
+                        column=source_columns[0],
+                    )
+                    denominator = self._numeric_series_or_raise(
+                        out[source_columns[1]],
+                        operation="derived_column.ratio",
+                        column=source_columns[1],
+                    )
+                    denominator = denominator.replace(0, math.nan)
+                    out[operation.name] = numerator / denominator
+                    continue
+
+                raise ValueError("derived_column requires supported transform_type")
                 continue
 
             if operation.op == "encode_categorical":

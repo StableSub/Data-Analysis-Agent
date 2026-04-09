@@ -580,6 +580,10 @@ export interface EdaRecommendedOperation {
     | "parse_datetime"
     | "derived_column";
   target_columns: string[];
+  source_columns: string[];
+  target_column: string;
+  transform_type: "log1p" | "sum" | "difference" | "ratio" | null;
+  params: Record<string, unknown> | null;
   reason: string;
   priority: "high" | "medium" | "low";
 }
