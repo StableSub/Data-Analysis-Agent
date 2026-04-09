@@ -121,17 +121,7 @@ class PreprocessProcessor:
                 if operation.transform_type == "sum":
                     if len(source_columns) < 2:
                         raise ValueError("derived_column.sum requires at least two source columns")
-                    source_frame = pd.concat(
-                        [
-                            self._numeric_series_or_raise(
-                                out[column],
-                                operation="derived_column.sum",
-                                column=column,
-                            )
-                            for column in source_columns
-                        ],
-                        axis=1,
-                    )
+                    source_frame = out[source_columns].apply(pd.to_numeric, errors="coerce")
                     out[operation.name] = source_frame.sum(axis=1)
                     continue
 

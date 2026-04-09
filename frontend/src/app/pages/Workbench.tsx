@@ -206,6 +206,8 @@ export default function Workbench() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const initializedRef = useRef(false);
   const lastAutoOpenedPreEdaSourceRef = useRef<string | null>(null);
+  const restoreRequestSeqRef = useRef(0);
+  const expectedSessionIdRef = useRef<string | null>(activeSessionId);
 
   // Reset canvas view when pipeline state transitions forward
   useEffect(() => {
@@ -301,6 +303,10 @@ export default function Workbench() {
     [captureSessionContext, updateSession],
   );
 
+  const markExpectedSession = useCallback((sessionId: string | null) => {
+    expectedSessionIdRef.current = sessionId;
+  }, []);
+
   const ensureActiveSessionForInteraction = useCallback((): WorkbenchSessionItem => {
     if (activeSessionId) {
       const currentSession = sessions.find((item) => item.id === activeSessionId);
@@ -311,14 +317,16 @@ export default function Workbench() {
 
     const fallbackSession = sessions[0] ?? null;
     if (fallbackSession) {
+      markExpectedSession(fallbackSession.id);
       selectSession(fallbackSession.id);
       return fallbackSession;
     }
 
     const nextSession = createSession();
+    markExpectedSession(nextSession.id);
     selectSession(nextSession.id);
     return nextSession;
-  }, [activeSessionId, sessions, selectSession, createSession]);
+  }, [activeSessionId, sessions, selectSession, createSession, markExpectedSession]);
 
   const reconcileSessionDatasets = useCallback(
     async (
@@ -411,17 +419,26 @@ export default function Workbench() {
       if (!targetSession) {
         return;
       }
+      const requestId = ++restoreRequestSeqRef.current;
+      const isStaleRestoreRequest = () =>
+        restoreRequestSeqRef.current !== requestId || expectedSessionIdRef.current !== targetSessionId;
 
       let nextContext: PipelineSessionContext = targetSession.context;
       let shouldPersistContext = false;
 
       const reconciled = await reconcileSessionDatasets(nextContext);
+      if (isStaleRestoreRequest()) {
+        return;
+      }
       nextContext = reconciled.context;
       shouldPersistContext = reconciled.changed;
 
       if (targetSession.backendSessionId !== null) {
         try {
           const history = await getChatHistory(targetSession.backendSessionId);
+          if (isStaleRestoreRequest()) {
+            return;
+          }
           const msgs = history.messages ?? [];
           const latestAssistant = [...msgs]
             .reverse()
@@ -432,9 +449,15 @@ export default function Workbench() {
           if (nextContext.stateHint === "needs-user" && nextContext.runId) {
             try {
               const pending = await fetchPendingApproval(nextContext.runId);
+              if (isStaleRestoreRequest()) {
+                return;
+              }
               restoredPendingApproval = pending.pending_approval;
               stateHint = "needs-user";
             } catch (error) {
+              if (isStaleRestoreRequest()) {
+                return;
+              }
               if (isApiErrorStatus(error, 404)) {
                 restoredPendingApproval = null;
                 stateHint = msgs.length > 0
@@ -463,6 +486,9 @@ export default function Workbench() {
           };
           shouldPersistContext = true;
         } catch (error) {
+          if (isStaleRestoreRequest()) {
+            return;
+          }
           if (isApiErrorStatus(error, 404)) {
             nextContext = {
               ...nextContext,
@@ -475,6 +501,9 @@ export default function Workbench() {
         }
       }
 
+      if (isStaleRestoreRequest()) {
+        return;
+      }
       if (shouldPersistContext) {
         updateSession(targetSessionId, {
           backendSessionId: nextContext.backendSessionId,
@@ -482,6 +511,9 @@ export default function Workbench() {
         });
       }
 
+      if (isStaleRestoreRequest()) {
+        return;
+      }
       restoreSessionContext(nextContext);
     },
     [sessions, reconcileSessionDatasets, updateSession, restoreSessionContext],
@@ -489,9 +521,10 @@ export default function Workbench() {
 
   const handleNewChat = useCallback(() => {
     saveSessionSnapshot(activeSessionId);
-    createSession();
+    const nextSession = createSession();
+    markExpectedSession(nextSession.id);
     clearForNewDraft();
-  }, [activeSessionId, saveSessionSnapshot, createSession, clearForNewDraft]);
+  }, [activeSessionId, saveSessionSnapshot, createSession, clearForNewDraft, markExpectedSession]);
 
   const handleSessionSelect = useCallback(
     async (targetSessionId: string) => {
@@ -499,10 +532,11 @@ export default function Workbench() {
         return;
       }
       saveSessionSnapshot(activeSessionId);
+      markExpectedSession(targetSessionId);
       selectSession(targetSessionId);
       await restoreSessionById(targetSessionId);
     },
-    [activeSessionId, saveSessionSnapshot, selectSession, restoreSessionById],
+    [activeSessionId, saveSessionSnapshot, selectSession, restoreSessionById, markExpectedSession],
   );
 
   const handleSessionDelete = useCallback(
@@ -540,11 +574,13 @@ export default function Workbench() {
       }
 
       if (remaining.length === 0) {
+        markExpectedSession(null);
         clearForNewDraft();
         return;
       }
 
       const fallbackSession = remaining[0];
+      markExpectedSession(fallbackSession.id);
       selectSession(fallbackSession.id);
       await restoreSessionById(fallbackSession.id);
     },
@@ -555,6 +591,7 @@ export default function Workbench() {
       clearForNewDraft,
       selectSession,
       restoreSessionById,
+      markExpectedSession,
     ],
   );
 
@@ -581,6 +618,7 @@ export default function Workbench() {
       return;
     }
     if (sessions.length === 0) {
+      markExpectedSession(null);
       clearForNewDraft();
       initializedRef.current = true;
       return;
@@ -590,12 +628,13 @@ export default function Workbench() {
     if (!initialSessionId) {
       return;
     }
+    markExpectedSession(initialSessionId);
     if (!activeSessionId) {
       selectSession(initialSessionId);
     }
     void restoreSessionById(initialSessionId);
     initializedRef.current = true;
-  }, [sessions, activeSessionId, clearForNewDraft, selectSession, restoreSessionById]);
+  }, [sessions, activeSessionId, clearForNewDraft, selectSession, restoreSessionById, markExpectedSession]);
 
   useEffect(() => {
     if (!initializedRef.current || !activeSessionId) {
