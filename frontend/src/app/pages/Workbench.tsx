@@ -13,6 +13,7 @@ import { DecisionChips } from "../components/genui/DecisionChips";
 import { ApprovalCard } from "../components/genui/ApprovalCard";
 import { CardShell, CardHeader, CardBody } from "../components/genui/CardShell";
 import { PreEdaBoard } from "../components/genui/PreEdaBoard";
+import { VisualizationResultView } from "../components/visualization/VisualizationResultView";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -35,7 +36,15 @@ import {
   listDatasets,
   type PendingApprovalPayload,
 } from "../../lib/api";
+import {
+  hasVisualizationArtifact,
+  hasVisualizationChartData,
+} from "../../lib/visualization";
 import { toast } from "sonner";
+import {
+  getRestoredFallbackStateHint,
+  normalizeRestoredSessionContext,
+} from "../lib/pipelineSessionContext";
 
 // --- INLINE COMPONENTS ---
 
@@ -191,6 +200,13 @@ export default function Workbench() {
   const hasUploadedDatasets = uploadedDatasets.length > 0;
   const selectedDataset =
     uploadedDatasets.find((item) => item.sourceId === selectedSourceId) ?? null;
+  const visualizationSummaryChart =
+    latestVisualizationResult?.chart ?? latestVisualizationResult?.chart_data ?? null;
+  const hasVisualizationPreview =
+    hasVisualizationArtifact(latestVisualizationResult)
+    || hasVisualizationChartData(latestVisualizationResult);
+  const visualizationPreviewMeta =
+    visualizationSummaryChart?.chart_type ?? "Chart";
   const preprocessApproveStartsAnalysis =
     pendingApproval?.stage === "preprocess" && state === "needs-user";
   const isDatasetSelectorLocked = preprocessApproveStartsAnalysis || isPreEdaApplying;
@@ -443,6 +459,7 @@ export default function Workbench() {
           const latestAssistant = [...msgs]
             .reverse()
             .find((message) => message.role === "assistant");
+          const latestAssistantAnswer = latestAssistant?.content ?? nextContext.latestAssistantAnswer;
           let restoredPendingApproval = nextContext.pendingApproval;
           let stateHint = nextContext.stateHint;
 
@@ -460,11 +477,12 @@ export default function Workbench() {
               }
               if (isApiErrorStatus(error, 404)) {
                 restoredPendingApproval = null;
-                stateHint = msgs.length > 0
-                  ? "success"
-                  : nextContext.uploadedDatasets.length > 0
-                    ? "ready"
-                    : "empty";
+                stateHint = getRestoredFallbackStateHint({
+                  ...nextContext,
+                  chatHistory: msgs,
+                  latestAssistantAnswer,
+                  pendingApproval: null,
+                });
               } else {
                 restoredPendingApproval = nextContext.pendingApproval;
                 stateHint = "needs-user";
@@ -479,26 +497,33 @@ export default function Workbench() {
             ...nextContext,
             backendSessionId: targetSession.backendSessionId,
             chatHistory: msgs,
-            latestAssistantAnswer: latestAssistant?.content ?? nextContext.latestAssistantAnswer,
+            latestAssistantAnswer,
             pendingApproval: restoredPendingApproval,
             stateHint,
             errorMessage: nextContext.stateHint === "error" ? nextContext.errorMessage : null,
           };
+          nextContext = normalizeRestoredSessionContext(nextContext);
           shouldPersistContext = true;
         } catch (error) {
           if (isStaleRestoreRequest()) {
             return;
           }
           if (isApiErrorStatus(error, 404)) {
-            nextContext = {
+            nextContext = normalizeRestoredSessionContext({
               ...nextContext,
               backendSessionId: null,
-            };
+            });
             shouldPersistContext = true;
           } else {
             toast.error("세션 히스토리를 불러오지 못했습니다.");
           }
         }
+      }
+
+      const normalizedContext = normalizeRestoredSessionContext(nextContext);
+      if (normalizedContext !== nextContext) {
+        nextContext = normalizedContext;
+        shouldPersistContext = true;
       }
 
       if (isStaleRestoreRequest()) {
@@ -1159,15 +1184,11 @@ export default function Workbench() {
                   sections={[{ type: "paragraph", content: "질문을 전송하면 Deep EDA 결과가 여기에 표시됩니다." }]}
                 />
               )}
-              {latestVisualizationResult?.artifact?.image_base64 && (
+              {hasVisualizationPreview && latestVisualizationResult && (
                 <CardShell>
-                  <CardHeader title="시각화 결과" meta={latestVisualizationResult.chart?.chart_type} />
+                  <CardHeader title="시각화 결과" meta={visualizationPreviewMeta} />
                   <CardBody>
-                    <img
-                      src={`data:${latestVisualizationResult.artifact.mime_type ?? "image/png"};base64,${latestVisualizationResult.artifact.image_base64}`}
-                      alt="Visualization"
-                      className="w-full rounded-lg"
-                    />
+                    <VisualizationResultView visualization={latestVisualizationResult} showCaption={false} />
                   </CardBody>
                 </CardShell>
               )}
@@ -1604,10 +1625,10 @@ export default function Workbench() {
                       <span className="font-medium truncate max-w-[140px]">{selectedDataset.fileName}</span>
                     </div>
                   )}
-                  {latestVisualizationResult?.chart?.chart_type && (
+                  {visualizationSummaryChart?.chart_type && (
                     <div className="flex justify-between text-xs">
                       <span className="text-[var(--genui-muted)]">시각화</span>
-                      <span className="font-medium">{latestVisualizationResult.chart.chart_type} ({latestVisualizationResult.chart.x_key} × {latestVisualizationResult.chart.y_key})</span>
+                      <span className="font-medium">{visualizationSummaryChart.chart_type} ({visualizationSummaryChart.x_key} × {visualizationSummaryChart.y_key})</span>
                     </div>
                   )}
                   {latestVisualizationResult?.summary && (
@@ -1615,15 +1636,11 @@ export default function Workbench() {
                   )}
                 </CardBody>
               </CardShell>
-              {latestVisualizationResult?.artifact?.image_base64 && (
+              {hasVisualizationPreview && latestVisualizationResult && (
                 <CardShell>
-                  <CardHeader title="시각화 미리보기" meta={latestVisualizationResult.chart?.chart_type ?? "Chart"} />
+                  <CardHeader title="시각화 미리보기" meta={visualizationPreviewMeta} />
                   <CardBody>
-                    <img
-                      src={`data:${latestVisualizationResult.artifact.mime_type ?? "image/png"};base64,${latestVisualizationResult.artifact.image_base64}`}
-                      alt="Visualization"
-                      className="w-full rounded-lg"
-                    />
+                    <VisualizationResultView visualization={latestVisualizationResult} showCaption={false} />
                   </CardBody>
                 </CardShell>
               )}

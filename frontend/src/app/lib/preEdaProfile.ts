@@ -111,7 +111,6 @@ export interface PreEdaProfile {
   qualitySummary: string;
   summaryBullets: string[];
   serverRecommendation: EdaPreprocessRecommendation | null;
-  recommendation: PreprocessRecommendation | null;
 }
 
 const DATETIME_NAME_RE = /(date|time|timestamp|created|updated|day|month|year)/i;
@@ -466,114 +465,6 @@ function createFallbackProfile(file: File, uploadedAt: string): PreEdaProfile {
       "업로드 후 질문과 후속 리포트 흐름은 그대로 진행할 수 있습니다.",
     ],
     serverRecommendation: null,
-    recommendation: null,
-  };
-}
-
-function mapServerOperationToStrategyId(op: EdaPreprocessRecommendation["operations"][number]["op"]): string {
-  if (op === "drop_missing") return "drop_rows";
-  if (op === "drop_columns") return "drop_column";
-  return "custom";
-}
-
-function mapServerOperationToLabel(op: EdaPreprocessRecommendation["operations"][number]["op"]): string {
-  switch (op) {
-    case "drop_missing":
-      return "결측 행 제거";
-    case "impute":
-      return "결측값 대체";
-    case "drop_columns":
-      return "컬럼 제거";
-    case "scale":
-      return "스케일 조정";
-    case "encode_categorical":
-      return "범주형 인코딩";
-    case "outlier":
-      return "이상치 처리";
-    case "parse_datetime":
-      return "날짜형 변환";
-    case "derived_column":
-      return "파생 컬럼 생성";
-    default:
-      return op;
-  }
-}
-
-function inferRecommendationColumnType(
-  column: string,
-  numericColumns: string[],
-  categoricalColumns: string[],
-  datetimeColumns: string[],
-  booleanColumns: string[],
-): PreprocessRecommendation["columnType"] {
-  if (numericColumns.includes(column)) return "numeric";
-  if (datetimeColumns.includes(column)) return "datetime";
-  if (booleanColumns.includes(column)) return "boolean";
-  if (categoricalColumns.includes(column)) return "categorical";
-  return "categorical";
-}
-
-// Temporary adapter for the current single-column preprocess card.
-// Stage 5 should remove this legacy projection and consume serverRecommendation directly.
-export function buildLegacyRecommendationFromServerRecommendation(
-  serverRecommendation: EdaPreprocessRecommendation | null,
-  {
-    missingColumns,
-    numericColumns,
-    categoricalColumns,
-    datetimeColumns,
-    booleanColumns,
-  }: {
-    missingColumns: MissingColumnSummary[];
-    numericColumns: string[];
-    categoricalColumns: string[];
-    datetimeColumns: string[];
-    booleanColumns: string[];
-  },
-): PreprocessRecommendation | null {
-  const primaryOperation = serverRecommendation?.operations[0];
-  const primaryColumn = (
-    primaryOperation?.target_columns[0]
-    ?? primaryOperation?.target_column
-    ?? primaryOperation?.source_columns[0]
-    ?? ""
-  ).trim();
-  if (!primaryOperation || !primaryColumn) {
-    return null;
-  }
-
-  const strategyId = mapServerOperationToStrategyId(primaryOperation.op);
-  const strategyLabel = mapServerOperationToLabel(primaryOperation.op);
-  const missing = missingColumns.find((item) => item.column === primaryColumn) ?? null;
-  const fillValue = strategyId === "drop_rows" || strategyId === "drop_column"
-    ? "-"
-    : "(모델 결정)";
-  const alternativeStrategies: PreprocessStrategy[] = [
-    {
-      id: strategyId,
-      label: strategyLabel,
-      description: primaryOperation.reason,
-      fillValue,
-      expectedImpact: primaryOperation.reason,
-    },
-  ];
-
-  return {
-    column: primaryColumn,
-    columnType: inferRecommendationColumnType(
-      primaryColumn,
-      numericColumns,
-      categoricalColumns,
-      datetimeColumns,
-      booleanColumns,
-    ),
-    strategy: strategyLabel,
-    fillValue,
-    missingCount: missing?.missingCount ?? 0,
-    missingPercent: missing ? Number((missing.missingRate * 100).toFixed(1)) : 0,
-    rationale: primaryOperation.reason,
-    domainWarning: null,
-    alternativeStrategies,
   };
 }
 
@@ -1009,6 +900,5 @@ export async function buildPreEdaProfile(file: File): Promise<PreEdaProfile | nu
     qualitySummary,
     summaryBullets,
     serverRecommendation: null,
-    recommendation,
   };
 }

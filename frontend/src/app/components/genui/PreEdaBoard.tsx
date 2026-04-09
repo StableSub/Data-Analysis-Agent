@@ -3,10 +3,6 @@ import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
 import {
   AlertTriangle,
   CheckCircle2,
-  ChevronDown,
-  ChevronRight,
-  Code2,
-  Lightbulb,
   LoaderCircle,
   ShieldAlert,
   Sparkles,
@@ -16,7 +12,7 @@ import type {
   EdaRecommendedOperation,
 } from "../../../lib/api";
 import { cn } from "../../../lib/utils";
-import type { DistributionBin, PreEdaProfile, PreprocessStrategy } from "../../lib/preEdaProfile";
+import type { PreEdaProfile } from "../../lib/preEdaProfile";
 import {
   countAutoApplicableRecommendedOperations,
   formatRecommendedOperationLabel,
@@ -99,13 +95,11 @@ function formatDistributionLabel(label: string): string {
   return label;
 }
 
-function formatBarChartAxisLabel(label: string): string {
-  return label.length > 5 ? `${label.slice(0, 5)}...` : label;
-}
-
 function formatDistributionAxisLabel(label: string, kind: "numeric" | "categorical"): string {
   const formatted = formatDistributionLabel(label);
-  return kind === "categorical" ? formatBarChartAxisLabel(formatted) : formatted;
+  return kind === "categorical" && formatted.length > 5
+    ? `${formatted.slice(0, 5)}...`
+    : formatted;
 }
 
 const DISTRIBUTION_VISIBLE_BAR_COUNT = 8;
@@ -215,69 +209,6 @@ function MetricTile({ label, value }: { label: string; value: string }) {
   );
 }
 
-/** Generate a Python code snippet for the selected strategy */
-function buildCodePreview(
-  column: string,
-  strategyId: string,
-  fillValue: string,
-): string {
-  switch (strategyId) {
-    case "median":
-      return `df["${column}"].fillna(df["${column}"].median(), inplace=True)`;
-    case "mean":
-      return `df["${column}"].fillna(df["${column}"].mean(), inplace=True)`;
-    case "mode":
-      return `df["${column}"].fillna(df["${column}"].mode()[0], inplace=True)`;
-    case "unknown":
-    case "custom":
-      return `df["${column}"].fillna("${fillValue}", inplace=True)`;
-    case "drop_rows":
-      return `df.dropna(subset=["${column}"], inplace=True)`;
-    case "drop_column":
-      return `df.drop(columns=["${column}"], inplace=True)`;
-    default:
-      return `df["${column}"].fillna(${JSON.stringify(fillValue)}, inplace=True)`;
-  }
-}
-
-/** Simulate what distribution bins would look like after applying the strategy */
-function simulatePreviewBins(
-  originalBins: DistributionBin[],
-  strategyId: string,
-  fillValue: string,
-  missingCount: number,
-): DistributionBin[] {
-  if (strategyId === "drop_rows" || strategyId === "drop_column") {
-    // Just return original bins (rows removed don't change existing distribution shape)
-    return originalBins.map((b) => ({ ...b }));
-  }
-
-  // For fill strategies, add missingCount to the matching bin or create a new one
-  const bins = originalBins.map((b) => ({ ...b }));
-
-  const targetLabel = strategyId === "median" || strategyId === "mean"
-    ? null // numeric — distribute into nearest bin
-    : fillValue;
-
-  if (targetLabel) {
-    const existing = bins.find((b) => b.label === targetLabel);
-    if (existing) {
-      existing.value += missingCount;
-    } else {
-      bins.push({ label: targetLabel, value: missingCount });
-    }
-  } else {
-    // Numeric: spread into middle bin as approximation
-    const midIdx = Math.floor(bins.length / 2);
-    const midBin = bins[midIdx];
-    if (midBin) {
-      midBin.value += missingCount;
-    }
-  }
-
-  return bins;
-}
-
 function buildRecommendationSummary(
   recommendation: EdaPreprocessRecommendation | null,
 ): string {
@@ -347,10 +278,6 @@ function PreprocessRecommendationCard({
   onApplyOperation?: (operation: EdaRecommendedOperation, index: number) => void;
 }) {
   const serverRecommendation = profile.serverRecommendation;
-  const primaryServerOperation = serverRecommendation?.operations[0] ?? null;
-  const legacyRecommendation = profile.recommendation;
-  const [selectedStrategyId, setSelectedStrategyId] = useState<string | null>(null);
-  const [showPreview, setShowPreview] = useState(false);
   const [editingDerivedKey, setEditingDerivedKey] = useState<string | null>(null);
   const [derivedDrafts, setDerivedDrafts] = useState<Record<string, { targetColumn: string; zeroDivision: string }>>({});
   const operations = serverRecommendation?.operations ?? [];
@@ -358,41 +285,6 @@ function PreprocessRecommendationCard({
   const autoApplicableCount = countAutoApplicableRecommendedOperations(serverRecommendation);
   const manualOperationCount = operations.length - autoApplicableCount;
   const hasRunningOperation = Boolean(applyingOperationKey);
-
-  const alts = legacyRecommendation?.alternativeStrategies ?? [];
-  const activeStrategy: PreprocessStrategy | null = useMemo(() => {
-    if (!legacyRecommendation || alts.length === 0) return null;
-    if (selectedStrategyId) {
-      const found = alts.find((s) => s.id === selectedStrategyId);
-      return found ?? alts[0] ?? null;
-    }
-    return alts[0] ?? null;
-  }, [legacyRecommendation, alts, selectedStrategyId]);
-
-  const targetDistribution = useMemo(() => {
-    if (!legacyRecommendation) return null;
-    return profile.distributions.find((d) => d.column === legacyRecommendation.column) ?? null;
-  }, [legacyRecommendation, profile.distributions]);
-
-  const previewBins = useMemo(() => {
-    if (!targetDistribution || !activeStrategy || !legacyRecommendation) return [];
-    return simulatePreviewBins(
-      targetDistribution.bins,
-      activeStrategy.id,
-      activeStrategy.fillValue,
-      legacyRecommendation.missingCount,
-    );
-  }, [targetDistribution, activeStrategy, legacyRecommendation]);
-
-  const chartConfig = useMemo(
-    () => ({
-      value: {
-        label: "Count",
-        color: "hsl(var(--chart-1, 173 58% 39%))",
-      },
-    }),
-    [],
-  );
 
   if (operations.length === 0) {
     return (
@@ -419,17 +311,6 @@ function PreprocessRecommendationCard({
       </div>
     );
   }
-
-  const columnTypeLabel =
-    (legacyRecommendation?.columnType ?? "categorical") === "numeric" ? "수치형" :
-    (legacyRecommendation?.columnType ?? "categorical") === "categorical" ? "범주형" :
-    (legacyRecommendation?.columnType ?? "categorical") === "datetime" ? "날짜형" : "불리언";
-  const canRenderLegacyPreview = Boolean(
-    legacyRecommendation
-    && primaryServerOperation
-    && (primaryServerOperation.op === "impute" || primaryServerOperation.op === "drop_missing")
-    && profile.columns.includes(legacyRecommendation.column),
-  );
 
   return (
     <div className="grid gap-4 xl:grid-cols-12">
@@ -677,208 +558,6 @@ function PreprocessRecommendationCard({
               })}
             </div>
           </div>
-
-          {canRenderLegacyPreview && legacyRecommendation && (
-            <div>
-              <div className="flex items-center gap-2 mb-2 px-0.5">
-                <Lightbulb className="w-3.5 h-3.5 text-[var(--genui-muted)]" />
-                <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--genui-muted)]">
-                  대표 결측 처리 예시
-                </span>
-              </div>
-              <p className="mb-2 text-xs text-[var(--genui-muted)]">
-                아래 미리보기는 구조화 추천 중 대표적인 결측 처리 작업만 요약한 예시입니다. 실제 적용은 위 작업 목록에서 선택한 항목만 개별적으로 진행됩니다.
-              </p>
-
-              <div className="rounded-xl border border-[var(--genui-border)] bg-[var(--genui-surface)] px-4 py-3.5">
-                <p className="text-sm font-semibold text-[var(--genui-text)]">
-                  <span className="font-mono text-[var(--genui-needs-user)]">{legacyRecommendation.column}</span>
-                  {" "}컬럼 예시
-                </p>
-                <p className="mt-1 text-sm text-[var(--genui-muted)]">
-                  {legacyRecommendation.missingCount.toLocaleString()}건 ({legacyRecommendation.missingPercent}%) · {columnTypeLabel} 컬럼
-                </p>
-              </div>
-
-              {legacyRecommendation.domainWarning && (
-                <div className="mt-3 flex items-start gap-2.5 rounded-lg border border-[var(--genui-warning)]/30 bg-[var(--genui-warning)]/8 px-3.5 py-3">
-                  <ShieldAlert className="w-4 h-4 text-[var(--genui-warning)] shrink-0 mt-0.5" />
-                  <p className="text-xs leading-relaxed text-[var(--genui-text)]">
-                    {legacyRecommendation.domainWarning}
-                  </p>
-                </div>
-              )}
-
-              {legacyRecommendation.rationale && (
-                <div className="mt-3 rounded-lg border border-[var(--genui-border)] bg-[var(--genui-surface)] px-3.5 py-3">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Lightbulb className="w-3.5 h-3.5 text-[var(--genui-running)]" />
-                    <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--genui-muted)]">
-                      예시 추천 근거
-                    </span>
-                  </div>
-                  <p className="text-sm leading-relaxed text-[var(--genui-text)]">
-                    {legacyRecommendation.rationale}
-                  </p>
-                </div>
-              )}
-
-              {alts.length > 0 && (
-                <div className="mt-3">
-                  <div className="flex items-center gap-2 mb-2 px-0.5">
-                    <Sparkles className="w-3.5 h-3.5 text-[var(--genui-muted)]" />
-                    <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--genui-muted)]">
-                      예시 전략 비교
-                    </span>
-                  </div>
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    {alts.map((strategy, index) => {
-                      const isSelected = activeStrategy?.id === strategy.id;
-                      const isRecommended = index === 0;
-                      return (
-                        <button
-                          key={strategy.id}
-                          type="button"
-                          onClick={() => setSelectedStrategyId(strategy.id)}
-                          className={cn(
-                            "relative text-left rounded-xl border px-3.5 py-3 transition-all duration-200",
-                            isSelected
-                              ? "border-[var(--genui-running)] bg-[var(--genui-running)]/8 ring-1 ring-[var(--genui-running)]/30"
-                              : "border-[var(--genui-border)] bg-[var(--genui-panel)] hover:border-[var(--genui-muted)] hover:bg-[var(--genui-surface)]",
-                          )}
-                        >
-                          {isRecommended && (
-                            <span className="absolute -top-2 right-3 rounded-full bg-[var(--genui-running)] px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-white">
-                              추천
-                            </span>
-                          )}
-                          <p className="text-sm font-semibold text-[var(--genui-text)]">
-                            {strategy.label}
-                          </p>
-                          <p className="mt-0.5 text-xs text-[var(--genui-muted)] leading-relaxed">
-                            {strategy.description}
-                          </p>
-                          {strategy.fillValue !== "-" && (
-                            <p className="mt-1.5 text-xs text-[var(--genui-muted)]">
-                              대체값: <span className="font-mono font-semibold text-[var(--genui-text)]">{strategy.fillValue}</span>
-                            </p>
-                          )}
-                          <p className="mt-1 text-[11px] text-[var(--genui-muted)]">
-                            <ChevronRight className="inline w-3 h-3 -mt-px" />
-                            {" "}{strategy.expectedImpact}
-                          </p>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {activeStrategy && (
-                <div className="mt-3 rounded-lg border border-[var(--genui-border)] bg-[var(--genui-surface)] px-3.5 py-2.5">
-                  <div className="flex items-center gap-2">
-                    <Code2 className="w-3.5 h-3.5 text-[var(--genui-muted)]" />
-                    <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--genui-muted)]">
-                      예시 적용 코드
-                    </span>
-                  </div>
-                  <pre className="mt-1.5 overflow-x-auto rounded-md bg-[var(--genui-panel)] border border-[var(--genui-border)] px-3 py-2 text-xs font-mono text-[var(--genui-text)] leading-relaxed">
-                    {buildCodePreview(legacyRecommendation.column, activeStrategy.id, activeStrategy.fillValue)}
-                  </pre>
-                </div>
-              )}
-
-              {targetDistribution && activeStrategy && activeStrategy.id !== "drop_column" && (
-                <div className="mt-3">
-                  <button
-                    type="button"
-                    onClick={() => setShowPreview((v) => !v)}
-                    className="flex items-center gap-1.5 text-xs font-medium text-[var(--genui-muted)] hover:text-[var(--genui-text)] transition-colors mb-2"
-                  >
-                    <ChevronDown className={cn(
-                      "w-3.5 h-3.5 transition-transform duration-200",
-                      showPreview ? "rotate-0" : "-rotate-90",
-                    )} />
-                    예시 분포 미리보기
-                  </button>
-                  {showPreview && (
-                    <div className="grid gap-3 sm:grid-cols-2 animate-in fade-in slide-in-from-top-1 duration-200">
-                      <div className="rounded-lg border border-[var(--genui-border)] bg-[var(--genui-surface)] p-2.5">
-                        <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--genui-muted)] mb-1.5 px-1">
-                          Before (현재)
-                        </p>
-                        <div className={cn(targetDistribution.kind === "categorical" && "overflow-x-auto")}>
-                          <ChartContainer
-                            config={chartConfig}
-                            className={cn("h-[120px] aspect-auto", targetDistribution.kind === "categorical" ? "w-auto min-w-full" : "w-full")}
-                            style={{
-                              minWidth: getDistributionChartMinWidth(targetDistribution.kind, targetDistribution.bins.length),
-                            }}
-                          >
-                            <BarChart data={targetDistribution.bins} margin={{ top: 4, right: 4, left: 0, bottom: 4 }} barCategoryGap="14%">
-                              <CartesianGrid vertical={false} strokeDasharray="3 3" opacity={0.3} />
-                              <XAxis
-                                dataKey="label"
-                                tickLine={false}
-                                axisLine={false}
-                                tick={{ fontSize: 8, fill: "var(--genui-muted)" }}
-                                interval={targetDistribution.kind === "numeric" ? "preserveStartEnd" : 0}
-                                minTickGap={targetDistribution.kind === "numeric" ? 24 : 4}
-                                tickFormatter={(label) => formatDistributionAxisLabel(String(label), targetDistribution.kind)}
-                              />
-                              <YAxis allowDecimals={false} tickLine={false} axisLine={false} width={36} tick={{ fontSize: 9, fill: "var(--genui-muted)" }} />
-                              <Bar
-                                dataKey="value"
-                                fill="var(--color-value)"
-                                radius={[4, 4, 0, 0]}
-                                maxBarSize={getDistributionBarMaxWidth(targetDistribution.kind, true)}
-                                opacity={0.6}
-                              />
-                            </BarChart>
-                          </ChartContainer>
-                        </div>
-                      </div>
-                      <div className="rounded-lg border border-[var(--genui-running)]/30 bg-[var(--genui-running)]/4 p-2.5">
-                        <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--genui-running)] mb-1.5 px-1">
-                          After (예상)
-                        </p>
-                        <div className={cn(targetDistribution.kind === "categorical" && "overflow-x-auto")}>
-                          <ChartContainer
-                            config={chartConfig}
-                            className={cn("h-[120px] aspect-auto", targetDistribution.kind === "categorical" ? "w-auto min-w-full" : "w-full")}
-                            style={{
-                              minWidth: getDistributionChartMinWidth(targetDistribution.kind, previewBins.length),
-                            }}
-                          >
-                            <BarChart data={previewBins} margin={{ top: 4, right: 4, left: 0, bottom: 4 }} barCategoryGap="14%">
-                              <CartesianGrid vertical={false} strokeDasharray="3 3" opacity={0.3} />
-                              <XAxis
-                                dataKey="label"
-                                tickLine={false}
-                                axisLine={false}
-                                tick={{ fontSize: 8, fill: "var(--genui-muted)" }}
-                                interval={targetDistribution.kind === "numeric" ? "preserveStartEnd" : 0}
-                                minTickGap={targetDistribution.kind === "numeric" ? 24 : 4}
-                                tickFormatter={(label) => formatDistributionAxisLabel(String(label), targetDistribution.kind)}
-                              />
-                              <YAxis allowDecimals={false} tickLine={false} axisLine={false} width={36} tick={{ fontSize: 9, fill: "var(--genui-muted)" }} />
-                              <Bar
-                                dataKey="value"
-                                fill="var(--genui-running)"
-                                radius={[4, 4, 0, 0]}
-                                maxBarSize={getDistributionBarMaxWidth(targetDistribution.kind, true)}
-                              />
-                            </BarChart>
-                          </ChartContainer>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-
         </CardBody>
       </CardShell>
     </div>

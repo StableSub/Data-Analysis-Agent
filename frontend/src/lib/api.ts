@@ -224,11 +224,6 @@ export interface PreprocessApplyResponse {
   summary_diff?: Record<string, unknown> | null;
 }
 
-export interface PreprocessApplyRecommendationRequest {
-  source_id: string;
-  recommendation: EdaPreprocessRecommendation;
-}
-
 export interface ReportCreateRequest {
   session_id: number;
   analysis_results?: Record<string, unknown>[];
@@ -316,16 +311,6 @@ export function queryRag(req: RagQueryRequest): Promise<RagResponse> {
 /** POST /preprocess/apply */
 export function applyPreprocess(req: PreprocessApplyRequest): Promise<PreprocessApplyResponse> {
   return apiRequest<PreprocessApplyResponse>("/preprocess/apply", {
-    method: "POST",
-    body: JSON.stringify(req),
-  });
-}
-
-/** POST /preprocess/apply-recommendation */
-export function applyPreprocessRecommendation(
-  req: PreprocessApplyRecommendationRequest,
-): Promise<PreprocessApplyResponse> {
-  return apiRequest<PreprocessApplyResponse>("/preprocess/apply-recommendation", {
     method: "POST",
     body: JSON.stringify(req),
   });

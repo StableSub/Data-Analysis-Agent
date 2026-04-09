@@ -86,11 +86,13 @@ function buildChartRows(visualization: VisualizationResultPayload): ChartRow[] {
 interface VisualizationResultViewProps {
   visualization: VisualizationResultPayload;
   className?: string;
+  showCaption?: boolean;
 }
 
 export function VisualizationResultView({
   visualization,
   className,
+  showCaption = true,
 }: VisualizationResultViewProps) {
   const hasArtifact = hasVisualizationArtifact(visualization);
   const chartData = getVisualizationChartData(visualization);
@@ -107,7 +109,7 @@ export function VisualizationResultView({
           alt={`${visualization.chart?.chart_type || "chart"} visualization`}
           className="w-full rounded-lg bg-white dark:bg-[#212121] border border-gray-200 dark:border-white/10"
         />
-        {caption ? (
+        {showCaption && caption ? (
           <p className="text-xs text-gray-600 dark:text-gray-300 whitespace-pre-wrap">{caption}</p>
         ) : null}
       </div>
@@ -168,7 +170,7 @@ export function VisualizationResultView({
           )}
         </ChartContainer>
       </div>
-      {caption ? (
+      {showCaption && caption ? (
         <p className="text-xs text-gray-600 dark:text-gray-300 whitespace-pre-wrap">{caption}</p>
       ) : null}
     </div>

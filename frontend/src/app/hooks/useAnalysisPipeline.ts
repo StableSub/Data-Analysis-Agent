@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import {
-  applyPreprocessRecommendation,
+  applyPreprocess,
   uploadFile,
   buildApiUrl,
   deleteDataset,
@@ -41,15 +41,15 @@ import type { RawLogEntry } from "../components/genui/MCPPanel";
 import type { TimelineItemStatus } from "../components/genui/TimelineItem";
 import type { PipelineStepStatus } from "../components/genui/PipelineTracker";
 import {
-  buildLegacyRecommendationFromServerRecommendation,
   type PreEdaProfile,
 } from "../lib/preEdaProfile";
 import {
-  buildSingleOperationRecommendation,
+  buildPreprocessOperationsFromRecommendedOperation,
   countAutoApplicableRecommendedOperations,
   getRecommendedOperationKey,
   isAutoApplicableRecommendedOperation,
 } from "../lib/preprocessRecommendation";
+import { normalizeRestoredSessionContext } from "../lib/pipelineSessionContext";
 
 /* ─────────────────────────────────────────────
    Types
@@ -463,16 +463,6 @@ async function loadServerPreEdaProfile(
       missingRate: column.null_ratio,
     }));
     const serverRecommendation = preprocessRecommendationResponse.recommendation;
-    const recommendation = buildLegacyRecommendationFromServerRecommendation(
-      serverRecommendation,
-      {
-        missingColumns,
-        numericColumns: profile.numeric_columns,
-        categoricalColumns: profile.categorical_columns,
-        datetimeColumns: profile.datetime_columns,
-        booleanColumns: profile.boolean_columns,
-      },
-    );
     const recommendationWarning =
       preprocessRecommendationResponse.warning ?? getRecommendationWarning(serverRecommendation);
     const numericColumnStats = buildNumericColumnStats(profile, stats);
@@ -540,7 +530,6 @@ async function loadServerPreEdaProfile(
         qualitySummary: buildServerQualitySummary(profile, insights),
         summaryBullets: buildServerSummaryBullets(profile, insights),
         serverRecommendation,
-        recommendation,
       },
       recommendationMode: preprocessRecommendationResponse.generation_mode,
       warning: recommendationWarning,
@@ -1998,6 +1987,10 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
       if (!selectedSourceId || !isAutoApplicableRecommendedOperation(operation)) {
         return "noop";
       }
+      const selectedDataset = uploadedDatasets.find((item) => item.sourceId === selectedSourceId) ?? null;
+      if (!selectedDataset?.preEdaProfile) {
+        return "noop";
+      }
 
       const operationKey = getRecommendedOperationKey(operation, index);
       setPreEdaApplyErrors((prev) => ({ ...prev, [selectedSourceId]: null }));
@@ -2005,9 +1998,12 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
       setApplyingPreEdaOperationKey(operationKey);
 
       try {
-        const response = await applyPreprocessRecommendation({
+        const response = await applyPreprocess({
           source_id: selectedSourceId,
-          recommendation: buildSingleOperationRecommendation(operation),
+          operations: buildPreprocessOperationsFromRecommendedOperation(
+            operation,
+            selectedDataset.preEdaProfile,
+          ),
         });
         const outputFileName = response.output_filename.trim()
           ? response.output_filename
@@ -2040,7 +2036,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
         setApplyingPreEdaOperationKey(null);
       }
     },
-    [activateProcessedDataset, addMilestone, selectedSourceId],
+    [activateProcessedDataset, addMilestone, selectedSourceId, uploadedDatasets],
   );
 
   const handleReject = useCallback(() => {
@@ -2194,30 +2190,31 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
   ]);
 
   const restoreSessionContext = useCallback((context: PipelineSessionContext) => {
+    const normalizedContext = normalizeRestoredSessionContext(context);
     abortRef.current?.abort();
     abortRef.current = null;
 
-    const nextSessionId = context.backendSessionId ?? null;
-    const nextRunId = context.runId ?? null;
-    const nextTraceId = context.traceId ?? null;
-    const nextUploadedDatasets = Array.isArray(context.uploadedDatasets)
-      ? context.uploadedDatasets
+    const nextSessionId = normalizedContext.backendSessionId ?? null;
+    const nextRunId = normalizedContext.runId ?? null;
+    const nextTraceId = normalizedContext.traceId ?? null;
+    const nextUploadedDatasets = Array.isArray(normalizedContext.uploadedDatasets)
+      ? normalizedContext.uploadedDatasets
       : [];
-    const nextStateHint: PipelineSessionStateHint = context.stateHint ?? "empty";
-    const nextPendingApproval = context.pendingApproval ?? null;
+    const nextStateHint: PipelineSessionStateHint = normalizedContext.stateHint ?? "empty";
+    const nextPendingApproval = normalizedContext.pendingApproval ?? null;
     const latestAnswer =
-      typeof context.latestAssistantAnswer === "string" && context.latestAssistantAnswer.trim()
-        ? context.latestAssistantAnswer
+      typeof normalizedContext.latestAssistantAnswer === "string" && normalizedContext.latestAssistantAnswer.trim()
+        ? normalizedContext.latestAssistantAnswer
         : null;
 
     setSessionId(nextSessionId);
     setRunId(nextRunId);
     setTraceId(nextTraceId);
-    setFileName(context.fileName || "");
+    setFileName(normalizedContext.fileName || "");
     setUploadedDatasets(nextUploadedDatasets);
-    setSelectedSourceId(context.selectedSourceId ?? null);
-    setLatestVisualizationResult(context.latestVisualizationResult ?? null);
-    setChatHistory(context.chatHistory || []);
+    setSelectedSourceId(normalizedContext.selectedSourceId ?? null);
+    setLatestVisualizationResult(normalizedContext.latestVisualizationResult ?? null);
+    setChatHistory(normalizedContext.chatHistory || []);
 
     setUploadProgress(0);
     setElapsedSeconds(0);
@@ -2238,7 +2235,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
     setPreEdaDistributionError(null);
 
     if (nextStateHint === "error") {
-      setErrorMessage(context.errorMessage ?? "세션에서 오류 상태를 복원했습니다.");
+      setErrorMessage(normalizedContext.errorMessage ?? "세션에서 오류 상태를 복원했습니다.");
     } else {
       setErrorMessage(null);
     }

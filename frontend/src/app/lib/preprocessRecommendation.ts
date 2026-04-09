@@ -1,7 +1,9 @@
 import type {
   EdaPreprocessRecommendation,
   EdaRecommendedOperation,
+  PreprocessOperation,
 } from "../../lib/api";
+import type { PreEdaProfile } from "./preEdaProfile";
 
 const AUTO_APPLICABLE_OPS = new Set<EdaRecommendedOperation["op"]>([
   "drop_missing",
@@ -46,6 +48,90 @@ export function getRecommendedOperationKey(
   return `${operation.op}:${targetKey}:${index}`;
 }
 
+function normalizeColumns(columns: string[]): string[] {
+  return columns
+    .filter((column) => typeof column === "string")
+    .map((column) => column.trim())
+    .filter(Boolean);
+}
+
+export function buildPreprocessOperationsFromRecommendedOperation(
+  operation: EdaRecommendedOperation,
+  profile: PreEdaProfile,
+): PreprocessOperation[] {
+  const targetColumns = normalizeColumns(operation.target_columns);
+
+  if (operation.op === "derived_column") {
+    const sourceColumns = normalizeColumns(operation.source_columns);
+    const targetColumn = operation.target_column.trim();
+
+    if (!targetColumn) {
+      throw new Error("derived_column recommendation requires target_column");
+    }
+    if (!operation.transform_type || !["log1p", "sum", "difference", "ratio"].includes(operation.transform_type)) {
+      throw new Error("derived_column recommendation requires supported transform_type");
+    }
+    if (sourceColumns.length === 0) {
+      throw new Error("derived_column recommendation requires source_columns");
+    }
+
+    return [
+      {
+        op: "derived_column",
+        name: targetColumn,
+        source_columns: sourceColumns,
+        transform_type: operation.transform_type,
+        params: operation.params,
+      },
+    ];
+  }
+
+  if (targetColumns.length === 0) {
+    throw new Error(`${operation.op} recommendation requires target_columns`);
+  }
+
+  switch (operation.op) {
+    case "drop_missing":
+      return [{ op: "drop_missing", columns: targetColumns, how: "any" }];
+    case "impute": {
+      const numericTargets = targetColumns.filter((column) => profile.numericColumns.includes(column));
+      const nonNumericTargets = targetColumns.filter((column) => !profile.numericColumns.includes(column));
+      const operations: PreprocessOperation[] = [];
+
+      if (numericTargets.length > 0) {
+        operations.push({
+          op: "impute",
+          columns: numericTargets,
+          method: "median",
+          value: null,
+        });
+      }
+      if (nonNumericTargets.length > 0) {
+        operations.push({
+          op: "impute",
+          columns: nonNumericTargets,
+          method: "mode",
+          value: null,
+        });
+      }
+
+      return operations;
+    }
+    case "drop_columns":
+      return [{ op: "drop_columns", columns: targetColumns }];
+    case "scale":
+      return [{ op: "scale", columns: targetColumns, method: "standardize" }];
+    case "encode_categorical":
+      return [{ op: "encode_categorical", columns: targetColumns, method: "one_hot" }];
+    case "outlier":
+      return [{ op: "outlier", columns: targetColumns, method: "iqr", strategy: "clip" }];
+    case "parse_datetime":
+      return [{ op: "parse_datetime", columns: targetColumns, format: null }];
+    default:
+      throw new Error(`${operation.op} recommendation is not supported`);
+  }
+}
+
 export function isAutoApplicableRecommendedOperation(
   operation: EdaRecommendedOperation,
 ): boolean {
@@ -85,28 +171,4 @@ export function countAutoApplicableRecommendedOperations(
     return 0;
   }
   return recommendation.operations.filter((operation) => isAutoApplicableRecommendedOperation(operation)).length;
-}
-
-export function buildSingleOperationRecommendation(
-  operation: EdaRecommendedOperation,
-): EdaPreprocessRecommendation {
-  const targetColumns = operation.target_columns
-    .filter((column) => typeof column === "string")
-    .map((column) => column.trim())
-    .filter(Boolean);
-
-  return {
-    summary: operation.reason.trim() || `${formatRecommendedOperationLabel(operation.op)} 작업을 적용합니다.`,
-    operations: [
-      {
-        ...operation,
-        target_columns: targetColumns,
-        source_columns: operation.source_columns
-          .filter((column) => typeof column === "string")
-          .map((column) => column.trim())
-          .filter(Boolean),
-        target_column: operation.target_column.trim(),
-      },
-    ],
-  };
 }
