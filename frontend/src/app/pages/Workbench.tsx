@@ -193,6 +193,7 @@ export default function Workbench() {
     deleteSession: deleteSessionFromStore,
     updateSession,
     updateActiveSession,
+    markSessionActivity,
   } = useWorkbenchSessionStore();
 
   const activeSession = sessions.find((item) => item.id === activeSessionId) ?? null;
@@ -299,6 +300,21 @@ export default function Workbench() {
     const sec = (s % 60).toString().padStart(2, "0");
     return `${m}:${sec}`;
   };
+
+  function getCurrentSession(items: WorkbenchSessionItem[]): WorkbenchSessionItem | null {
+    const sessionsWithActivity = items.filter((item) => Boolean(item.activityAt));
+    if (sessionsWithActivity.length === 0) {
+      return activeSession ?? items[0] ?? null;
+    }
+    return sessionsWithActivity.reduce((latest, item) => {
+      if (!latest) {
+        return item;
+      }
+      return (item.activityAt ?? "") > (latest.activityAt ?? "") ? item : latest;
+    }, sessionsWithActivity[0]);
+  }
+
+  const currentSession = getCurrentSession(sessions);
 
   const handleTabChange = (tab: RightTabId) => {
     setRightTab(tab);
@@ -628,14 +644,15 @@ export default function Workbench() {
       }
 
       const targetSession = ensureActiveSessionForInteraction();
-      if (targetSession.title === "새 채팅") {
-        const title = question.length > 30 ? `${question.slice(0, 30)}...` : question;
-        updateSession(targetSession.id, { title });
-      }
+      const nextTitle =
+        targetSession.title === "새 채팅"
+          ? question.length > 30 ? `${question.slice(0, 30)}...` : question
+          : undefined;
+      markSessionActivity(targetSession.id, nextTitle ? { title: nextTitle } : undefined);
 
       handleSend(value);
     },
-    [ensureActiveSessionForInteraction, sessions, updateSession, handleSend],
+    [ensureActiveSessionForInteraction, markSessionActivity, handleSend],
   );
 
   useEffect(() => {
@@ -705,13 +722,14 @@ export default function Workbench() {
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
       if (file) {
-        ensureActiveSessionForInteraction();
+        const targetSession = ensureActiveSessionForInteraction();
+        markSessionActivity(targetSession.id);
         pipeline.startUpload(file);
       }
       // Reset so the same file can be re-selected
       if (fileInputRef.current) fileInputRef.current.value = "";
     },
-    [ensureActiveSessionForInteraction, pipeline],
+    [ensureActiveSessionForInteraction, markSessionActivity, pipeline],
   );
 
   /** Handle Dropzone onDrop — if FileList is empty (button click), open picker */
@@ -719,16 +737,20 @@ export default function Workbench() {
     (files: FileList) => {
       const file = files[0]; // noUncheckedIndexedAccess: may be undefined
       if (file) {
-        ensureActiveSessionForInteraction();
+        const targetSession = ensureActiveSessionForInteraction();
+        markSessionActivity(targetSession.id);
         pipeline.startUpload(file);
       } else {
         openFilePicker();
       }
     },
-    [ensureActiveSessionForInteraction, pipeline, openFilePicker],
+    [ensureActiveSessionForInteraction, markSessionActivity, pipeline, openFilePicker],
   );
 
-  const formatSessionUpdatedAt = (value: string) => {
+  const formatSessionUpdatedAt = (value: string | null | undefined) => {
+    if (!value) {
+      return "활동 없음";
+    }
     const date = new Date(value);
     return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   };
@@ -892,7 +914,7 @@ export default function Workbench() {
             Current
           </p>
           <p className="mt-1 text-[12px] font-medium text-[var(--genui-text)] truncate">
-            {activeSession?.title || "새 채팅"}
+            {currentSession?.title || "새 채팅"}
           </p>
         </div>
         <button
@@ -926,7 +948,7 @@ export default function Workbench() {
                       {session.title}
                     </p>
                     <p className="mt-0.5 text-[10px] text-[var(--genui-muted)]">
-                      {formatSessionUpdatedAt(session.updatedAt)}
+                      {formatSessionUpdatedAt(session.activityAt ?? session.updatedAt)}
                     </p>
                   </div>
                   <span

@@ -768,7 +768,7 @@ export function PreEdaBoard({
         <CardShell className="min-h-[206px] xl:col-span-6">
           <CardHeader
             title="결측치 분석"
-            meta="NULL COUNT / NULL RATIO"
+            meta="Missing Value"
             statusLabel={profile.missingColumns.length > 0 ? "Quality" : "Clean"}
             statusVariant={profile.missingColumns.length > 0 ? "warning" : "success"}
             className="px-3.5 py-2.5"
@@ -860,7 +860,7 @@ export function PreEdaBoard({
             title="AI 분석 요약"
             subtitle="AI Summary"
             sections={summarySections}
-            maxBodyHeight={650}
+            maxBodyHeight={500}
             hideFooter
           />
 

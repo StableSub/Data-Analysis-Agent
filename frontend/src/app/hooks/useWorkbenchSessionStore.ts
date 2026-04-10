@@ -8,6 +8,7 @@ export interface WorkbenchSessionItem {
   title: string;
   backendSessionId: number | null;
   updatedAt: string;
+  activityAt: string | null;
   context: PipelineSessionContext;
 }
 
@@ -87,6 +88,12 @@ function normalizeSession(value: unknown): WorkbenchSessionItem | null {
     title: typeof item.title === "string" && item.title.trim() ? item.title : "새 채팅",
     backendSessionId: typeof item.backendSessionId === "number" ? item.backendSessionId : null,
     updatedAt: typeof item.updatedAt === "string" && item.updatedAt ? item.updatedAt : new Date().toISOString(),
+    activityAt:
+      typeof item.activityAt === "string" && item.activityAt
+        ? item.activityAt
+        : typeof item.updatedAt === "string" && item.updatedAt
+          ? item.updatedAt
+          : null,
     context: normalizeContext(item.context),
   };
 }
@@ -117,7 +124,14 @@ function loadSessionStore(): SessionStorePayload {
 }
 
 function sortByRecent(items: WorkbenchSessionItem[]): WorkbenchSessionItem[] {
-  return [...items].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  return [...items].sort((a, b) => {
+    const left = a.activityAt ?? "";
+    const right = b.activityAt ?? "";
+    if (left !== right) {
+      return right.localeCompare(left);
+    }
+    return b.updatedAt.localeCompare(a.updatedAt);
+  });
 }
 
 export function useWorkbenchSessionStore() {
@@ -140,6 +154,7 @@ export function useWorkbenchSessionStore() {
       title: "새 채팅",
       backendSessionId: null,
       updatedAt: now,
+      activityAt: null,
       context: createEmptyContext(),
     };
     setSessions((prev) => [next, ...prev]);
@@ -153,8 +168,7 @@ export function useWorkbenchSessionStore() {
 
   const updateSession = useCallback((sessionId: string, patch: SessionPatch) => {
     setSessions((prev) => {
-      const now = new Date().toISOString();
-      const next = prev.map((item) => {
+      return prev.map((item) => {
         if (item.id !== sessionId) {
           return item;
         }
@@ -168,9 +182,35 @@ export function useWorkbenchSessionStore() {
           title: patch.title !== undefined ? patch.title : item.title,
           backendSessionId: backendSessionId ?? null,
           context: nextContext,
-          updatedAt: now,
         };
       });
+    });
+  }, []);
+
+  const markSessionActivity = useCallback((sessionId: string, patch?: SessionPatch) => {
+    setSessions((prev) => {
+      const now = new Date().toISOString();
+      const next = prev.map((item) => {
+        if (item.id !== sessionId) {
+          return item;
+        }
+
+        const nextContext = patch?.context ?? item.context;
+        const backendSessionId =
+          patch?.backendSessionId !== undefined
+            ? patch.backendSessionId
+            : nextContext.backendSessionId ?? item.backendSessionId;
+
+        return {
+          ...item,
+          title: patch?.title !== undefined ? patch.title : item.title,
+          backendSessionId: backendSessionId ?? null,
+          context: nextContext,
+          updatedAt: now,
+          activityAt: now,
+        };
+      });
+
       return sortByRecent(next);
     });
   }, []);
@@ -183,6 +223,16 @@ export function useWorkbenchSessionStore() {
       updateSession(activeSessionId, patch);
     },
     [activeSessionId, updateSession],
+  );
+
+  const markActiveSessionActivity = useCallback(
+    (patch?: SessionPatch) => {
+      if (!activeSessionId) {
+        return;
+      }
+      markSessionActivity(activeSessionId, patch);
+    },
+    [activeSessionId, markSessionActivity],
   );
 
   const deleteSession = useCallback((sessionId: string) => {
@@ -198,5 +248,7 @@ export function useWorkbenchSessionStore() {
     deleteSession,
     updateSession,
     updateActiveSession,
+    markSessionActivity,
+    markActiveSessionActivity,
   };
 }
