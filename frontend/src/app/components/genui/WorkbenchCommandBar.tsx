@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { 
   Plus, 
   SendHorizontal, 
@@ -41,6 +41,7 @@ export function WorkbenchCommandBar({
   const [selectedModel, setSelectedModel] = useState(MODELS[0]);
   const [isModelMenuOpen, setIsModelMenuOpen] = useState(false);
   const [isAttachMenuOpen, setIsAttachMenuOpen] = useState(false);
+  const [isComposing, setIsComposing] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const attachMenuRef = useRef<HTMLDivElement>(null);
@@ -67,20 +68,31 @@ export function WorkbenchCommandBar({
     }
   }, [value]);
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      if (value.trim() && status !== "disabled" && status !== "streaming") {
-        onSend?.(value);
-        setValue("");
-      }
-    }
-  };
-
   // Only truly disable interaction if status is explicitly 'disabled'
   // 'empty' status should allow input
   const isDisabled = status === "disabled";
   const isStreaming = status === "streaming";
+
+  const submitMessage = useCallback((rawValue: string) => {
+    const nextValue = rawValue.trim();
+    if (!nextValue || isDisabled || isStreaming || isComposing) {
+      return;
+    }
+
+    setValue("");
+    onSend?.(nextValue);
+  }, [isComposing, isDisabled, isStreaming, onSend]);
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.nativeEvent.isComposing || isComposing || e.keyCode === 229) {
+      return;
+    }
+
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      submitMessage(value);
+    }
+  };
 
   return (
     <div className={cn("w-full max-w-3xl mx-auto relative", className)}>
@@ -134,6 +146,11 @@ export function WorkbenchCommandBar({
             value={value}
             onChange={(e) => setValue(e.target.value)}
             onKeyDown={handleKeyDown}
+            onCompositionStart={() => setIsComposing(true)}
+            onCompositionEnd={(e) => {
+              setIsComposing(false);
+              setValue(e.currentTarget.value);
+            }}
             onFocus={() => setIsFocused(true)}
             onBlur={() => setIsFocused(false)}
             disabled={isDisabled}
@@ -218,13 +235,8 @@ export function WorkbenchCommandBar({
               </button>
             ) : (
               <button 
-                onClick={() => {
-                  if (value.trim()) {
-                    onSend?.(value);
-                    setValue("");
-                  }
-                }}
-                disabled={isDisabled || !value.trim()}
+                onClick={() => submitMessage(value)}
+                disabled={isDisabled || isComposing || !value.trim()}
                 className={cn(
                   "w-8 h-8 flex items-center justify-center rounded-full transition-all duration-200",
                   value.trim() && !isDisabled

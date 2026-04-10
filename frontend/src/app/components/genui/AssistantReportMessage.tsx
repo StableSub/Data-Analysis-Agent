@@ -3,14 +3,17 @@ import { cn } from "../../../lib/utils";
 import {
   ChevronDown,
   ChevronUp,
-  Copy,
-  Check,
   AlertTriangle,
   RefreshCw,
   Bot,
   ArrowRight,
 } from "lucide-react";
 import { EvidenceFooter, type EvidenceFooterProps } from "./EvidenceFooter";
+import {
+  CodeBlock,
+  LabelValueText,
+  ReportTextContent,
+} from "./ReportContentRenderer";
 
 /* ─────────────────────────────────────────────
    Types
@@ -36,8 +39,8 @@ export interface AssistantReportMessageProps {
   sections: ReportSection[];
   /** Number of sections visible when collapsed (default: 1) */
   collapsedSections?: number;
-  /** px cap for body scroll area when expanded (default: 320) */
-  maxBodyHeight?: number;
+  /** px cap for body scroll area when expanded (default: 320). null disables the explicit cap. */
+  maxBodyHeight?: number | null;
   className?: string;
   /**
    * Accent border override for non-error states.
@@ -60,43 +63,7 @@ export interface AssistantReportMessageProps {
    * Optional: omit for simple streaming cards where context isn't ready.
    */
   evidence?: EvidenceFooterProps;
-}
-
-/* ─────────────────────────────────────────────
-   Sub-component: CodeBlock
-───────────────────────────────────────────── */
-function CodeBlock({ code, language }: { code: string; language?: string }) {
-  const [copied, setCopied] = useState(false);
-  const handleCopy = () => {
-    navigator.clipboard.writeText(code).catch(() => {});
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1800);
-  };
-  return (
-    <div className="relative rounded-md border border-[var(--genui-border)] bg-[var(--genui-surface)] overflow-hidden my-1">
-      {/* lang badge + copy */}
-      <div className="flex items-center justify-between px-3 py-1.5 border-b border-[var(--genui-border)] bg-[var(--genui-panel)]">
-        <span className="text-[10px] font-mono font-semibold text-[var(--genui-muted)] uppercase tracking-wider">
-          {language ?? "code"}
-        </span>
-        <button
-          onClick={handleCopy}
-          className="flex items-center gap-1 text-[10px] text-[var(--genui-muted)] hover:text-[var(--genui-text)] transition-colors"
-          title="Copy"
-        >
-          {copied ? (
-            <Check className="w-3 h-3 text-[var(--genui-success)]" />
-          ) : (
-            <Copy className="w-3 h-3" />
-          )}
-          {copied ? "Copied!" : "Copy"}
-        </button>
-      </div>
-      <pre className="px-4 py-3 text-[11px] font-mono leading-relaxed text-[var(--genui-text)] overflow-x-auto whitespace-pre">
-        {code}
-      </pre>
-    </div>
-  );
+  hideFooter?: boolean;
 }
 
 /* ─────────────────────────────────────────────
@@ -111,18 +78,15 @@ function RenderSection({ section, isStreaming, isLast }: {
     case "heading":
       return (
         <h3 className="text-[11px] font-bold uppercase tracking-widest text-[var(--genui-muted)] pt-3 pb-1 border-b border-[var(--genui-border)] mb-2">
-          {section.content}
+          {section.content ?? ""}
         </h3>
       );
 
     case "paragraph":
       return (
-        <p className="text-sm text-[var(--genui-text)] leading-relaxed mb-2">
-          {section.content}
-          {isStreaming && isLast && (
-            <span className="inline-block w-[7px] h-[14px] ml-0.5 bg-[var(--genui-text)] align-middle animate-pulse rounded-[1px]" />
-          )}
-        </p>
+        <div className="mb-2">
+          <ReportTextContent content={section.content ?? ""} isStreaming={isStreaming} isLast={isLast} />
+        </div>
       );
 
     case "numbered-list":
@@ -133,12 +97,12 @@ function RenderSection({ section, isStreaming, isLast }: {
               <span className="flex-shrink-0 w-5 h-5 rounded-full bg-[var(--genui-surface)] border border-[var(--genui-border)] flex items-center justify-center text-[10px] font-bold text-[var(--genui-muted)] mt-0.5">
                 {i + 1}
               </span>
-              <span>
-                {item}
+              <div className="min-w-0 flex-1">
+                <LabelValueText text={item} />
                 {isStreaming && isLast && i === (section.items?.length ?? 0) - 1 && (
                   <span className="inline-block w-[7px] h-[14px] ml-0.5 bg-[var(--genui-text)] align-middle animate-pulse rounded-[1px]" />
                 )}
-              </span>
+              </div>
             </li>
           ))}
         </ol>
@@ -150,7 +114,9 @@ function RenderSection({ section, isStreaming, isLast }: {
           {(section.items ?? []).map((item, i) => (
             <li key={i} className="flex items-start gap-2 text-sm text-[var(--genui-text)] leading-snug">
               <span className="mt-0.5 flex-shrink-0 w-3.5 h-3.5 rounded border border-[var(--genui-border)] bg-[var(--genui-surface)]" />
-              <span>{item}</span>
+              <div className="min-w-0 flex-1">
+                <LabelValueText text={item} />
+              </div>
             </li>
           ))}
         </ul>
@@ -196,6 +162,7 @@ export function AssistantReportMessage({
   onReviewDetails,
   onRetry,
   evidence,
+  hideFooter = false,
 }: AssistantReportMessageProps) {
   const [collapsed, setCollapsed] = useState(defaultCollapsed);
   const [hasOverflow, setHasOverflow] = useState(false);
@@ -245,9 +212,9 @@ export function AssistantReportMessage({
                 Needs Resolution
               </span>
             </div>
-            <p className="text-xs text-[var(--genui-muted)] mb-3">
-              {sections[0]?.content ?? "An error occurred while generating the report."}
-            </p>
+            <div className="mb-3 text-xs text-[var(--genui-muted)]">
+              <ReportTextContent content={sections[0]?.content ?? "An error occurred while generating the report."} />
+            </div>
             {/* Nav-only link — SSOT: no retry CTA in center column */}
             {onReviewDetails && (
               <button
@@ -290,8 +257,8 @@ export function AssistantReportMessage({
 
   return (
     <div
-      className={cn(
-        "w-full max-w-[860px] mx-auto rounded-xl border bg-[var(--genui-card)] shadow-[var(--genui-shadow-sm)] overflow-hidden transition-all duration-300",
+        className={cn(
+        "mx-auto flex min-h-0 w-full max-w-[860px] flex-col overflow-hidden rounded-xl border bg-[var(--genui-card)] shadow-[var(--genui-shadow-sm)] transition-all duration-300",
         accentBorder,
         className
       )}
@@ -359,15 +326,15 @@ export function AssistantReportMessage({
       </div>
 
       {/* ── Body (scrollable) ── */}
-      <div className="relative">
+      <div className="relative flex min-h-0 flex-1 flex-col">
         <div
           ref={bodyRef}
           className={cn(
-            "px-5 py-4 overflow-y-auto scroll-smooth",
+            "min-h-0 flex-1 overflow-y-auto scroll-smooth px-5 py-4",
             // Only cap height when not collapsed (collapsed = naturally short)
             !collapsed && "overflow-y-auto"
           )}
-          style={!collapsed ? { maxHeight: `${maxBodyHeight}px` } : undefined}
+          style={!collapsed && typeof maxBodyHeight === "number" ? { maxHeight: `${maxBodyHeight}px` } : undefined}
           onScroll={checkOverflow}
         >
           {visibleSections.map((section, i) => (
@@ -404,7 +371,7 @@ export function AssistantReportMessage({
       </div>
 
       {/* ── Footer meta (final only) ── */}
-      {!isStreaming && !collapsed && (
+      {!isStreaming && !collapsed && !hideFooter && (
         <div className="px-5 py-2.5 border-t border-[var(--genui-border)] bg-[var(--genui-panel)] flex items-center justify-between gap-4">
           <span className="text-[10px] text-[var(--genui-muted)] flex-shrink-0">
             {sections.filter((s) => s.type !== "spacer" && s.type !== "heading").length} content blocks

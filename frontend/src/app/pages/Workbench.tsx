@@ -807,7 +807,6 @@ export default function Workbench() {
     : [];
 
   const preEdaSummarySections = [
-    { type: "heading" as const, content: "AI 분석 요약" },
     {
       type: "paragraph" as const,
       content:
@@ -820,7 +819,7 @@ export default function Workbench() {
       type: "checklist" as const,
       items:
         selectedPreEdaProfile?.summaryBullets ?? [
-          "상위 5개 row 미리보기와 데이터 개요 요약을 먼저 확인합니다.",
+          "상위 3개 row 미리보기와 데이터 개요 요약을 먼저 확인합니다.",
           "컬럼 타입 분류와 결측치 분석은 Details 패널에서 drill-down 됩니다.",
           "질문 이후에는 Deep EDA와 report 흐름으로 이어집니다.",
         ],
@@ -1360,7 +1359,7 @@ export default function Workbench() {
                   : "전처리 계획을 검토하거나 수정 지시를 입력하세요..."
               :
               state === "error" ? "Type to discuss the error..." :
-                "Ask Gen-UI to analyze, visualize, or transform..."
+                "Gen-UI에게 분석, 시각화, 변환 등을 요청하세요."
       }
       onSend={handleSendMessage}
       onStop={() => pipeline.handleCancel()}

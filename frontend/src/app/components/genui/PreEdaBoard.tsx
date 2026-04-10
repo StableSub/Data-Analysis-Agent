@@ -70,7 +70,11 @@ function formatDistributionBound(value: number): string {
   return formatMetric(value);
 }
 
-function formatDistributionLabel(label: string): string {
+function formatDistributionLabel(label: string, kind: "numeric" | "categorical"): string {
+  if (kind !== "numeric") {
+    return label;
+  }
+
   const intervalMatch = label.match(/^[\[(]\s*([^,]+)\s*,\s*([^\])]+)\s*[\])]\s*$/);
   if (intervalMatch) {
     const [, startRaw, endRaw] = intervalMatch;
@@ -82,10 +86,11 @@ function formatDistributionLabel(label: string): string {
     }
   }
 
-  if (label.includes("-")) {
-    const [startRaw, endRaw] = label.split("-");
-    const start = Number(startRaw);
-    const end = Number(endRaw);
+  const hyphenParts = label.split("-");
+  if (hyphenParts.length === 2) {
+    const [startRaw, endRaw] = hyphenParts;
+    const start = Number(startRaw.trim());
+    const end = Number(endRaw.trim());
 
     if (Number.isFinite(start) && Number.isFinite(end)) {
       return `${formatDistributionBound(start)}~${formatDistributionBound(end)}`;
@@ -96,10 +101,14 @@ function formatDistributionLabel(label: string): string {
 }
 
 function formatDistributionAxisLabel(label: string, kind: "numeric" | "categorical"): string {
-  const formatted = formatDistributionLabel(label);
+  const formatted = formatDistributionLabel(label, kind);
   return kind === "categorical" && formatted.length > 5
     ? `${formatted.slice(0, 5)}...`
     : formatted;
+}
+
+function getPreviewColumnWidth(column: string): string {
+  return `${Math.min(Math.max(column.length + 4, 12), 28)}ch`;
 }
 
 const DISTRIBUTION_VISIBLE_BAR_COUNT = 8;
@@ -108,6 +117,7 @@ const DISTRIBUTION_BAR_MAX_WIDTH = 30;
 const PREVIEW_DISTRIBUTION_BAR_MAX_WIDTH = 19;
 const NUMERIC_DISTRIBUTION_SCROLL_THRESHOLD = 24;
 const NUMERIC_DISTRIBUTION_BAR_SLOT_WIDTH = 22;
+const PREVIEW_ROW_COUNT = 3;
 
 function getRenderableDistributionColumns(profile: PreEdaProfile): string[] {
   const seen = new Set<string>();
@@ -158,12 +168,14 @@ interface DistributionTooltipProps {
   active?: boolean;
   label?: string;
   payload?: DistributionTooltipEntry[];
+  kind: "numeric" | "categorical";
 }
 
 function DistributionTooltipContent({
   active,
   label,
   payload,
+  kind,
 }: DistributionTooltipProps) {
   if (!active || !payload?.length) {
     return null;
@@ -173,9 +185,9 @@ function DistributionTooltipContent({
   const payloadLabel = payload[0]?.payload?.label;
   const displayLabel =
     typeof payloadLabel === "string"
-      ? formatDistributionLabel(payloadLabel)
+      ? formatDistributionLabel(payloadLabel, kind)
       : typeof label === "string"
-        ? formatDistributionLabel(label)
+        ? formatDistributionLabel(label, kind)
         : "-";
   const displayValue =
     typeof value === "number"
@@ -185,8 +197,8 @@ function DistributionTooltipContent({
         : "-";
 
   return (
-    <div className="rounded-lg border border-[var(--genui-border-strong)] bg-[var(--genui-panel)] px-3 py-2 shadow-[0_12px_28px_rgba(15,23,42,0.14)]">
-      <p className="text-sm font-semibold text-[var(--genui-text)]">{displayLabel}</p>
+    <div className="max-w-[28rem] rounded-lg border border-[var(--genui-border-strong)] bg-[var(--genui-panel)] px-3 py-2 shadow-[0_12px_28px_rgba(15,23,42,0.14)]">
+      <p className="break-all whitespace-normal text-sm font-semibold text-[var(--genui-text)]">{displayLabel}</p>
       <div className="mt-1 flex items-center gap-2 text-sm text-[var(--genui-text)]">
         <span className="inline-flex h-3 w-1 rounded-full bg-[var(--genui-running)]" />
         <span className="text-[var(--genui-muted)]">Count</span>
@@ -292,7 +304,7 @@ function PreprocessRecommendationCard({
         <CardShell status="success" className="xl:col-span-12">
           <CardHeader
             title="전처리 추천"
-            meta="PREPROCESS"
+            meta="Preprocess Recomendation"
             statusLabel="Clean"
             statusVariant="success"
             className="px-3.5 py-2.5"
@@ -577,6 +589,7 @@ export function PreEdaBoard({
   distributionError = null,
 }: PreEdaBoardProps) {
   const previewColumns = profile.columns;
+  const previewRows = useMemo(() => profile.sampleRows.slice(0, PREVIEW_ROW_COUNT), [profile.sampleRows]);
   const distributionOptions = useMemo(() => getRenderableDistributionColumns(profile), [profile]);
   const [selectedDistributionColumn, setSelectedDistributionColumn] = useState(
     distributionOptions[0] ?? "",
@@ -659,19 +672,25 @@ export function PreEdaBoard({
         <CardShell className="h-fit xl:col-span-12">
           <CardHeader
             title="데이터 미리보기"
-            meta="TOP 5 ROWS"
+            meta="TOP 3 ROWS"
             statusLabel="Table"
             statusVariant="neutral"
             className="px-3.5 py-2.5"
           />
           <CardBody className="p-0 overflow-auto">
-            <table className="min-w-full text-sm">
+            <table className="min-w-full table-fixed text-sm">
+              <colgroup>
+                {previewColumns.map((column) => (
+                  <col key={column} style={{ width: getPreviewColumnWidth(column) }} />
+                ))}
+              </colgroup>
               <thead className="bg-[var(--genui-surface)]/80">
                 <tr>
                   {previewColumns.map((column) => (
                     <th
                       key={column}
-                      className="border-b border-[var(--genui-border)] px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--genui-muted)]"
+                      title={column}
+                      className="border-b border-[var(--genui-border)] px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider whitespace-nowrap text-[var(--genui-muted)]"
                     >
                       {column}
                     </th>
@@ -679,7 +698,7 @@ export function PreEdaBoard({
                 </tr>
               </thead>
               <tbody>
-                {profile.sampleRows.map((row, rowIndex) => (
+                {previewRows.map((row, rowIndex) => (
                   <tr
                     key={`${rowIndex}-${previewColumns[0] ?? "row"}`}
                     className="odd:bg-[var(--genui-panel)] even:bg-[var(--genui-surface)]/30"
@@ -687,9 +706,11 @@ export function PreEdaBoard({
                     {previewColumns.map((column) => (
                       <td
                         key={`${rowIndex}-${column}`}
-                        className="border-b border-[var(--genui-border)]/60 px-3 py-2 text-[13px] text-[var(--genui-text)]"
+                        className="border-b border-[var(--genui-border)]/60 px-3 py-2 text-[13px] align-top text-[var(--genui-text)]"
                       >
-                        {row[column] ?? "—"}
+                        <div className="max-w-full truncate" title={row[column] ?? "—"}>
+                          {row[column] ?? "—"}
+                        </div>
                       </td>
                     ))}
                   </tr>
@@ -705,7 +726,7 @@ export function PreEdaBoard({
         <CardShell className="min-h-[206px] xl:col-span-6">
           <CardHeader
             title="데이터 개요 요약"
-            meta="PRE-EDA"
+            meta="Overview Summary"
             statusLabel="Ready"
             statusVariant="running"
             className="px-3.5 py-2.5"
@@ -728,7 +749,7 @@ export function PreEdaBoard({
               <MetricTile
                 label="Group key"
                 value={profile.groupKeyColumns.length > 0
-                  ? `${profile.groupKeyColumns.length} 후보`
+                  ? `${profile.groupKeyColumns.length} 개 감지`
                   : "없음"}
               />
             </div>
@@ -787,8 +808,8 @@ export function PreEdaBoard({
         <CardShell className="min-h-[360px] xl:col-span-7">
           <CardHeader
             title="기본 통계"
-            meta="NUMERIC ONLY"
-            statusLabel={profile.numericColumnStats.length > 0 ? "mean / std / q1 / q3" : "No Numeric"}
+            meta="Basic Statics"
+            statusLabel={profile.numericColumnStats.length > 0 ? "Table" : "No Numeric"}
             statusVariant="neutral"
             className="px-3.5 py-2.5"
           />
@@ -833,18 +854,58 @@ export function PreEdaBoard({
           </CardBody>
         </CardShell>
 
-        <AssistantReportMessage
-          className="max-w-none mx-0 h-full xl:col-span-5"
-          title="Pre-EDA Summary"
-          subtitle="질문 전 빠른 맥락"
-          timestamp="방금 생성됨"
-          sections={summarySections}
-          maxBodyHeight={380}
-        />
+        <div className="flex flex-col gap-3 xl:col-span-5">
+          <AssistantReportMessage
+            className="mx-0 max-w-none min-h-[420px]"
+            title="AI 분석 요약"
+            subtitle="AI Summary"
+            sections={summarySections}
+            maxBodyHeight={650}
+            hideFooter
+          />
+
+          <CardShell>
+            <CardHeader
+              title="상관관계 TOP 3 분석"
+              meta="Corellation"
+              statusLabel={profile.correlationTopPairs.length > 0 ? "Top 3" : "Insufficient"}
+              statusVariant="neutral"
+              className="px-3.5 py-2.5"
+            />
+            <CardBody className="space-y-2.5 p-3">
+              {profile.correlationTopPairs.length > 0 ? (
+                profile.correlationTopPairs.map((item) => (
+                  <div
+                    key={`${item.left}-${item.right}`}
+                    className="rounded-lg border border-[var(--genui-border)] bg-[var(--genui-surface)] px-3 py-2.5"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold text-[var(--genui-text)]">
+                          {item.left} {"<->"} {item.right}
+                        </p>
+                        <p className="mt-1 text-xs text-[var(--genui-muted)]">
+                          absolute corr 기준 상위 pair
+                        </p>
+                      </div>
+                      <span className="text-lg font-semibold text-[var(--genui-text)]">
+                        {item.value.toFixed(3)}
+                      </span>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="rounded-xl border border-[var(--genui-border)] bg-[var(--genui-surface)] px-4 py-4 text-sm text-[var(--genui-text)]">
+                  numeric 컬럼이 충분하지 않아 상관관계 TOP 분석을 만들지 않았습니다.
+                </div>
+              )}
+            </CardBody>
+          </CardShell>
+        </div>
       </div>
 
       <div className="grid gap-3 xl:grid-cols-12">
-        <CardShell className="xl:col-span-6">
+        <CardShell className="xl:col-span-7">
           <CardHeader
             title="분포 시각화"
             meta="COLUMN DISTRIBUTION"
@@ -961,7 +1022,8 @@ export function PreEdaBoard({
                       <ChartTooltip
                         cursor={false}
                         shared={false}
-                        content={<DistributionTooltipContent />}
+                        content={<DistributionTooltipContent kind={selectedDistribution.kind} />}
+                        wrapperStyle={{ maxWidth: "28rem", whiteSpace: "normal" }}
                       />
                       <Bar
                         dataKey="value"
@@ -975,11 +1037,6 @@ export function PreEdaBoard({
                 <p className="text-center text-sm font-medium text-[var(--genui-text)]">
                   {selectedDistribution.column}
                 </p>
-                <p className="text-xs text-[var(--genui-muted)]">
-                  {selectedDistribution.kind === "numeric"
-                    ? "numeric 컬럼은 binning 후 histogram으로 표시합니다."
-                    : "categorical / boolean / group key 컬럼은 value counts 전체 항목을 가로 스크롤로 탐색할 수 있습니다."}
-                </p>
               </>
             ) : (
               <div className="rounded-xl border border-[var(--genui-border)] bg-[var(--genui-surface)] px-4 py-4 text-sm text-[var(--genui-text)]">
@@ -989,48 +1046,10 @@ export function PreEdaBoard({
           </CardBody>
         </CardShell>
 
-        <CardShell className="xl:col-span-3">
-          <CardHeader
-            title="상관관계 TOP 분석"
-            meta="PEARSON"
-            statusLabel={profile.correlationTopPairs.length > 0 ? "Top 3" : "Insufficient"}
-            statusVariant="neutral"
-            className="px-3.5 py-2.5"
-          />
-          <CardBody className="space-y-2.5 p-3">
-            {profile.correlationTopPairs.length > 0 ? (
-              profile.correlationTopPairs.map((item, index) => (
-                <div
-                  key={`${item.left}-${item.right}`}
-                  className="rounded-lg border border-[var(--genui-border)] bg-[var(--genui-surface)] px-3 py-2.5"
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <p className="text-sm font-semibold text-[var(--genui-text)]">
-                        {index + 1}. {item.left} ↔ {item.right}
-                      </p>
-                      <p className="mt-1 text-xs text-[var(--genui-muted)]">
-                        absolute corr 기준 상위 pair
-                      </p>
-                    </div>
-                    <span className="text-lg font-semibold text-[var(--genui-text)]">
-                      {item.value.toFixed(3)}
-                    </span>
-                  </div>
-                </div>
-              ))
-            ) : (
-              <div className="rounded-xl border border-[var(--genui-border)] bg-[var(--genui-surface)] px-4 py-4 text-sm text-[var(--genui-text)]">
-                numeric 컬럼이 충분하지 않아 상관관계 TOP 분석을 만들지 않았습니다.
-              </div>
-            )}
-          </CardBody>
-        </CardShell>
-
-        <CardShell className="xl:col-span-3">
+        <CardShell className="xl:col-span-5">
           <CardHeader
             title="이상치 탐지"
-            meta="IQR"
+            meta="Outlier Detection"
             statusLabel={profile.outlierSummaries.some((item) => item.outlierCount > 0) ? "Detected" : "Stable"}
             statusVariant={profile.outlierSummaries.some((item) => item.outlierCount > 0) ? "warning" : "success"}
             className="px-3.5 py-2.5"
