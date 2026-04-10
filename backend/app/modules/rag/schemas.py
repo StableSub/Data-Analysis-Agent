@@ -24,7 +24,3 @@ class RagQueryResponse(BaseModel):
     answer: str
     retrieved_chunks: List[RagRetrievedChunk]
     executed_at: datetime
-
-
-class RagDeleteResponse(BaseModel):
-    success: bool

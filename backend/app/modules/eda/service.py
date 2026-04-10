@@ -1,7 +1,6 @@
 from pathlib import Path
 
 import pandas as pd
-import logging
 
 from .ai import generate_eda_ai_summary
 from .schemas import (
@@ -28,9 +27,7 @@ from ..datasets.repository import DataSourceRepository
 from ..datasets.service import DatasetReader
 from ..profiling.schemas import DatasetProfile
 from ..profiling.service import DatasetProfileService
-from .ai import detect_issues, _issues_to_recommendation, recommend
-
-logger = logging.getLogger(__name__)
+from .ai import detect_issues, recommend
 
 class EDANotFoundError(LookupError):
     """Raised when a requested EDA resource does not exist."""
@@ -234,7 +231,6 @@ class EDAService:
                     truncated=False,
                     bins=[],
                 )
-
             if numeric_series.nunique() == 1:
                 value = float(numeric_series.iloc[0])
                 distribution_bins = [
@@ -246,7 +242,7 @@ class EDAService:
                     )
                 ]
             else:
-                cut_result, edges = pd.cut(
+                cut_result, _ = pd.cut(
                     numeric_series,
                     bins=max(1, bins),
                     include_lowest=True,
@@ -604,6 +600,18 @@ class EDAService:
         *,
         model_id: str | None = None,
     ) -> PreprocessRecommendation | None:
+        response = self.get_preprocess_recommendation_response(
+            source_id,
+            model_id=model_id,
+        )
+        return response.recommendation if response is not None else None
+
+    def get_preprocess_recommendation_response(
+        self,
+        source_id: str,
+        *,
+        model_id: str | None = None,
+    ) -> PreprocessRecommendationResponse | None:
         """
         EDA 결과를 기반으로 전처리 추천 생성
 
@@ -628,8 +636,14 @@ class EDAService:
         dataset = self.dataset_repository.get_by_source_id(source_id)
         if dataset is None or not dataset.storage_path:
             return None
+        file_path = Path(dataset.storage_path)
+        if not file_path.exists() or not file_path.is_file():
+            return None
 
-        df = self.reader.read_csv(dataset.storage_path)
+        try:
+            df = self.reader.read_csv(dataset.storage_path)
+        except FileNotFoundError:
+            return None
 
         stats = self._build_stats_response(source_id, profile, df)
         correlations = self._build_correlations_response(source_id, profile, df, limit=3)
@@ -643,9 +657,6 @@ class EDAService:
         )
 
 
-        # fallback 결과 
-        fallback = _issues_to_recommendation(detected_issues)
-
         # LLM용 summary 구성 
         prompt_summary = self._build_prompt_summary(
             summary,
@@ -656,22 +667,16 @@ class EDAService:
         # RAG — 아직 없으면 빈 문자열
         rag_context = ""
 
-        # LLM 추천 시도
-        try:
-            result = recommend(
-                eda_summary=prompt_summary,
-                detected_issues=detected_issues,
-                rag_context=rag_context,
-                default_model=self.default_model,
-                model_id=model_id,
-            )
-
-            return result
-
-        except Exception as exc:
-            logger.warning(
-                "전처리 추천 LLM 실패 → fallback 사용. source_id=%s error=%s",
-                source_id,
-                exc,
-            )
-            return fallback
+        result = recommend(
+            eda_summary=prompt_summary,
+            detected_issues=detected_issues,
+            rag_context=rag_context,
+            default_model=self.default_model,
+            model_id=model_id,
+        )
+        return PreprocessRecommendationResponse(
+            source_id=source_id,
+            recommendation=result.recommendation,
+            generation_mode=result.generation_mode,
+            warning=result.warning,
+        )

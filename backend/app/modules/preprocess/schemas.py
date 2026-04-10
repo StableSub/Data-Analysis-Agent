@@ -4,6 +4,8 @@ from typing import Annotated, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from ..eda.schemas import PreprocessRecommendation
+
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -42,7 +44,10 @@ class ScaleOperation(StrictModel):
 class DerivedColumnOperation(StrictModel):
     op: Literal["derived_column"]
     name: str
-    expression: str
+    expression: str | None = None
+    source_columns: list[str] = Field(default_factory=list)
+    transform_type: Literal["log1p", "sum", "difference", "ratio"] | None = None
+    params: dict[str, object] | None = None
 
 class EncodeCategoricalOperation(StrictModel):
     op: Literal["encode_categorical"]
@@ -110,6 +115,11 @@ PreprocessOperation = Annotated[
 class PreprocessApplyRequest(StrictModel):
     source_id: str
     operations: list[PreprocessOperation] = Field(default_factory=list)
+
+
+class PreprocessApplyRecommendationRequest(StrictModel):
+    source_id: str
+    recommendation: PreprocessRecommendation
 
 
 class PreprocessApplyResponse(StrictModel):

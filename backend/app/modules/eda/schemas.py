@@ -165,6 +165,10 @@ class RecommendedOperation(BaseModel):
         "derived_column",
     ]
     target_columns: list[str]
+    source_columns: list[str] = Field(default_factory=list)
+    target_column: str = ""
+    transform_type: Literal["log1p", "sum", "difference", "ratio"] | None = None
+    params: dict[str, object] | None = None
     reason: str
     priority: Literal["high", "medium", "low"]
 
@@ -177,3 +181,5 @@ class PreprocessRecommendation(BaseModel):
 class PreprocessRecommendationResponse(BaseModel):
     source_id: str
     recommendation: PreprocessRecommendation
+    generation_mode: Literal["llm", "fallback", "none"]
+    warning: str | None = None

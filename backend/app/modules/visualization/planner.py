@@ -110,10 +110,18 @@ def build_visualization_plan(
             update={"reason": "시각화 대상 source_id가 없어 계획을 생성하지 못했습니다."}
         )
 
-    df = visualization_service.load_sample_frame(source_id, nrows=max_sample_rows)
-    if df is None:
+    df, load_status = visualization_service.load_sample_frame(source_id, nrows=max_sample_rows)
+    if load_status == "dataset_missing":
         return empty_plan.model_copy(
             update={"reason": "시각화 대상 데이터셋을 찾지 못했습니다."}
+        )
+    if load_status == "unsupported_format":
+        return empty_plan.model_copy(
+            update={"reason": "CSV 형식 데이터셋만 시각화 계획을 생성할 수 있습니다."}
+        )
+    if load_status == "read_error":
+        return empty_plan.model_copy(
+            update={"reason": "데이터를 읽지 못해 시각화 계획을 생성하지 못했습니다."}
         )
 
     if df.empty:

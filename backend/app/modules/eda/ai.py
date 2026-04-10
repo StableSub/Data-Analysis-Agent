@@ -1,15 +1,24 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Literal
 import logging
+from dataclasses import dataclass
+from typing import Any, Literal
 
 from langchain_core.messages import HumanMessage, SystemMessage
+from pydantic import ValidationError
 
 from .schemas import RecommendedOperation, PreprocessRecommendation
 from ...core.ai import LLMGateway, PromptRegistry
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class RecommendationResult:
+    recommendation: PreprocessRecommendation
+    generation_mode: Literal["llm", "fallback", "none"]
+    warning: str | None = None
 
 PROMPTS = PromptRegistry(
     {
@@ -172,16 +181,18 @@ def detect_issues(
                 values.append((col.column, col.max - col.min))
 
         if len(values) >= 2:
-            max_range = max(v for _, v in values)
-            min_range = min(v for _, v in values if v > 0)
+            positive_ranges = [value for _, value in values if value > 0]
+            if len(positive_ranges) >= 2:
+                max_range = max(positive_ranges)
+                min_range = min(positive_ranges)
 
-            if min_range > 0 and max_range / min_range > 100:
-                cols = [c for c, _ in values]
-                issues.append({
-                    "issue": "scale_imbalance",
-                    "cols": cols,
-                    "ratio": max_range / min_range,
-                })
+                if min_range > 0 and max_range / min_range > 100:
+                    cols = [c for c, _ in values]
+                    issues.append({
+                        "issue": "scale_imbalance",
+                        "cols": cols,
+                        "ratio": max_range / min_range,
+                    })
 
     return issues
 
@@ -219,6 +230,10 @@ def _issues_to_recommendation(detected_issues: list[dict]) -> PreprocessRecommen
             operations.append(RecommendedOperation(
                 op=op,
                 target_columns=[issue["col"]],
+                source_columns=[],
+                target_column="",
+                transform_type=None,
+                params=None,
                 reason=f"결측치 비율 {ratio:.1%} — {'제거' if op == 'drop_missing' else 'median 대체'} 권장",
                 priority=priority,
             ))
@@ -228,6 +243,10 @@ def _issues_to_recommendation(detected_issues: list[dict]) -> PreprocessRecommen
             operations.append(RecommendedOperation(
                 op="outlier",
                 target_columns=[issue["col"]],
+                source_columns=[],
+                target_column="",
+                transform_type=None,
+                params=None,
                 reason=f"왜도 {skew:.2f} — IQR 기반 이상치 처리 권장",
                 priority="medium",
             ))
@@ -239,6 +258,10 @@ def _issues_to_recommendation(detected_issues: list[dict]) -> PreprocessRecommen
             operations.append(RecommendedOperation(
                 op="drop_columns",
                 target_columns=issue.get("cols", []),
+                source_columns=[],
+                target_column="",
+                transform_type=None,
+                params=None,
                 reason=f"상관계수 {corr:.2f} — 다중공선성 문제, 컬럼 제거 권장",
                 priority=priority,
             ))
@@ -247,6 +270,10 @@ def _issues_to_recommendation(detected_issues: list[dict]) -> PreprocessRecommen
             operations.append(RecommendedOperation(
                 op="encode_categorical",
                 target_columns=[issue["col"]],
+                source_columns=[],
+                target_column="",
+                transform_type=None,
+                params=None,
                 reason=f"범주형 컬럼 — 인코딩 필요 (고유값 {issue.get('cardinality')}개)",
                 priority="medium",
             ))
@@ -255,6 +282,10 @@ def _issues_to_recommendation(detected_issues: list[dict]) -> PreprocessRecommen
             operations.append(RecommendedOperation(
                 op="parse_datetime",
                 target_columns=[issue["col"]],
+                source_columns=[],
+                target_column="",
+                transform_type=None,
+                params=None,
                 reason="날짜 패턴이 감지된 object 컬럼 — datetime 변환 권장",
                 priority="low",
             ))
@@ -263,6 +294,10 @@ def _issues_to_recommendation(detected_issues: list[dict]) -> PreprocessRecommen
             operations.append(RecommendedOperation(
                 op="scale",
                 target_columns=issue.get("cols", []),
+                source_columns=[],
+                target_column="",
+                transform_type=None,
+                params=None,
                 reason=f"컬럼 간 스케일 차이 {issue.get('ratio', 0):.0f}배 — standardize 권장",
                 priority="medium",
             ))
@@ -319,6 +354,10 @@ def _build_prompt(
             {
                 "op": "op 값 (drop_missing | impute | drop_columns | scale | encode_categorical | outlier | parse_datetime | derived_column)",
                 "target_columns": ["컬럼명"],
+                "source_columns": ["derived_column일 때 원본 컬럼명"],
+                "target_column": "derived_column일 때 생성할 새 컬럼명",
+                "transform_type": "derived_column일 때 log1p | sum | difference | ratio 중 하나",
+                "params": {"ratio일 때 zero_division": "null"},
                 "reason": "추천 근거 (한국어)",
                 "priority": "high | medium | low",
             }
@@ -338,6 +377,12 @@ def _build_prompt(
 {rag_context or '검색 결과 없음'}
 
 위 정보를 바탕으로 필요한 전처리 연산을 추천하세요.
+derived_column은 반드시 실행 가능한 템플릿 기반으로만 제안하세요.
+- 허용 transform_type: log1p, sum, difference, ratio
+- derived_column일 때는 source_columns, target_column, transform_type를 반드시 채우세요.
+- ratio는 source_columns 길이 2, params.zero_division은 "null"로 두세요.
+- log1p는 source_columns 길이 1, target_column은 보통 "{{원본}}_log1p"로 제안하세요.
+다른 자유식 expression은 절대 만들지 마세요.
 반드시 아래 JSON 형식으로만 응답하세요. 다른 텍스트는 포함하지 마세요.
 
 {output_schema}"""
@@ -349,7 +394,7 @@ def recommend(
     rag_context: str,
     default_model: str,
     model_id: str | None = None,  
-) -> PreprocessRecommendation:
+) -> RecommendationResult:
     """
     EDA 결과와 감지된 문제를 바탕으로 전처리 방안을 추천한다.
 
@@ -358,9 +403,12 @@ def recommend(
     3. 실패 시 rule-based 결과만 반환 (서비스 중단 없음)
     """
     if not detected_issues:
-        return PreprocessRecommendation(
-            operations=[],
-            summary="현재 데이터에서 필수 전처리 항목이 감지되지 않았습니다.",
+        return RecommendationResult(
+            recommendation=PreprocessRecommendation(
+                operations=[],
+                summary="현재 데이터에서 필수 전처리 항목이 감지되지 않았습니다.",
+            ),
+            generation_mode="none",
         )
 
     prompt = _build_prompt(eda_summary, detected_issues, rag_context)
@@ -383,15 +431,30 @@ def recommend(
         raw = result.content if isinstance(result.content, str) else str(result.content)
         parsed = json.loads(raw)
         try:
-            return PreprocessRecommendation(**parsed)
-        except Exception as e:
+            return RecommendationResult(
+                recommendation=PreprocessRecommendation(**parsed),
+                generation_mode="llm",
+            )
+        except ValidationError as e:
             logger.warning("LLM 응답 스키마 불일치. fallback. error=%s", e)
-            return _issues_to_recommendation(detected_issues)
+            return RecommendationResult(
+                recommendation=_issues_to_recommendation(detected_issues),
+                generation_mode="fallback",
+                warning="LLM 응답 형식이 올바르지 않아 rule-based 추천으로 대체했습니다.",
+            )
 
     except json.JSONDecodeError:
         logger.warning("LLM 응답 JSON 파싱 실패. rule-based 결과로 fallback.\nraw=%s", raw)
-        return _issues_to_recommendation(detected_issues)
+        return RecommendationResult(
+            recommendation=_issues_to_recommendation(detected_issues),
+            generation_mode="fallback",
+            warning="LLM 응답을 해석하지 못해 rule-based 추천으로 대체했습니다.",
+        )
 
     except Exception as exc:
         logger.warning("LLM 호출 실패. rule-based 결과로 fallback. error=%s", exc)
-        return _issues_to_recommendation(detected_issues)
+        return RecommendationResult(
+            recommendation=_issues_to_recommendation(detected_issues),
+            generation_mode="fallback",
+            warning="LLM 추천 생성에 실패해 rule-based 추천으로 대체했습니다.",
+        )

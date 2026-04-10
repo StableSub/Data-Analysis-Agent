@@ -5,6 +5,7 @@ from typing import Any, Dict
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 
+from backend.app.core.trace_logging import set_trace_stage
 from backend.app.modules.visualization.executor import execute_visualization_plan
 from backend.app.modules.visualization.planner import (
     VisualizationPlan,
@@ -26,10 +27,12 @@ def build_visualization_workflow(
     default_model: str = "gpt-5-nano",
 ):
     def visualization_planner_node(state: VisualizationGraphState) -> Dict[str, Any]:
+        set_trace_stage("visualization_plan")
         analysis_result = state.get("analysis_result")
         analysis_plan = state.get("analysis_plan")
+        revision_instruction = get_revision_instruction(state.get("revision_request"))
         source_id = resolve_target_source_id(state)
-        if analysis_result and analysis_plan:
+        if analysis_result and analysis_plan and not revision_instruction:
             build_method = getattr(
                 visualization_service, "build_from_analysis_result", None
             )
@@ -68,6 +71,7 @@ def build_visualization_workflow(
         return "execute"
 
     def approval_gate_node(state: VisualizationGraphState) -> Dict[str, Any]:
+        set_trace_stage("visualization_approval")
         plan = VisualizationPlan.model_validate(state.get("visualization_plan") or {})
         source_id = str(plan.source_id or state.get("source_id") or "")
         preview_rows = visualization_service.build_preview_rows(
@@ -136,6 +140,7 @@ def build_visualization_workflow(
         return "approve"
 
     def visualization_executor_node(state: VisualizationGraphState) -> Dict[str, Any]:
+        set_trace_stage("visualization_execute")
         result = execute_visualization_plan(
             visualization_service=visualization_service,
             visualization_plan=state.get("visualization_plan"),

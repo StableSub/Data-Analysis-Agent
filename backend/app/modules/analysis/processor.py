@@ -4,6 +4,7 @@ import ast
 import re
 from typing import Any, Iterable
 
+from .sandbox import validate_analysis_source_code
 from .schemas import (
     AnalysisError,
     AnalysisExecutionResult,
@@ -23,15 +24,6 @@ from .schemas import (
     VisualizationHint,
 )
 
-_ALLOWED_IMPORT_ROOTS = {"json", "math", "statistics", "datetime", "pandas", "numpy"}
-_FORBIDDEN_CALLS = {
-    "open",
-    "exec",
-    "eval",
-    "compile",
-    "__import__",
-    "input",
-}
 _OUTPUT_KEYS = {"summary", "table", "raw_metrics", "used_columns"}
 _TIME_AXIS_BY_GRAIN = {
     "hour": "hour",
@@ -42,6 +34,18 @@ _TIME_AXIS_BY_GRAIN = {
     "year": "year",
 }
 _IDENTIFIER_RE = re.compile(r"[^a-zA-Z0-9_]+")
+_SYNTHETIC_DIMENSION_TOKENS = {
+    "column",
+    "columns",
+    "column_name",
+    "column_names",
+    "column_type",
+    "data_type",
+    "feature_type",
+}
+_NORMALIZED_SYNTHETIC_DIMENSION_TOKENS = {
+    _IDENTIFIER_RE.sub("", token.lower()) for token in _SYNTHETIC_DIMENSION_TOKENS
+}
 
 
 # 분석 계획과 실행 결과를 검증 및 정규화
@@ -113,6 +117,7 @@ class AnalysisProcessor:
         if not draft.metrics:
             raise ValueError("analysis plan draft requires at least one metric")
 
+        draft = self._sanitize_synthetic_dimensions(draft)
         resolved_columns = grounding.resolved_columns if grounding else {}
         derived_names = {column.name for column in draft.derived_columns}
 
@@ -205,28 +210,7 @@ class AnalysisProcessor:
         except SyntaxError as exc:
             raise ValueError(f"generated code is not valid python: {exc}") from exc
 
-        has_print = False
-        for node in ast.walk(tree):
-            # 허용되지 않은 import와 위험한 함수 호출을 차단한다.
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    root = alias.name.split(".")[0]
-                    if root not in _ALLOWED_IMPORT_ROOTS:
-                        raise ValueError(f"forbidden import: {alias.name}")
-            elif isinstance(node, ast.ImportFrom):
-                module_name = node.module or ""
-                root = module_name.split(".")[0]
-                if root not in _ALLOWED_IMPORT_ROOTS:
-                    raise ValueError(f"forbidden import: {module_name}")
-            elif isinstance(node, ast.Call):
-                call_name = self._extract_call_name(node.func)
-                if call_name in _FORBIDDEN_CALLS:
-                    raise ValueError(f"forbidden function call: {call_name}")
-                if call_name == "print":
-                    has_print = True
-
-        if not has_print:
-            raise ValueError("generated code must print a single JSON payload")
+        validate_analysis_source_code(code, require_print=True)
 
         # 결과 JSON 출력을 위한 필수 키가 코드에 포함되어 있는지 확인한다.
         missing_keys = [key for key in _OUTPUT_KEYS if key not in code]
@@ -640,6 +624,54 @@ class AnalysisProcessor:
 
         return time_context.model_copy(update={"time_column": normalized_time_column})
 
+    def _sanitize_synthetic_dimensions(
+        self,
+        draft: AnalysisPlanDraft,
+    ) -> AnalysisPlanDraft:
+        if not self._is_missing_value_overview_request(draft):
+            return draft
+
+        filters = [
+            condition
+            for condition in draft.filters
+            if not self._is_synthetic_dimension(condition.column)
+        ]
+        group_by = [
+            column for column in draft.group_by if not self._is_synthetic_dimension(column)
+        ]
+        visualization_hint = draft.visualization_hint
+        if (
+            self._is_synthetic_dimension(visualization_hint.x)
+            or self._is_synthetic_dimension(visualization_hint.series)
+        ):
+            visualization_hint = visualization_hint.model_copy(
+                update={
+                    "preferred_chart": "none",
+                    "x": None,
+                    "y": None,
+                    "series": None,
+                }
+            )
+
+        return draft.model_copy(
+            update={
+                "filters": filters,
+                "group_by": group_by,
+                "visualization_hint": visualization_hint,
+            }
+        )
+
+    def _is_missing_value_overview_request(self, draft: AnalysisPlanDraft) -> bool:
+        haystack = f"{draft.analysis_type} {draft.objective}".lower()
+        keywords = ("missing", "imputation", "impute", "결측", "전처리 계획")
+        return any(keyword in haystack for keyword in keywords)
+
+    def _is_synthetic_dimension(self, value: str | None) -> bool:
+        if value is None:
+            return False
+        normalized = self._normalize_identifier(value)
+        return normalized in _NORMALIZED_SYNTHETIC_DIMENSION_TOKENS
+
     def _resolve_column_name(
         self,
         column_name: str,
@@ -660,6 +692,8 @@ class AnalysisProcessor:
         matched = self._match_column(raw_value, metadata.columns)
         if matched:
             return matched
+        if self._is_synthetic_dimension(raw_value):
+            raise ValueError(f"planning used synthetic grouping dimension: {raw_value}")
         raise ValueError(f"column not found in dataset metadata: {raw_value}")
 
     def _match_column(self, term: str, columns: Iterable[str]) -> str | None:
@@ -684,13 +718,6 @@ class AnalysisProcessor:
         if not time_context or not time_context.grain:
             return None
         return _TIME_AXIS_BY_GRAIN.get(time_context.grain, time_context.grain)
-
-    def _extract_call_name(self, func: ast.AST) -> str | None:
-        if isinstance(func, ast.Name):
-            return func.id
-        if isinstance(func, ast.Attribute):
-            return func.attr
-        return None
 
     def _ensure_question_understanding(
         self,

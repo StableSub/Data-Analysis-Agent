@@ -17,11 +17,17 @@ class GuidelineRepository:
         self.db.refresh(guideline)
         return guideline
 
-    def list_all(self) -> List[Guideline]:
-        return self.db.query(Guideline).order_by(Guideline.id.desc()).all()
+    def list_page(self, skip: int = 0, limit: int = 20) -> List[Guideline]:
+        return (
+            self.db.query(Guideline)
+            .order_by(Guideline.id.desc())
+            .offset(skip)
+            .limit(limit)
+            .all()
+        )
 
-    def get_by_id(self, guideline_id: int) -> Optional[Guideline]:
-        return self.db.query(Guideline).filter(Guideline.id == guideline_id).first()
+    def count_all(self) -> int:
+        return self.db.query(Guideline).count()
 
     def get_by_source_id(self, source_id: str) -> Optional[Guideline]:
         return self.db.query(Guideline).filter(Guideline.source_id == source_id).first()
@@ -51,4 +57,3 @@ class GuidelineRepository:
     def delete(self, guideline: Guideline) -> None:
         self.db.delete(guideline)
         self.db.commit()
-

@@ -35,31 +35,6 @@ class RagChunk(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
-class RagContext(Base):
-    __tablename__ = "rag_context"
-
-    id = Column(Integer, primary_key=True, index=True)
-    session_id = Column(
-        Integer,
-        ForeignKey("chat_sessions.id", ondelete="CASCADE"),
-        index=True,
-        nullable=False,
-    )
-    source_id = Column(
-        String(36),
-        ForeignKey("rag_sources.source_id", ondelete="CASCADE"),
-        index=True,
-        nullable=False,
-    )
-    chunk_id = Column(
-        Integer,
-        ForeignKey("rag_chunks.id", ondelete="CASCADE"),
-        index=True,
-        nullable=False,
-    )
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-
-
 class GuidelineRagSource(Base):
     """
     지침서 문서의 RAG 인덱싱 메타데이터 관리 테이블.
@@ -98,33 +73,4 @@ class GuidelineRagChunk(Base):
     chunk_id = Column(Integer, nullable=False)
     content = Column(Text, nullable=False)
     faiss_id = Column(Integer, nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-
-
-class GuidelineRagContext(Base):
-    """
-    채팅 세션과 참조한 지침서 청크 간의 연결 테이블.
-    """
-
-    __tablename__ = "guideline_rag_context"
-
-    id = Column(Integer, primary_key=True, index=True)
-    session_id = Column(
-        Integer,
-        ForeignKey("chat_sessions.id", ondelete="CASCADE"),
-        index=True,
-        nullable=False,
-    )
-    source_id = Column(
-        String(36),
-        ForeignKey("guideline_rag_sources.source_id", ondelete="CASCADE"),
-        index=True,
-        nullable=False,
-    )
-    chunk_id = Column(
-        Integer,
-        ForeignKey("guideline_rag_chunks.id", ondelete="CASCADE"),
-        index=True,
-        nullable=False,
-    )
     created_at = Column(DateTime(timezone=True), server_default=func.now())

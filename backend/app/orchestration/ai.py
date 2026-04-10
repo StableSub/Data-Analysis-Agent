@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from typing import Literal
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
@@ -12,7 +11,6 @@ PROMPTS = PromptRegistry(
     {
         "intent.system": (
             "데이터셋이 이미 선택된 상황이다. "
-            "step은 data_pipeline으로 반환하라. "
             "질문을 보고 ask_analysis, ask_preprocess, ask_visualization, ask_report, ask_guideline을 true/false로 판단하라. "
             "평균 계산, 합계, 그룹화, 최근 N개월 필터링, 추세 분석, 비교, 상관 분석, 시각화는 전처리가 아니라 분석이다. "
             "timestamp/date 컬럼에서 월, 주, 일 단위로 집계하거나 버킷팅하는 것도 전처리가 아니라 분석이다. "
@@ -34,7 +32,6 @@ PROMPTS = PromptRegistry(
 
 
 class IntentDecision(BaseModel):
-    step: Literal["general_question", "data_pipeline"] = Field(...)
     ask_analysis: bool = Field(False)
     ask_preprocess: bool = Field(False)
     ask_visualization: bool = Field(False)
@@ -69,9 +66,7 @@ def answer_general_question(
     llm = LLMGateway(default_model=default_model)
     content = user_input
     if isinstance(request_context, str) and request_context.strip():
-        content = (
-            f"question:\n{user_input}\n\nrequest_context:\n{request_context.strip()}"
-        )
+        content = f"question:\n{user_input}\n\nrequest_context:\n{request_context.strip()}"
     result = llm.invoke(
         model_id=model_id,
         messages=[

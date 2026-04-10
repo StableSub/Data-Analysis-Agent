@@ -31,10 +31,18 @@ export interface AwaitingInfo {
   onViewDetails?: () => void;
 }
 
+export interface ThoughtStepItem {
+  phase: string;
+  status?: "active" | "completed" | "failed";
+  displayMessage: string;
+  detailMessage?: string;
+}
+
 export interface CopilotPanelProps {
   runStatus?: RunStatusData;
   toolCalls?: ToolCallEntry[];
   pipelineSteps?: PipelineStep[];
+  thoughtSteps?: ThoughtStepItem[];
   awaitingInfo?: AwaitingInfo;
   defaultSelectedId?: string;
   className?: string;
@@ -193,6 +201,43 @@ function SectionHeader({
   );
 }
 
+function ThoughtStatusDot({ status }: { status?: "active" | "completed" | "failed" }) {
+  const cls =
+    status === "failed"
+      ? "bg-[var(--genui-error)]"
+      : status === "active"
+        ? "bg-[var(--genui-running)]"
+        : "bg-[var(--genui-success)]";
+  return <span className={cn("w-1.5 h-1.5 rounded-full flex-shrink-0", cls)} />;
+}
+
+function ThoughtStepList({ steps }: { steps: ThoughtStepItem[] }) {
+  return (
+    <div className="px-3 py-2 space-y-2 bg-[var(--genui-surface)]">
+      {steps.map((step, index) => (
+        <div
+          key={`${step.phase}-${step.displayMessage}-${index}`}
+          className="rounded-lg border border-[var(--genui-border)] bg-[var(--genui-panel)] px-3 py-2"
+        >
+          <div className="flex items-start gap-2">
+            <ThoughtStatusDot status={step.status} />
+            <div className="min-w-0 flex-1">
+              <p className="text-[11px] font-medium text-[var(--genui-text)] leading-snug">
+                {step.displayMessage}
+              </p>
+              {(step.detailMessage || step.displayMessage) !== step.displayMessage && (
+                <p className="mt-1 text-[10px] leading-snug text-[var(--genui-muted)]">
+                  {step.detailMessage}
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /* ─────────────────────────────────────────────
    Sub-component: Filter toggles
 ───────────────────────────────────────────── */
@@ -305,6 +350,7 @@ export function CopilotPanel({
   runStatus,
   toolCalls = [],
   pipelineSteps,
+  thoughtSteps = [],
   awaitingInfo,
   defaultSelectedId,
   className,
@@ -315,9 +361,12 @@ export function CopilotPanel({
   );
   const [filter, setFilter] = useState<FilterType>("all");
   const [pipelineOpen, setPipelineOpen] = useState(true);
+  const [thoughtsOpen, setThoughtsOpen] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(true);
 
   const selectedCall = toolCalls.find((tc) => tc.id === selectedId) ?? null;
+  const latestThought = thoughtSteps[thoughtSteps.length - 1] ?? null;
+  const visibleThoughtSteps = [...thoughtSteps].reverse();
 
   /* ── Tool call filtering + sorting ── */
   const errorCount = toolCalls.filter(
@@ -372,6 +421,26 @@ export function CopilotPanel({
                 <PipelineTracker steps={pipelineSteps} />
               </div>
             )}
+          </div>
+        )}
+
+        {thoughtSteps.length > 0 && (
+          <div>
+            <SectionHeader
+              icon={<Activity className="w-3 h-3 text-[var(--genui-muted)]" />}
+              label="상세 진행 내용"
+              count={thoughtSteps.length}
+              open={thoughtsOpen}
+              onToggle={() => setThoughtsOpen((v) => !v)}
+            />
+            {!thoughtsOpen && latestThought && (
+              <div className="px-4 py-2 bg-[var(--genui-surface)] border-b border-[var(--genui-border)]">
+                <p className="text-[11px] text-[var(--genui-text)] leading-snug">
+                  {latestThought.displayMessage}
+                </p>
+              </div>
+            )}
+            {thoughtsOpen && <ThoughtStepList steps={visibleThoughtSteps} />}
           </div>
         )}
 

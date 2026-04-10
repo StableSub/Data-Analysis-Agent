@@ -1,18 +1,15 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from functools import lru_cache
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from fastapi import Depends
-from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from sqlalchemy.orm import Session
 
 from ..core.db import get_db
-from ..modules.datasets.service import build_data_source_repository, build_dataset_reader
-from ..modules.eda.dependencies import build_eda_service
-from ..modules.eda.service import EDAService
 from ..modules.analysis.dependencies import (
     build_analysis_processor,
     build_analysis_run_service,
@@ -21,18 +18,29 @@ from ..modules.analysis.dependencies import (
     build_results_repository,
 )
 from ..modules.analysis.service import AnalysisService
-from ..modules.datasets.service import (
-    build_data_source_repository,
-    build_dataset_reader,
-)
+from ..modules.datasets.dependencies import build_dataset_reader, build_dataset_repository
+from ..modules.eda.dependencies import build_eda_service
+from ..modules.eda.service import EDAService
+from ..modules.guidelines.dependencies import build_guideline_repository, build_guideline_service
+from ..modules.guidelines.service import GuidelineService
+from ..modules.planner.dependencies import build_planner_service
+from ..modules.planner.service import PlannerService
 from ..modules.preprocess.dependencies import (
     build_preprocess_processor,
     build_preprocess_service,
 )
 from ..modules.preprocess.service import PreprocessService
-from ..modules.profiling.dependencies import build_dataset_profile_service
-from ..modules.rag.dependencies import build_rag_repository, build_rag_service
-from ..modules.rag.service import RagService
+from ..modules.profiling.dependencies import (
+    build_dataset_context_service,
+    build_dataset_profile_service,
+)
+from ..modules.rag.dependencies import (
+    build_guideline_rag_repository,
+    build_guideline_rag_service,
+    build_rag_repository,
+    build_rag_service,
+)
+from ..modules.rag.service import GuidelineRagService, RagService
 from ..modules.reports.dependencies import build_report_repository, build_report_service
 from ..modules.reports.service import ReportService
 from ..modules.visualization.dependencies import build_visualization_service
@@ -41,28 +49,35 @@ from ..modules.visualization.service import VisualizationService
 if TYPE_CHECKING:
     from .client import AgentClient
 
+CHECKPOINT_DB_PATH = Path(__file__).resolve().parents[3] / "storage" / "langgraph_checkpoints.db"
+
 
 @dataclass(frozen=True)
 class WorkflowServices:
+    planner_service: PlannerService
     analysis_service: AnalysisService
     preprocess_service: PreprocessService
     eda_service: EDAService
     rag_service: RagService
+    guideline_service: GuidelineService
+    guideline_rag_service: GuidelineRagService
     visualization_service: VisualizationService
     report_service: ReportService
 
 
-@lru_cache(maxsize=1)
-def get_workflow_checkpointer() -> InMemorySaver:
-    return InMemorySaver()
-
-
 def build_orchestration_services(*, db: Session, agent: Any) -> WorkflowServices:
-    dataset_repository = build_data_source_repository(db)
+    dataset_repository = build_dataset_repository(db)
     dataset_reader = build_dataset_reader()
     profile_service = build_dataset_profile_service(
         repository=dataset_repository,
         reader=dataset_reader,
+    )
+    dataset_context_service = build_dataset_context_service(
+        repository=dataset_repository,
+        profile_service=profile_service,
+    )
+    planner_service = build_planner_service(
+        dataset_context_service=dataset_context_service,
     )
     eda_service = build_eda_service(
         profile_service=profile_service,
@@ -75,7 +90,8 @@ def build_orchestration_services(*, db: Session, agent: Any) -> WorkflowServices
     )
     analysis_service = build_analysis_service(
         repository=dataset_repository,
-        reader=dataset_reader,
+        dataset_context_service=dataset_context_service,
+        planner_service=planner_service,
         processor=build_analysis_processor(),
         run_service=build_analysis_run_service(),
         sandbox=build_analysis_sandbox(),
@@ -93,16 +109,23 @@ def build_orchestration_services(*, db: Session, agent: Any) -> WorkflowServices
         dataset_repository=dataset_repository,
         answer_agent=agent,
     )
+    guideline_service = build_guideline_service(
+        repository=build_guideline_repository(db),
+    )
+    guideline_rag_service = build_guideline_rag_service(
+        repository=build_guideline_rag_repository(db),
+    )
     report_service = build_report_service(
         repository=build_report_repository(db),
-        dataset_repository=dataset_repository,
-        reader=dataset_reader,
     )
     return WorkflowServices(
+        planner_service=planner_service,
         analysis_service=analysis_service,
         preprocess_service=preprocess_service,
         eda_service=eda_service,
         rag_service=rag_service,
+        guideline_service=guideline_service,
+        guideline_rag_service=guideline_rag_service,
         visualization_service=visualization_service,
         report_service=report_service,
     )
@@ -112,29 +135,31 @@ def build_agent_client(*, db: Session) -> "AgentClient":
     from .builder import build_main_workflow
     from .client import AgentClient
 
-    checkpointer = get_workflow_checkpointer()
     agent_box: dict[str, AgentClient] = {}
 
-    @contextmanager
-    def workflow_runtime_factory():
+    @asynccontextmanager
+    async def workflow_runtime_factory():
         agent = agent_box["agent"]
         services = build_orchestration_services(db=db, agent=agent)
-        workflow = build_main_workflow(
-            db=db,
-            analysis_service=services.analysis_service,
-            preprocess_service=services.preprocess_service,
-            eda_service=services.eda_service,
-            rag_service=services.rag_service,
-            visualization_service=services.visualization_service,
-            report_service=services.report_service,
-            default_model=agent.default_model,
-            checkpointer=checkpointer,
-        )
-        yield workflow
+        CHECKPOINT_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        async with AsyncSqliteSaver.from_conn_string(str(CHECKPOINT_DB_PATH)) as checkpointer:
+            workflow = build_main_workflow(
+                planner_service=services.planner_service,
+                analysis_service=services.analysis_service,
+                preprocess_service=services.preprocess_service,
+                eda_service=services.eda_service,
+                rag_service=services.rag_service,
+                guideline_service=services.guideline_service,
+                guideline_rag_service=services.guideline_rag_service,
+                visualization_service=services.visualization_service,
+                report_service=services.report_service,
+                default_model=agent.default_model,
+                checkpointer=checkpointer,
+            )
+            yield workflow
 
     agent = AgentClient(
         workflow_runtime_factory=workflow_runtime_factory,
-        checkpointer=checkpointer,
     )
     agent_box["agent"] = agent
     return agent

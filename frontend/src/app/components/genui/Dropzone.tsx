@@ -112,10 +112,10 @@ export function Dropzone({
       
       <div className="space-y-2 max-w-sm">
         <h3 className="text-lg font-semibold text-[var(--genui-text)]">
-          CSV, XLSX, JSON 업로드
+          CSV 업로드
         </h3>
         <p className="text-sm text-[var(--genui-muted)]">
-          파일당 최대 200MB • CSV, JSON, Excel(.xlsx, .xls)
+          파일당 최대 200MB • UTF-8 CSV
         </p>
       </div>
 

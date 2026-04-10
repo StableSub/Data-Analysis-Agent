@@ -14,7 +14,6 @@ from pydantic import ValidationError
 from .planner import VisualizationPlan
 from .service import VisualizationService
 
-PYTHON_EXECUTABLE = sys.executable
 SCRIPT_TIMEOUT_SECONDS = 15
 
 
@@ -47,15 +46,24 @@ def execute_visualization_plan(
             summary="시각화 대상 정보가 부족해 차트를 생성하지 못했습니다.",
         )
 
-    dataset_path = visualization_service.resolve_source_path(source_id)
-    if dataset_path is None:
+    df, load_status = visualization_service.load_sample_frame(source_id, nrows=max_sample_rows)
+    if load_status == "dataset_missing":
         return _build_unavailable_result(
             source_id=source_id,
             summary="시각화 대상 데이터셋을 찾지 못했습니다.",
         )
+    if load_status == "unsupported_format":
+        return _build_unavailable_result(
+            source_id=source_id,
+            summary="CSV 형식 데이터셋만 시각화할 수 있습니다.",
+        )
+    if load_status == "read_error":
+        return _build_unavailable_result(
+            source_id=source_id,
+            summary="데이터를 읽지 못해 차트를 생성하지 못했습니다.",
+        )
 
-    df = visualization_service.load_sample_frame(source_id, nrows=max_sample_rows)
-    if df is None or df.empty or not _chart_has_data(
+    if df.empty or not _chart_has_data(
         df=df,
         chart_type=plan.chart_type,
         x_key=plan.x_key,
@@ -65,6 +73,13 @@ def execute_visualization_plan(
         return _build_unavailable_result(
             source_id=source_id,
             summary="선택된 컬럼에서 유효한 시각화 데이터가 없습니다.",
+        )
+
+    dataset_path = visualization_service.resolve_source_path(source_id)
+    if dataset_path is None:
+        return _build_unavailable_result(
+            source_id=source_id,
+            summary="시각화 대상 데이터셋을 찾지 못했습니다.",
         )
 
     output_filename = f"viz_{plan.chart_type}.png"
@@ -78,51 +93,52 @@ def execute_visualization_plan(
         x_is_datetime=plan.x_is_datetime,
     )
 
-    temp_dir = Path(tempfile.mkdtemp(prefix="viz_exec_"))
-    script_path = temp_dir / "render_chart.py"
-    output_path = temp_dir / output_filename
-    script_path.write_text(python_code, encoding="utf-8")
+    with tempfile.TemporaryDirectory(prefix="viz_exec_") as temp_dir:
+        temp_path = Path(temp_dir)
+        script_path = temp_path / "render_chart.py"
+        output_path = temp_path / output_filename
+        script_path.write_text(python_code, encoding="utf-8")
 
-    run_result = _run_chart_script(script_path)
-    if bool(run_result.get("timed_out", False)):
-        return _build_unavailable_result(
-            source_id=source_id,
-            summary="시각화 코드 실행 시간이 초과되어 차트를 생성하지 못했습니다.",
-        )
+        run_result = _run_chart_script(script_path)
+        if bool(run_result.get("timed_out", False)):
+            return _build_unavailable_result(
+                source_id=source_id,
+                summary="시각화 코드 실행 시간이 초과되어 차트를 생성하지 못했습니다.",
+            )
 
-    if int(run_result.get("returncode", 1)) != 0 or not output_path.exists():
-        stderr_text = str(run_result.get("stderr") or "").strip()
-        error_message = (
-            stderr_text.splitlines()[-1]
-            if stderr_text
-            else "시각화 코드 실행에 실패했습니다."
-        )
-        return _build_unavailable_result(
-            source_id=source_id,
-            summary=f"시각화 코드 실행 실패: {error_message}",
-        )
+        if int(run_result.get("returncode", 1)) != 0 or not output_path.exists():
+            stderr_text = str(run_result.get("stderr") or "").strip()
+            error_message = (
+                stderr_text.splitlines()[-1]
+                if stderr_text
+                else "시각화 코드 실행에 실패했습니다."
+            )
+            return _build_unavailable_result(
+                source_id=source_id,
+                summary=f"시각화 코드 실행 실패: {error_message}",
+            )
 
-    image_base64 = base64.b64encode(output_path.read_bytes()).decode("ascii")
-    axis_text = (
-        f"{plan.x_key} vs {plan.y_key}"
-        if plan.x_key and plan.y_key
-        else (plan.x_key or plan.y_key or "-")
-    )
-    return {
-        "status": "generated",
-        "source_id": source_id,
-        "summary": f"{axis_text} 기준으로 {plan.chart_type} 차트를 생성했습니다.",
-        "chart": {
-            "chart_type": plan.chart_type,
-            "x_key": plan.x_key,
-            "y_key": plan.y_key,
-        },
-        "artifact": {
-            "mime_type": "image/png",
-            "image_base64": image_base64,
-            "code": python_code,
-        },
-    }
+        image_base64 = base64.b64encode(output_path.read_bytes()).decode("ascii")
+        axis_text = (
+            f"{plan.x_key} vs {plan.y_key}"
+            if plan.x_key and plan.y_key
+            else (plan.x_key or plan.y_key or "-")
+        )
+        return {
+            "status": "generated",
+            "source_id": source_id,
+            "summary": f"{axis_text} 기준으로 {plan.chart_type} 차트를 생성했습니다.",
+            "chart": {
+                "chart_type": plan.chart_type,
+                "x_key": plan.x_key,
+                "y_key": plan.y_key,
+            },
+            "artifact": {
+                "mime_type": "image/png",
+                "image_base64": image_base64,
+                "code": python_code,
+            },
+        }
 
 
 def _build_unavailable_result(*, source_id: str, summary: str) -> dict[str, Any]:
@@ -160,7 +176,7 @@ def _chart_has_data(
 
 def _run_chart_script(script_path: Path) -> dict[str, Any]:
     process = subprocess.Popen(
-        [PYTHON_EXECUTABLE, str(script_path)],
+        [sys.executable, str(script_path)],
         cwd=str(script_path.parent),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,

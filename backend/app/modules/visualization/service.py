@@ -4,7 +4,7 @@ from typing import Any, Dict
 import pandas as pd
 
 from ..analysis.schemas import AnalysisExecutionResult, AnalysisPlan
-from ..datasets.repository import DataSourceRepository
+from ..datasets.repository import DatasetRepository
 from ..datasets.service import DatasetReader
 from .processor import VisualizationProcessor
 from .schemas import ManualVizRequest
@@ -38,12 +38,12 @@ def _build_preview_rows(
 
 
 class VisualizationService:
-    """수동 시각화와 analysis 결과 기반 시각화용 데이터를 처리한다."""
+    """워크플로우와 API용 시각화 데이터 처리를 담당한다."""
 
     def __init__(
         self,
         *,
-        repository: DataSourceRepository,
+        repository: DatasetRepository,
         reader: DatasetReader,
         processor: VisualizationProcessor | None = None,
     ) -> None:
@@ -60,11 +60,16 @@ class VisualizationService:
             return None
         return file_path
 
-    def load_sample_frame(self, source_id: str, *, nrows: int) -> pd.DataFrame | None:
+    def load_sample_frame(self, source_id: str, *, nrows: int) -> tuple[pd.DataFrame | None, str]:
         file_path = self.resolve_source_path(source_id)
         if file_path is None:
-            return None
-        return self.reader.read_csv(str(file_path), nrows=nrows)
+            return None, "dataset_missing"
+        if file_path.suffix.lower() != ".csv":
+            return None, "unsupported_format"
+        try:
+            return self.reader.read_csv(str(file_path), nrows=nrows), "available"
+        except Exception:
+            return None, "read_error"
 
     def build_preview_rows(
         self,
@@ -74,7 +79,7 @@ class VisualizationService:
         y_key: str,
         limit: int = 5,
     ) -> list[Dict[str, Any]]:
-        df = self.load_sample_frame(source_id, nrows=limit)
+        df, _ = self.load_sample_frame(source_id, nrows=limit)
         if df is None or df.empty:
             return []
         return _build_preview_rows(df=df, x_key=x_key, y_key=y_key, limit=limit)
@@ -116,12 +121,22 @@ class VisualizationService:
         self,
         *,
         source_id: str,
-        analysis_plan: AnalysisPlan,
-        analysis_result: AnalysisExecutionResult,
+        analysis_plan: AnalysisPlan | Dict[str, Any],
+        analysis_result: AnalysisExecutionResult | Dict[str, Any],
     ) -> Dict[str, Any]:
+        resolved_plan = (
+            analysis_plan
+            if isinstance(analysis_plan, AnalysisPlan)
+            else AnalysisPlan.model_validate(analysis_plan)
+        )
+        resolved_result = (
+            analysis_result
+            if isinstance(analysis_result, AnalysisExecutionResult)
+            else AnalysisExecutionResult.model_validate(analysis_result)
+        )
         output = self.processor.build_from_analysis_result(
-            analysis_plan=analysis_plan,
-            analysis_result=analysis_result,
+            analysis_plan=resolved_plan,
+            analysis_result=resolved_result,
         )
 
         chart_data = (

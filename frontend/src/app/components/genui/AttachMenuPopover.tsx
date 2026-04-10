@@ -30,7 +30,7 @@ export function AttachMenuPopover({
     {
       icon: <Upload className="w-4 h-4" />,
       label: "Upload dataset",
-      description: "CSV, JSON, Excel (.xlsx)",
+      description: "UTF-8 CSV",
       onClick: onUploadDataset,
     },
     {
@@ -94,7 +94,7 @@ export function AttachMenuPopover({
       {/* Footer hint */}
       <div className="px-4 py-2 border-t border-[var(--genui-border)] bg-[var(--genui-panel)]">
         <p className="text-[10px] text-[var(--genui-muted)]">
-          CSV, JSON, Excel(.xlsx) · Max file size: 200 MB per file
+          UTF-8 CSV · Max file size: 200 MB per file
         </p>
       </div>
     </div>

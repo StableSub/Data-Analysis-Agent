@@ -4,7 +4,14 @@ import pandas as pd
 
 from ..datasets.repository import DataSourceRepository
 from ..datasets.service import DatasetReader
-from .schemas import ColumnProfile, ColumnProfileType, DatasetProfile
+from .schemas import (
+    ColumnProfile,
+    ColumnProfileType,
+    DatasetContext,
+    DatasetProfile,
+    DatasetQualitySummary,
+    TopMissingColumn,
+)
 
 BOOLEAN_TOKENS = {
     "0",
@@ -149,8 +156,8 @@ class DatasetProfileService:
             column_profiles=column_profiles,
         )
 
-    @staticmethod
     def _compute_missing_statistics(
+        self,
         storage_path: str,
         *,
         columns: list[str],
@@ -161,10 +168,8 @@ class DatasetProfileService:
 
         total_rows = 0
         missing_counts = {column: 0 for column in columns}
-        for chunk in pd.read_csv(
+        for chunk in self.reader.read_csv_chunks(
             storage_path,
-            encoding="utf-8",
-            sep=",",
             chunksize=chunksize,
             usecols=columns,
         ):
@@ -317,3 +322,74 @@ class DatasetProfileService:
         if denominator <= 0:
             return 0.0
         return round(float(numerator) / float(denominator), 4)
+
+
+class DatasetContextService:
+    """Build the shared dataset_context contract from repository + profiling data."""
+
+    def __init__(
+        self,
+        *,
+        repository: DataSourceRepository,
+        profile_service: DatasetProfileService,
+    ) -> None:
+        self.repository = repository
+        self.profile_service = profile_service
+
+    def build_context(self, source_id: str) -> DatasetContext:
+        if not source_id:
+            return DatasetContext(source_id="", available=False)
+
+        dataset = self.repository.get_by_source_id(source_id)
+        if dataset is None:
+            return DatasetContext(source_id=source_id, available=False)
+
+        profile = self.profile_service.build_profile(source_id)
+        return DatasetContext(
+            source_id=source_id,
+            filename=dataset.filename or "",
+            available=profile.available,
+            row_count_total=profile.row_count,
+            row_count_sample=profile.sample_row_count,
+            column_count=profile.column_count,
+            columns=profile.columns,
+            dtypes=profile.dtypes,
+            logical_types=profile.logical_types,
+            type_columns=profile.type_columns,
+            numeric_columns=profile.numeric_columns,
+            datetime_columns=profile.datetime_columns,
+            categorical_columns=profile.categorical_columns,
+            boolean_columns=profile.boolean_columns,
+            identifier_columns=profile.identifier_columns,
+            group_key_columns=profile.group_key_columns,
+            sample_rows=profile.sample_rows,
+            missing_rates=profile.missing_rates,
+            quality_summary=self._build_quality_summary(profile),
+        )
+
+    @staticmethod
+    def _build_quality_summary(profile: DatasetProfile) -> DatasetQualitySummary:
+        missing_total = sum(column.null_count for column in profile.column_profiles)
+        total_cells = profile.row_count * profile.column_count
+        missing_ratio = (
+            round(float(missing_total) / float(total_cells), 4)
+            if total_cells > 0
+            else 0.0
+        )
+        top_missing_columns = sorted(
+            (
+                TopMissingColumn(
+                    column=column.name,
+                    missing_count=column.null_count,
+                    missing_rate=column.missing_rate,
+                )
+                for column in profile.column_profiles
+                if column.null_count > 0
+            ),
+            key=lambda item: (-item.missing_count, -item.missing_rate, item.column),
+        )
+        return DatasetQualitySummary(
+            missing_total=missing_total,
+            missing_ratio=missing_ratio,
+            top_missing_columns=top_missing_columns[:5],
+        )

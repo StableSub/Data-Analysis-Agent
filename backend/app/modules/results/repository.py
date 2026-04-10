@@ -23,7 +23,12 @@ class ResultsRepository:
         execution_result: Any | None = None,
     ) -> AnalysisResult:
         plan_json = self._model_dump(analysis_plan)
-        result_json = self._build_result_json(execution_result)
+        result_json = self._build_result_json(
+            execution_result,
+            question=question,
+            source_id=source_id,
+            session_id=session_id,
+        )
         table_json = self._extract_attr(execution_result, "table", default=[])
         used_columns = self._extract_attr(execution_result, "used_columns", default=[])
         execution_status = self._extract_attr(execution_result, "execution_status")
@@ -71,6 +76,52 @@ class ResultsRepository:
         self.db.refresh(result)
         return result
 
+    @classmethod
+    def resolve_analysis_result_source_id(cls, result: AnalysisResult | Any) -> str | None:
+        meta = cls._extract_result_meta(result)
+        source_id = meta.get("source_id")
+        if isinstance(source_id, str) and source_id:
+            return source_id
+        data_json = getattr(result, "data_json", None)
+        if isinstance(data_json, dict):
+            legacy_source_id = data_json.get("source_id")
+            if isinstance(legacy_source_id, str) and legacy_source_id:
+                return legacy_source_id
+        return None
+
+    @classmethod
+    def resolve_analysis_result_question(cls, result: AnalysisResult | Any) -> str:
+        meta = cls._extract_result_meta(result)
+        question = meta.get("question")
+        if isinstance(question, str):
+            return question
+        data_json = getattr(result, "data_json", None)
+        if isinstance(data_json, dict):
+            legacy_question = data_json.get("question")
+            if isinstance(legacy_question, str):
+                return legacy_question
+        return ""
+
+    @staticmethod
+    def resolve_analysis_type(result: AnalysisResult | Any) -> str:
+        analysis_plan_json = getattr(result, "analysis_plan_json", None)
+        if not isinstance(analysis_plan_json, dict):
+            return ""
+        analysis_type = analysis_plan_json.get("analysis_type")
+        if isinstance(analysis_type, str):
+            return analysis_type
+        return ""
+
+    @staticmethod
+    def _extract_result_meta(result: AnalysisResult | Any) -> dict[str, Any]:
+        result_json = getattr(result, "result_json", None)
+        if not isinstance(result_json, dict):
+            return {}
+        meta = result_json.get("meta")
+        if isinstance(meta, dict):
+            return meta
+        return {}
+
     def _extract_attr(self, value: Any, key: str, default: Any = None) -> Any:
         if value is None:
             return default
@@ -86,14 +137,27 @@ class ResultsRepository:
             return dump_method()
         return value
 
-    def _build_result_json(self, execution_result: Any) -> dict[str, Any] | None:
-        if execution_result is None:
+    def _build_result_json(
+        self,
+        execution_result: Any,
+        *,
+        question: str | None,
+        source_id: str | None,
+        session_id: str | None,
+    ) -> dict[str, Any] | None:
+        if execution_result is None and question is None and source_id is None and session_id is None:
             return None
         summary = self._extract_attr(execution_result, "summary")
         raw_metrics = self._extract_attr(execution_result, "raw_metrics", default={})
-        if summary is None and raw_metrics in (None, {}):
+        meta = {
+            "question": question,
+            "source_id": source_id,
+            "session_id": session_id,
+        }
+        if summary is None and raw_metrics in (None, {}) and all(value is None for value in meta.values()):
             return None
         return {
             "summary": summary,
             "raw_metrics": raw_metrics or {},
+            "meta": meta,
         }

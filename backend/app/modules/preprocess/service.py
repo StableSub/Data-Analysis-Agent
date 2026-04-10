@@ -5,15 +5,24 @@ from typing import Any, Dict
 
 import pandas as pd
 from ..datasets.models import Dataset
-from ..datasets.repository import DataSourceRepository
+from ..datasets.repository import DatasetRepository
 from ..datasets.service import DatasetReader
+from ..eda.schemas import PreprocessRecommendation
 from ..profiling.service import DatasetProfileService
 from .processor import PreprocessProcessor
 from .schemas import (
     DataSummary,
+    DerivedColumnOperation,
+    DropColumnsOperation,
+    DropMissingOperation,
+    EncodeCategoricalOperation,
+    ImputeOperation,
     NumericDistribution,
+    OutlierOperation,
+    ParseDatetimeOperation,
     PreprocessApplyResponse,
     PreprocessOperation,
+    ScaleOperation,
     SummaryDiff,
 )
 
@@ -80,7 +89,7 @@ class PreprocessService:
     def __init__(
         self,
         *,
-        repository: DataSourceRepository,
+        repository: DatasetRepository,
         reader: DatasetReader,
         processor: PreprocessProcessor,
         profile_service: DatasetProfileService,
@@ -142,6 +151,124 @@ class PreprocessService:
             summary_after=summary_after,
             summary_diff=summary_diff,
         )
+
+    def apply_recommendation(
+        self,
+        source_id: str,
+        recommendation: PreprocessRecommendation,
+    ) -> PreprocessApplyResponse:
+        profile = self.profile_service.build_profile(source_id)
+        operations = self._recommendation_to_operations(
+            recommendation=recommendation,
+            numeric_columns=set(profile.numeric_columns),
+        )
+        return self.apply(source_id=source_id, operations=operations)
+
+    def _recommendation_to_operations(
+        self,
+        *,
+        recommendation: PreprocessRecommendation,
+        numeric_columns: set[str],
+    ) -> list[PreprocessOperation]:
+        operations: list[PreprocessOperation] = []
+
+        for item in recommendation.operations:
+            target_columns = [column for column in item.target_columns if str(column).strip()]
+            source_columns = [column for column in item.source_columns if str(column).strip()]
+
+            if item.op == "derived_column":
+                target_column = item.target_column.strip()
+                if not target_column:
+                    raise ValueError("derived_column recommendation requires target_column")
+                if item.transform_type not in {"log1p", "sum", "difference", "ratio"}:
+                    raise ValueError("derived_column recommendation requires supported transform_type")
+                if not source_columns:
+                    raise ValueError("derived_column recommendation requires source_columns")
+                operations.append(
+                    DerivedColumnOperation(
+                        op="derived_column",
+                        name=target_column,
+                        source_columns=source_columns,
+                        transform_type=item.transform_type,
+                        params=item.params,
+                    )
+                )
+                continue
+
+            if not target_columns:
+                raise ValueError(f"{item.op} recommendation requires target_columns")
+
+            if item.op == "drop_missing":
+                operations.append(
+                    DropMissingOperation(op="drop_missing", columns=target_columns, how="any")
+                )
+                continue
+
+            if item.op == "impute":
+                numeric_targets = [column for column in target_columns if column in numeric_columns]
+                non_numeric_targets = [column for column in target_columns if column not in numeric_columns]
+                if numeric_targets:
+                    operations.append(
+                        ImputeOperation(
+                            op="impute",
+                            columns=numeric_targets,
+                            method="median",
+                            value=None,
+                        )
+                    )
+                if non_numeric_targets:
+                    operations.append(
+                        ImputeOperation(
+                            op="impute",
+                            columns=non_numeric_targets,
+                            method="mode",
+                            value=None,
+                        )
+                    )
+                continue
+
+            if item.op == "drop_columns":
+                operations.append(DropColumnsOperation(op="drop_columns", columns=target_columns))
+                continue
+
+            if item.op == "scale":
+                operations.append(
+                    ScaleOperation(op="scale", columns=target_columns, method="standardize")
+                )
+                continue
+
+            if item.op == "encode_categorical":
+                operations.append(
+                    EncodeCategoricalOperation(
+                        op="encode_categorical",
+                        columns=target_columns,
+                        method="one_hot",
+                    )
+                )
+                continue
+
+            if item.op == "outlier":
+                operations.append(
+                    OutlierOperation(
+                        op="outlier",
+                        columns=target_columns,
+                        method="iqr",
+                        strategy="clip",
+                    )
+                )
+                continue
+
+            if item.op == "parse_datetime":
+                operations.append(
+                    ParseDatetimeOperation(
+                        op="parse_datetime",
+                        columns=target_columns,
+                        format=None,
+                    )
+                )
+                continue
+
+        return operations
 
     @staticmethod
     def _build_output_path(source_path: str) -> tuple[Path, str]:

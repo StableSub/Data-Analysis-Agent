@@ -4,9 +4,12 @@ from typing import Any, Dict
 
 from langgraph.graph import END, START, StateGraph
 
+from ..core.trace_logging import set_trace_stage
 from .ai import answer_data_question, answer_general_question
 from .intake_router import build_intake_router_workflow
+from ..modules.planner.service import build_handoff_from_planning_result
 from .state import MainWorkflowState
+from .state_view import build_merged_context
 from .workflows.analysis import build_analysis_workflow
 from .workflows.guideline import build_guideline_workflow
 from .workflows.preprocess import build_preprocess_workflow
@@ -15,30 +18,23 @@ from .workflows.report import build_report_workflow
 from .workflows.visualization import build_visualization_workflow
 
 
-def _as_dict(value: Any) -> Dict[str, Any] | None:
-    if isinstance(value, dict):
-        return value
-    model_dump = getattr(value, "model_dump", None)
-    if callable(model_dump):
-        dumped = model_dump()
-        if isinstance(dumped, dict):
-            return dumped
-    return None
-
-
 def build_main_workflow(
     *,
-    db,
+    planner_service,
     analysis_service,
     preprocess_service,
     eda_service,
     rag_service,
+    guideline_service,
+    guideline_rag_service,
     visualization_service,
     report_service,
     default_model: str = "gpt-5-nano",
     checkpointer: Any | None = None,
 ):
-    intake_graph = build_intake_router_workflow(default_model=default_model)
+    intake_graph = build_intake_router_workflow(
+        planner_service=planner_service,
+    )
     preprocess_graph = build_preprocess_workflow(
         preprocess_service=preprocess_service,
         eda_service=eda_service,
@@ -53,7 +49,8 @@ def build_main_workflow(
         default_model=default_model,
     )
     guideline_graph = build_guideline_workflow(
-        db=db,
+        guideline_service=guideline_service,
+        guideline_rag_service=guideline_rag_service,
         default_model=default_model,
     )
     visualization_graph = build_visualization_workflow(
@@ -69,15 +66,24 @@ def build_main_workflow(
         branch = str((state.get("handoff") or {}).get("next_step", "general_question"))
         return branch
 
-    def route_after_rag(state: MainWorkflowState) -> str:
-        handoff = state.get("handoff") or {}
-        if bool(handoff.get("ask_guideline", False)):
-            return "guideline"
-        if bool(handoff.get("ask_visualization", False)):
-            return "visualization"
-        return "merge_context"
+    def route_after_planner(state: MainWorkflowState) -> str:
+        if state.get("final_status") == "fail":
+            return "fail"
 
-    def route_after_guideline(state: MainWorkflowState) -> str:
+        planning_result = state.get("planning_result") or {}
+        if bool(planning_result.get("needs_clarification", False)):
+            return "clarification"
+
+        route = str(planning_result.get("route", "fallback_rag"))
+        if route == "general_question":
+            return "general_question"
+        if route == "fallback_rag":
+            return "rag"
+        if bool(planning_result.get("preprocess_required", False)):
+            return "preprocess"
+        return "analysis"
+
+    def route_after_rag(state: MainWorkflowState) -> str:
         handoff = state.get("handoff") or {}
         if bool(handoff.get("ask_visualization", False)):
             return "visualization"
@@ -91,10 +97,12 @@ def build_main_workflow(
             or output.get("type") == "cancelled"
         ):
             return "cancelled"
-        handoff = state.get("handoff") or {}
-        if bool(handoff.get("ask_analysis", False)):
-            return "analysis"
-        return "rag"
+        if (
+            preprocess_result.get("status") == "failed"
+            or output.get("type") == "preprocess_failed"
+        ):
+            return "failed"
+        return "analysis"
 
     def route_after_analysis(state: MainWorkflowState) -> str:
         final_status = state.get("final_status")
@@ -104,8 +112,6 @@ def build_main_workflow(
             return "fail"
 
         handoff = state.get("handoff") or {}
-        if bool(handoff.get("ask_guideline", False)):
-            return "guideline"
         if bool(handoff.get("ask_visualization", False)):
             return "visualization"
         return "merge_context"
@@ -127,6 +133,7 @@ def build_main_workflow(
         return "merge_context"
 
     def general_question_terminal(state: MainWorkflowState) -> Dict[str, Any]:
+        set_trace_stage("general_question")
         answer = answer_general_question(
             user_input=str(state.get("user_input", "")),
             request_context=str(state.get("request_context", "")),
@@ -141,6 +148,7 @@ def build_main_workflow(
         }
 
     def clarification_terminal(state: MainWorkflowState) -> Dict[str, Any]:
+        set_trace_stage("clarification")
         clarification_question = str(state.get("clarification_question", "")).strip()
         return {
             "output": {
@@ -150,91 +158,78 @@ def build_main_workflow(
         }
 
     def merge_context_node(state: MainWorkflowState) -> Dict[str, Any]:
-        merged_context: Dict[str, Any] = {"applied_steps": []}
+        set_trace_stage("merge_context")
+        return {"merged_context": build_merged_context(state)}
 
-        request_context = state.get("request_context")
-        if isinstance(request_context, str) and request_context.strip():
-            merged_context["request_context"] = request_context.strip()
+    def dataset_context_node(state: MainWorkflowState) -> Dict[str, Any]:
+        set_trace_stage("dataset_context")
+        source_id = str(state.get("source_id") or "").strip()
+        dataset_context = planner_service.dataset_context_service.build_context(source_id)
+        return {"dataset_context": dataset_context.model_dump()}
 
-        handoff = state.get("handoff")
-        if isinstance(handoff, dict):
-            merged_context["request_flags"] = {
-                "ask_preprocess": bool(handoff.get("ask_preprocess", False)),
-                "ask_analysis": bool(handoff.get("ask_analysis", False)),
-                "ask_visualization": bool(handoff.get("ask_visualization", False)),
-                "ask_report": bool(handoff.get("ask_report", False)),
-                "ask_guideline": bool(handoff.get("ask_guideline", False)),
+    def planner_node(state: MainWorkflowState) -> Dict[str, Any]:
+        set_trace_stage("planner")
+        try:
+            planning_result = planner_service.plan(
+                user_input=str(state.get("user_input", "")),
+                request_context=str(state.get("request_context", "")),
+                source_id=str(state.get("source_id", "")),
+                dataset_context=state.get("dataset_context"),
+                guideline_context=state.get("guideline_context"),
+                model_id=state.get("model_id"),
+            )
+        except Exception as exc:
+            return {
+                "final_status": "fail",
+                "output": {
+                    "type": "planning_failed",
+                    "content": str(exc),
+                },
             }
 
-        preprocess_result = state.get("preprocess_result")
-        if isinstance(preprocess_result, dict):
-            merged_context["preprocess_result"] = preprocess_result
-            if preprocess_result.get("status") == "applied":
-                merged_context["applied_steps"].append("preprocess")
-
-        rag_result = state.get("rag_result")
-        if isinstance(rag_result, dict):
-            merged_context["rag_result"] = rag_result
-            if int(rag_result.get("retrieved_count", 0) or 0) > 0:
-                merged_context["applied_steps"].append("rag")
-
-        guideline_index_status = state.get("guideline_index_status")
-        if isinstance(guideline_index_status, dict):
-            merged_context["guideline_index_status"] = guideline_index_status
-
-        guideline_result = state.get("guideline_result")
-        if isinstance(guideline_result, dict):
-            merged_context["guideline_result"] = guideline_result
-            merged_context["guideline_context"] = {
-                "active_source_id": state.get("active_guideline_source_id", ""),
-                "status": guideline_result.get("status", ""),
-                "retrieved_count": int(guideline_result.get("retrieved_count", 0) or 0),
-                "has_evidence": int(guideline_result.get("retrieved_count", 0) or 0)
-                > 0,
-                "filename": guideline_result.get("filename", ""),
-                "guideline_id": guideline_result.get("guideline_id", ""),
-                "evidence_summary": guideline_result.get("evidence_summary", ""),
-            }
-            if int(guideline_result.get("retrieved_count", 0) or 0) > 0:
-                merged_context["applied_steps"].append("guideline")
-
-        insight = state.get("insight")
-        if isinstance(insight, dict):
-            merged_context["insight"] = insight
-            summary = insight.get("summary")
-            if isinstance(summary, str) and summary.strip():
-                merged_context["applied_steps"].append("insight")
-
-        analysis_plan = _as_dict(state.get("analysis_plan"))
-        if analysis_plan is not None:
-            merged_context["analysis_plan"] = analysis_plan
-
-        analysis_result = _as_dict(state.get("analysis_result"))
-        if analysis_result is not None:
-            merged_context["analysis_result"] = analysis_result
-            if analysis_result.get("execution_status") == "success":
-                merged_context["applied_steps"].append("analysis")
-
-        visualization_result = _as_dict(state.get("visualization_result"))
-        if visualization_result is not None:
-            merged_context["visualization_result"] = visualization_result
-            if visualization_result.get("status") == "generated":
-                merged_context["applied_steps"].append("visualization")
-
-        return {"merged_context": merged_context}
+        return {
+            "planning_result": planning_result.model_dump(),
+            "handoff": build_handoff_from_planning_result(planning_result),
+            "clarification_question": planning_result.clarification_question,
+        }
 
     def data_qa_terminal(state: MainWorkflowState) -> Dict[str, Any]:
-        merged_context = state.get("merged_context")
-        merged_context_dict = merged_context if isinstance(merged_context, dict) else {}
+        set_trace_stage("data_qa")
+        handoff = state.get("handoff") or {}
+        visualization_result = state.get("visualization_result")
+        analysis_result = state.get("analysis_result")
+        if bool(handoff.get("ask_visualization", False)) and isinstance(visualization_result, dict):
+            if visualization_result.get("status") == "generated":
+                artifact = visualization_result.get("artifact")
+                has_image_artifact = (
+                    isinstance(artifact, dict)
+                    and isinstance(artifact.get("image_base64"), str)
+                    and bool(artifact.get("image_base64"))
+                )
+                summary = str(visualization_result.get("summary") or "").strip()
+                if not summary and isinstance(analysis_result, dict):
+                    summary = str(analysis_result.get("summary") or "").strip()
 
+                prefix = "차트를 생성했습니다." if has_image_artifact else "차트 데이터를 생성했습니다."
+                answer_text = prefix if not summary else f"{prefix}\n\n{summary}"
+                return {
+                    "data_qa_result": {"content": answer_text},
+                    "output": {
+                        "type": "data_qa",
+                        "content": answer_text,
+                    },
+                }
+
+        merged_context = state.get("merged_context")
         answer = answer_data_question(
             user_input=str(state.get("user_input", "")),
-            merged_context=merged_context_dict,
+            merged_context=merged_context if isinstance(merged_context, dict) else {},
             model_id=state.get("model_id"),
             default_model=default_model,
         )
         answer_text = str(answer or "").strip()
         return {
+            "data_qa_result": {"content": answer_text},
             "output": {
                 "type": "data_qa",
                 "content": answer_text,
@@ -245,6 +240,8 @@ def build_main_workflow(
     graph.add_node("intake_flow", intake_graph)
     graph.add_node("general_question_terminal", general_question_terminal)
     graph.add_node("clarification_terminal", clarification_terminal)
+    graph.add_node("dataset_context", dataset_context_node)
+    graph.add_node("planner", planner_node)
     graph.add_node("preprocess_flow", preprocess_graph)
     graph.add_node("analysis_flow", analysis_graph)
     graph.add_node("rag_flow", rag_graph)
@@ -260,7 +257,21 @@ def build_main_workflow(
         route_after_intake,
         {
             "general_question": "general_question_terminal",
-            "data_pipeline": "preprocess_flow",
+            "dataset_selected": "dataset_context",
+        },
+    )
+    graph.add_edge("dataset_context", "guideline_flow")
+    graph.add_edge("guideline_flow", "planner")
+    graph.add_conditional_edges(
+        "planner",
+        route_after_planner,
+        {
+            "general_question": "general_question_terminal",
+            "preprocess": "preprocess_flow",
+            "analysis": "analysis_flow",
+            "rag": "rag_flow",
+            "clarification": "clarification_terminal",
+            "fail": END,
         },
     )
     graph.add_conditional_edges(
@@ -268,15 +279,14 @@ def build_main_workflow(
         route_after_preprocess,
         {
             "analysis": "analysis_flow",
-            "rag": "rag_flow",
             "cancelled": END,
+            "failed": END,
         },
     )
     graph.add_conditional_edges(
         "analysis_flow",
         route_after_analysis,
         {
-            "guideline": "guideline_flow",
             "visualization": "visualization_flow",
             "merge_context": "merge_context",
             "clarification": "clarification_terminal",
@@ -286,15 +296,6 @@ def build_main_workflow(
     graph.add_conditional_edges(
         "rag_flow",
         route_after_rag,
-        {
-            "guideline": "guideline_flow",
-            "visualization": "visualization_flow",
-            "merge_context": "merge_context",
-        },
-    )
-    graph.add_conditional_edges(
-        "guideline_flow",
-        route_after_guideline,
         {
             "visualization": "visualization_flow",
             "merge_context": "merge_context",

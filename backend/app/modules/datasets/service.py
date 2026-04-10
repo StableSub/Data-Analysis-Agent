@@ -1,22 +1,19 @@
 import uuid
 from pathlib import Path
-from typing import IO, Any, Dict, List, Optional
+from typing import IO, Any, Iterator, List, Optional
 
 import pandas as pd
-from fastapi import Depends
-from sqlalchemy.orm import Session
-
-from ...core.db import get_db
-from ..rag.dependencies import get_rag_service
 
 from .models import Dataset
-from .repository import DataSourceRepository
+from .repository import DatasetRepository
+
+ALLOWED_DATASET_EXTENSIONS = {".csv"}
+DATASET_READ_ERROR_DETAIL = "데이터셋을 읽을 수 없습니다. UTF-8 CSV인지 확인해 주세요."
+UTF8_CSV_UPLOAD_ERROR_DETAIL = "UTF-8 CSV만 업로드할 수 있습니다."
 
 
-class DatasetUploadError(RuntimeError):
-    def __init__(self, code: str, message: str | None = None) -> None:
-        super().__init__(message or code)
-        self.code = code
+class DatasetReadError(Exception):
+    """Raised when a stored dataset cannot be read as a UTF-8 CSV."""
 
 
 class DatasetStorage:
@@ -48,6 +45,13 @@ class DatasetStorage:
 class DatasetReader:
     """CSV 읽기 책임만 담당한다."""
 
+    @staticmethod
+    def _resolve_file(storage_path: str) -> Path:
+        file_path = Path(storage_path)
+        if not file_path.exists() or not file_path.is_file():
+            raise FileNotFoundError("파일이 존재하지 않습니다.")
+        return file_path
+
     def read_csv(
         self,
         storage_path: str,
@@ -56,62 +60,60 @@ class DatasetReader:
         usecols: Optional[List[str]] = None,
         encoding: str = "utf-8",
     ) -> pd.DataFrame:
-        file_path = Path(storage_path)
-        if not file_path.exists() or not file_path.is_file():
-            raise FileNotFoundError("파일이 존재하지 않습니다.")
+        file_path = self._resolve_file(storage_path)
+        try:
+            return pd.read_csv(
+                file_path,
+                encoding=encoding,
+                sep=",",
+                nrows=nrows,
+                usecols=usecols,
+            )
+        except (UnicodeDecodeError, pd.errors.EmptyDataError, pd.errors.ParserError) as exc:
+            raise DatasetReadError(DATASET_READ_ERROR_DETAIL) from exc
 
-        return pd.read_csv(
-            file_path,
-            encoding=encoding,
-            sep=",",
-            nrows=nrows,
-            usecols=usecols,
-        )
+    def read_csv_chunks(
+        self,
+        storage_path: str,
+        *,
+        chunksize: int,
+        usecols: Optional[List[str]] = None,
+        encoding: str = "utf-8",
+    ) -> Iterator[pd.DataFrame]:
+        file_path = self._resolve_file(storage_path)
+        try:
+            reader = pd.read_csv(
+                file_path,
+                encoding=encoding,
+                sep=",",
+                chunksize=chunksize,
+                usecols=usecols,
+            )
+        except (UnicodeDecodeError, pd.errors.EmptyDataError, pd.errors.ParserError) as exc:
+            raise DatasetReadError(DATASET_READ_ERROR_DETAIL) from exc
 
+        def iterator() -> Iterator[pd.DataFrame]:
+            try:
+                for chunk in reader:
+                    yield chunk
+            except (UnicodeDecodeError, pd.errors.EmptyDataError, pd.errors.ParserError) as exc:
+                raise DatasetReadError(DATASET_READ_ERROR_DETAIL) from exc
 
-def _datasets_storage_dir() -> Path:
-    return Path(__file__).resolve().parents[4] / "storage" / "datasets"
+        return iterator()
 
-
-def build_data_source_repository(db: Session) -> DataSourceRepository:
-    return DataSourceRepository(db)
-
-
-def get_data_source_repository(db: Session = Depends(get_db)) -> DataSourceRepository:
-    return build_data_source_repository(db)
-
-
-def build_dataset_storage() -> DatasetStorage:
-    return DatasetStorage(_datasets_storage_dir())
-
-
-def get_dataset_storage() -> DatasetStorage:
-    return build_dataset_storage()
-
-
-def build_dataset_reader() -> DatasetReader:
-    return DatasetReader()
-
-
-def get_dataset_reader() -> DatasetReader:
-    return build_dataset_reader()
-
-
-class DataSourceService:
+class DatasetService:
     """데이터셋 흐름만 담당한다."""
 
     def __init__(
         self,
         *,
-        repository: DataSourceRepository,
+        repository: DatasetRepository,
         storage: DatasetStorage,
         reader: DatasetReader,
-        rag_service: Any | None = None,
     ) -> None:
         self.repository = repository
         self.storage = storage
         self.reader = reader
-        self.rag_service = rag_service
 
     def upload_dataset(
         self,
@@ -120,50 +122,38 @@ class DataSourceService:
         original_filename: str,
         display_name: Optional[str] = None,
     ) -> Dataset:
+        if Path(original_filename).suffix.lower() not in ALLOWED_DATASET_EXTENSIONS:
+            raise ValueError("CSV 파일만 업로드할 수 있습니다.")
+
         storage_path, size = self.storage.persist_file(file_stream, original_filename)
+        try:
+            self.reader.read_csv(str(storage_path), nrows=5)
+        except DatasetReadError as exc:
+            try:
+                self.storage.delete_file(str(storage_path))
+            except FileNotFoundError:
+                pass
+            raise ValueError(UTF8_CSV_UPLOAD_ERROR_DETAIL) from exc
+
         dataset = Dataset(
             filename=display_name or original_filename,
             storage_path=str(storage_path),
             filesize=size,
         )
-        dataset = self.repository.create(dataset)
-        if self.rag_service is not None:
-            try:
-                self.rag_service.index_dataset(dataset)
-            except Exception as exc:
-                if getattr(exc, "code", "") == "EMBEDDING_ERROR":
-                    raise DatasetUploadError("EMBEDDING_ERROR") from exc
-                raise
-        return dataset
+        return self.repository.create(dataset)
 
-    def list_datasets(self, skip: int = 0, limit: int = 20) -> List[Dataset]:
-        datasets = self.repository.list_all()
-        end = skip + limit if limit is not None else None
-        return datasets[skip:end]
+    def list_datasets(self, skip: int = 0, limit: int = 20) -> tuple[List[Dataset], int]:
+        items = self.repository.list_page(skip=skip, limit=limit)
+        total = self.repository.count_all()
+        return items, total
 
-    def get_dataset_detail(self, dataset_id: int) -> Optional[Dict[str, Dataset]]:
-        dataset = self.repository.get_by_id(dataset_id)
-        if not dataset:
-            return None
-        return {"dataset": dataset}
-
-    def get_dataset_by_source_id(self, source_id: str) -> Optional[Dataset]:
+    def get_dataset_detail(self, source_id: str) -> Optional[Dataset]:
         return self.repository.get_by_source_id(source_id)
 
-    def delete_dataset(self, source_id: str) -> Dict[str, Any]:
+    def delete_dataset(self, source_id: str) -> bool:
         dataset = self.repository.get_by_source_id(source_id)
         if not dataset:
-            return {
-                "success": False,
-                "deleted_file": None,
-                "message": "데이터셋을 찾을 수 없습니다.",
-            }
-
-        deleted_info = {
-            "source_id": dataset.source_id,
-            "filename": dataset.filename,
-            "storage_path": dataset.storage_path,
-        }
+            return False
 
         try:
             self.storage.delete_file(dataset.storage_path)
@@ -171,60 +161,17 @@ class DataSourceService:
             pass
 
         self.repository.delete(dataset)
+        return True
 
-        if self.rag_service is not None:
-            try:
-                self.rag_service.delete_source(source_id)
-            except Exception:
-                pass
-
-        return {
-            "success": True,
-            "deleted_file": deleted_info,
-            "message": "데이터셋이 성공적으로 삭제되었습니다.",
-        }
-
-    def get_dataset_sample(self, source_id: str, n_rows: int = 5) -> Optional[Dict[str, Any]]:
+    def get_dataset_sample(self, source_id: str, n_rows: int = 5) -> Optional[dict[str, Any]]:
         dataset = self.repository.get_by_source_id(source_id)
         if not dataset:
             return None
 
-        try:
-            df = self.reader.read_csv(dataset.storage_path, nrows=n_rows)
-        except Exception:
-            return None
+        df = self.reader.read_csv(dataset.storage_path, nrows=n_rows)
 
         return {
             "source_id": source_id,
             "columns": df.columns.tolist(),
             "rows": df.where(pd.notnull(df), None).to_dict(orient="records"),
         }
-
-
-def build_data_source_service(
-    *,
-    repository: DataSourceRepository,
-    storage: DatasetStorage,
-    reader: DatasetReader,
-    rag_service,
-) -> DataSourceService:
-    return DataSourceService(
-        repository=repository,
-        storage=storage,
-        reader=reader,
-        rag_service=rag_service,
-    )
-
-
-def get_data_source_service(
-    repository: DataSourceRepository = Depends(get_data_source_repository),
-    storage: DatasetStorage = Depends(get_dataset_storage),
-    reader: DatasetReader = Depends(get_dataset_reader),
-    rag_service=Depends(get_rag_service),
-) -> DataSourceService:
-    return build_data_source_service(
-        repository=repository,
-        storage=storage,
-        reader=reader,
-        rag_service=rag_service,
-    )

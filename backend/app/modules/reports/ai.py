@@ -24,9 +24,7 @@ PROMPTS = PromptRegistry(
 def draft_report(
     *,
     question: str,
-    metrics: Dict[str, Any],
-    insight_summary: str,
-    visualization_summary: str,
+    report_payload: Dict[str, Any],
     revision_instruction: str,
     model_id: str | None,
     default_model: str,
@@ -39,9 +37,7 @@ def draft_report(
             HumanMessage(
                 content=(
                     f"사용자 질문:\n{question}\n\n"
-                    f"정량 지표(metrics):\n{json.dumps(metrics, ensure_ascii=False)}\n\n"
-                    f"RAG 인사이트 요약:\n{insight_summary}\n\n"
-                    f"시각화 요약:\n{visualization_summary}\n"
+                    f"report_payload:\n{json.dumps(report_payload, ensure_ascii=False)}\n"
                     + (f"\n수정 요청:\n{revision_instruction}\n" if revision_instruction else "")
                 )
             ),

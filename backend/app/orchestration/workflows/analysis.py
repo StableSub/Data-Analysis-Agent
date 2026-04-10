@@ -13,7 +13,9 @@ from typing import Any, Dict
 
 from langgraph.graph import END, START, StateGraph
 
+from backend.app.core.trace_logging import set_trace_stage
 from backend.app.modules.analysis.schemas import AnalysisExecutionResult
+from backend.app.modules.planner.schemas import PlanningResult
 from backend.app.modules.analysis.service import AnalysisService
 from backend.app.orchestration.state import AnalysisGraphState
 from backend.app.orchestration.utils import resolve_target_source_id
@@ -26,9 +28,54 @@ def build_analysis_workflow(
     analysis_service: AnalysisService,
     default_model: str = "gpt-5-nano",
 ):
+    def _as_dict(value: Any) -> Dict[str, Any] | None:
+        if isinstance(value, dict):
+            return value
+        model_dump = getattr(value, "model_dump", None)
+        if callable(model_dump):
+            dumped = model_dump()
+            if isinstance(dumped, dict):
+                return dumped
+        return None
+
+    def _build_failure_output(message: str) -> Dict[str, Any]:
+        return {
+            "type": "analysis_failed",
+            "content": message,
+        }
+
+    def _current_dataset_context(
+        state: AnalysisGraphState,
+        *,
+        source_id: str,
+    ) -> Dict[str, Any]:
+        dataset_context = _as_dict(state.get("dataset_context"))
+        if dataset_context is not None and dataset_context.get("source_id") == source_id:
+            return dataset_context
+        return analysis_service.dataset_context_service.build_context(source_id).model_dump()
+
+    def _should_replan(
+        state: AnalysisGraphState,
+        *,
+        target_source_id: str,
+    ) -> bool:
+        planning_result = _as_dict(state.get("planning_result"))
+        if planning_result is None:
+            return True
+        if bool(planning_result.get("needs_clarification", False)):
+            return False
+        analysis_plan = _as_dict(planning_result.get("analysis_plan"))
+        if analysis_plan is None:
+            return True
+        dataset_context = _as_dict(state.get("dataset_context"))
+        if dataset_context is None:
+            return True
+        return str(dataset_context.get("source_id") or "") != target_source_id
+
     # 질문 해석, 컬럼 grounding, plan 초안 생성, 최종 plan 확정까지 수행한다.
     # 모호한 질문이면 needs_clarification 상태로 종료한다.
     def analysis_planning_node(state: AnalysisGraphState) -> Dict[str, Any]:
+        set_trace_stage("analysis_planning")
         question = str(state.get("user_input", "")).strip()
         source_id = resolve_target_source_id(state)
         if not question:
@@ -36,89 +83,71 @@ def build_analysis_workflow(
                 "question_understanding",
                 "user_input is empty",
             )
+            error_message = analysis_error.message
             return {
-                "analysis_error": analysis_error,
+                "analysis_error": analysis_error.model_dump(),
                 "analysis_result": AnalysisExecutionResult(
                     execution_status="fail",
                     error_stage=analysis_error.stage,
                     error_message=analysis_error.message,
-                ),
+                ).model_dump(),
                 "final_status": "fail",
+                "output": _build_failure_output(error_message),
             }
 
         try:
-            dataset_meta = analysis_service.build_dataset_metadata(source_id or "")
-            question_understanding = (
-                analysis_service.run_service.build_question_understanding(
-                    question=question,
-                    dataset_meta=dataset_meta,
+            if source_id is None:
+                raise ValueError("source_id is required for analysis")
+
+            dataset_context = _current_dataset_context(state, source_id=source_id)
+            if _should_replan(state, target_source_id=source_id):
+                planning_result = analysis_service.planner_service.plan(
+                    user_input=question,
+                    request_context=str(state.get("request_context", "")),
+                    source_id=source_id,
+                    dataset_context=dataset_context,
+                    guideline_context=state.get("guideline_context"),
                     model_id=state.get("model_id"),
                 )
-            )
-            # 질문 자체가 모호하면 code generation으로 가지 않고 clarification으로 종료한다.
-            if question_understanding.ambiguity_status != "clear":
+            else:
+                planning_result_dict = _as_dict(state.get("planning_result")) or {}
+                planning_result = PlanningResult.model_validate(planning_result_dict)
+            if planning_result.needs_clarification:
                 return {
-                    "dataset_meta": dataset_meta,
-                    "question_understanding": question_understanding,
+                    "planning_result": planning_result.model_dump(),
+                    "dataset_context": dataset_context,
                     "final_status": "needs_clarification",
-                    "clarification_question": question_understanding.clarification_message,
+                    "clarification_question": planning_result.clarification_question,
                 }
-
-            column_grounding = analysis_service.processor.ground_columns(
-                question_understanding=question_understanding,
-                dataset_meta=dataset_meta,
-            )
-            analysis_plan_draft = (
-                analysis_service.run_service.build_analysis_plan_draft(
-                    question=question,
-                    question_understanding=question_understanding,
-                    column_grounding=column_grounding,
-                    dataset_meta=dataset_meta,
-                    model_id=state.get("model_id"),
-                )
-            )
-            # plan_draft 단계에서도 모호성이 남으면 clarification으로 돌린다.
-            if analysis_plan_draft.ambiguity_status != "clear":
-                clarification_message = (
-                    analysis_plan_draft.clarification_message
-                    or question_understanding.clarification_message
-                )
-                return {
-                    "dataset_meta": dataset_meta,
-                    "question_understanding": question_understanding,
-                    "column_grounding": column_grounding,
-                    "analysis_plan_draft": analysis_plan_draft,
-                    "final_status": "needs_clarification",
-                    "clarification_question": clarification_message,
-                }
-
-            analysis_plan = analysis_service.processor.validate_and_finalize_plan(
-                plan_draft=analysis_plan_draft,
-                dataset_meta=dataset_meta,
-                column_grounding=column_grounding,
-            )
+            if planning_result.route != "analysis" or planning_result.analysis_plan is None:
+                raise ValueError("planner did not route this request to analysis")
+            analysis_plan = planning_result.analysis_plan
             return {
-                "dataset_meta": dataset_meta,
-                "question_understanding": question_understanding,
-                "column_grounding": column_grounding,
-                "analysis_plan_draft": analysis_plan_draft,
-                "analysis_plan": analysis_plan,
+                "planning_result": planning_result.model_dump(),
+                "dataset_context": dataset_context,
+                "dataset_meta": analysis_plan.metadata_snapshot.model_dump(),
+                "analysis_plan": analysis_plan.model_dump(),
                 "final_status": "planning",
             }
         except Exception as exc:
             analysis_error = analysis_service.processor.build_error(
                 "plan_validation",
                 str(exc),
-                detail={"source_id": source_id or ""},
+                detail={
+                    "source_id": source_id or "",
+                    "exception_type": type(exc).__name__,
+                },
             )
+            error_message = analysis_error.message
             return {
-                "analysis_error": analysis_error,
+                "analysis_error": analysis_error.model_dump(),
                 "analysis_result": AnalysisExecutionResult(
                     execution_status="fail",
                     error_stage=analysis_error.stage,
                     error_message=analysis_error.message,
-                ),
+                ).model_dump(),
                 "final_status": "fail",
+                "output": _build_failure_output(error_message),
             }
 
     # planning 결과에 따라 execution, clarification 종료, fail 종료를 분기한다.
@@ -131,6 +160,7 @@ def build_analysis_workflow(
         return "execute"
 
     def analysis_clarification_node(state: AnalysisGraphState) -> Dict[str, Any]:
+        set_trace_stage("analysis_clarification")
         clarification_question = str(state.get("clarification_question", "")).strip()
         return {
             "final_status": "needs_clarification",
@@ -139,6 +169,7 @@ def build_analysis_workflow(
 
     # 최종 plan을 기반으로 코드 생성, code repair, sandbox 실행까지 수행한다.
     def analysis_execution_node(state: AnalysisGraphState) -> Dict[str, Any]:
+        set_trace_stage("analysis_execution")
         source_id = resolve_target_source_id(state)
         dataset = analysis_service._get_dataset(source_id or "")
         if dataset is None:
@@ -147,12 +178,12 @@ def build_analysis_workflow(
                 f"dataset not found: {source_id or ''}",
             )
             result = {
-                "analysis_error": analysis_error,
+                "analysis_error": analysis_error.model_dump(),
                 "analysis_result": AnalysisExecutionResult(
                     execution_status="fail",
                     error_stage=analysis_error.stage,
                     error_message=analysis_error.message,
-                ),
+                ).model_dump(),
                 "final_status": "executing",
             }
             return result
@@ -166,9 +197,9 @@ def build_analysis_workflow(
         result = {
             "generated_code": execution_bundle.get("generated_code"),
             "validated_code": execution_bundle.get("validated_code"),
-            "sandbox_result": execution_bundle.get("sandbox_result"),
-            "analysis_result": execution_bundle.get("analysis_result"),
-            "analysis_error": execution_bundle.get("analysis_error"),
+            "sandbox_result": _as_dict(execution_bundle.get("sandbox_result")),
+            "analysis_result": _as_dict(execution_bundle.get("analysis_result")),
+            "analysis_error": _as_dict(execution_bundle.get("analysis_error")),
             "retry_count": execution_bundle.get("retry_count", 0),
             "final_status": "executing",
         }
@@ -176,39 +207,49 @@ def build_analysis_workflow(
 
     # execution 결과를 기준으로 success/fail 최종 상태를 확정한다.
     def analysis_validation_node(state: AnalysisGraphState) -> Dict[str, Any]:
+        set_trace_stage("analysis_validation")
         result = state.get("analysis_result")
-        if not isinstance(result, AnalysisExecutionResult):
+        if not isinstance(result, dict):
             analysis_error = analysis_service.processor.build_error(
                 "result_validation",
                 "analysis_result is missing",
             )
+            error_message = analysis_error.message
             output = {
-                "analysis_error": analysis_error,
+                "analysis_error": analysis_error.model_dump(),
                 "analysis_result": AnalysisExecutionResult(
                     execution_status="fail",
                     error_stage=analysis_error.stage,
                     error_message=analysis_error.message,
-                ),
+                ).model_dump(),
                 "final_status": "fail",
+                "output": _build_failure_output(error_message),
             }
             return output
 
-        if result.execution_status == "success":
+        execution_result = AnalysisExecutionResult.model_validate(result)
+
+        if execution_result.execution_status == "success":
             return {
                 "final_status": "success",
             }
 
         if state.get("analysis_error") is None:
             analysis_error = analysis_service.processor.build_error(
-                result.error_stage or "result_validation",
-                result.error_message or "analysis execution failed",
+                execution_result.error_stage or "result_validation",
+                execution_result.error_message or "analysis execution failed",
             )
+            error_message = analysis_error.message
             return {
-                "analysis_error": analysis_error,
+                "analysis_error": analysis_error.model_dump(),
                 "final_status": "fail",
+                "output": _build_failure_output(error_message),
             }
+        existing_error = state.get("analysis_error") or {}
+        error_message = str(existing_error.get("message") or execution_result.error_message or "analysis execution failed")
         return {
             "final_status": "fail",
+            "output": _build_failure_output(error_message),
         }
 
     # validation 결과가 success면 persist로 아니면 바로 종료한다.
@@ -219,17 +260,30 @@ def build_analysis_workflow(
 
     # 최종 성공 결과를 results 저장소에 기록한다.
     def analysis_persist_result_node(state: AnalysisGraphState) -> Dict[str, Any]:
-        result_id = analysis_service._persist_result(
-            question=str(state.get("user_input", "")),
-            source_id=resolve_target_source_id(state) or "",
-            session_id=state.get("session_id"),
-            analysis_plan=state.get("analysis_plan"),
-            generated_code=state.get("generated_code"),
-            execution_result=state["analysis_result"],
-        )
-        return {
-            "analysis_result_id": result_id,
-        }
+        set_trace_stage("analysis_persist")
+        try:
+            result_id = analysis_service._persist_result(
+                question=str(state.get("user_input", "")),
+                source_id=resolve_target_source_id(state) or "",
+                session_id=state.get("session_id"),
+                analysis_plan=state.get("analysis_plan"),
+                generated_code=state.get("generated_code"),
+                execution_result=AnalysisExecutionResult.model_validate(state["analysis_result"]),
+            )
+            return {
+                "analysis_result_id": result_id,
+            }
+        except Exception as exc:
+            analysis_error = analysis_service.processor.build_error(
+                "persist_result",
+                str(exc),
+                detail={"exception_type": type(exc).__name__},
+            )
+            return {
+                "analysis_error": analysis_error.model_dump(),
+                "final_status": "fail",
+                "output": _build_failure_output(analysis_error.message),
+            }
 
     graph = StateGraph(AnalysisGraphState)
     graph.add_node("analysis_planning", analysis_planning_node)

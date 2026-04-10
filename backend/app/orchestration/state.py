@@ -2,18 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Literal, TypedDict
 
-from ..modules.analysis.schemas import (
-    AnalysisError,
-    AnalysisExecutionResult,
-    AnalysisPlan,
-    AnalysisPlanDraft,
-    ColumnGroundingResult,
-    FinalStatus,
-    MetadataSnapshot,
-    QuestionUnderstanding,
-    SandboxExecutionResult,
-    VisualizationOutput,
-)
+from ..modules.analysis.schemas import FinalStatus, VisualizationOutput
 
 
 class HandoffPayload(TypedDict, total=False):
@@ -27,6 +16,7 @@ class HandoffPayload(TypedDict, total=False):
 
 class PreprocessResultPayload(TypedDict, total=False):
     status: str
+    summary: str
     applied_ops_count: int
     input_source_id: str
     output_source_id: str
@@ -35,6 +25,8 @@ class PreprocessResultPayload(TypedDict, total=False):
 
 
 class RagResultPayload(TypedDict, total=False):
+    status: str
+    has_evidence: bool
     query: str
     source_id: str
     retrieved_chunks: list
@@ -44,6 +36,7 @@ class RagResultPayload(TypedDict, total=False):
 
 
 class GuidelineResultPayload(TypedDict, total=False):
+    has_evidence: bool
     query: str
     source_id: str
     guideline_id: str
@@ -55,6 +48,39 @@ class GuidelineResultPayload(TypedDict, total=False):
     status: str
 
 
+class DatasetContextPayload(TypedDict, total=False):
+    source_id: str
+    filename: str
+    available: bool
+    row_count_total: int
+    row_count_sample: int
+    column_count: int
+    columns: list[str]
+    dtypes: Dict[str, str]
+    logical_types: Dict[str, str]
+    type_columns: Dict[str, list[str]]
+    numeric_columns: list[str]
+    datetime_columns: list[str]
+    categorical_columns: list[str]
+    boolean_columns: list[str]
+    identifier_columns: list[str]
+    group_key_columns: list[str]
+    sample_rows: list[Dict[str, Any]]
+    missing_rates: Dict[str, float]
+    quality_summary: Dict[str, Any]
+
+
+class GuidelineContextPayload(TypedDict, total=False):
+    guideline_source_id: str
+    guideline_id: str
+    filename: str
+    status: str
+    retrieved_chunks: list[Dict[str, Any]]
+    retrieved_count: int
+    has_evidence: bool
+    evidence_summary: str
+
+
 class VisualizationResultPayload(TypedDict, total=False):
     status: str
     source_id: str
@@ -63,9 +89,30 @@ class VisualizationResultPayload(TypedDict, total=False):
     artifact: Dict[str, Any]
 
 
+class ReportResultPayload(TypedDict, total=False):
+    status: str
+    summary: str
+    error: str
+    report_id: str
+    metrics: Dict[str, Any]
+    visualizations: list[Dict[str, Any]]
+    revision_count: int
+
+
 class OutputPayload(TypedDict, total=False):
     type: str
     content: str
+
+
+class PlanningResultPayload(TypedDict, total=False):
+    route: str
+    needs_clarification: bool
+    clarification_question: str
+    preprocess_required: bool
+    analysis_plan: Dict[str, Any] | None
+    need_visualization: bool
+    need_report: bool
+    guideline_context_used: bool
 
 
 class PendingApprovalPayload(TypedDict, total=False):
@@ -90,17 +137,26 @@ class AgentState(TypedDict, total=False):
     session_id: str
     model_id: str
     run_id: str
-    dataset_id: int
     source_id: str
     active_guideline_source_id: str
     analysis_run_id: str
     clarification_question: str
     clarification_answer: str
+    planning_result: PlanningResultPayload
+    dataset_context: DatasetContextPayload
+    guideline_context: GuidelineContextPayload
     dataset_profile: Dict[str, Any]
-    dataset_meta: MetadataSnapshot
     pending_approval: PendingApprovalPayload
     revision_request: RevisionRequestPayload
     approved_plan: Dict[str, Any]
+    dataset_meta: Dict[str, Any]
+    question_understanding: Dict[str, Any]
+    column_grounding: Dict[str, Any]
+    analysis_plan_draft: Dict[str, Any]
+    analysis_plan: Dict[str, Any]
+    sandbox_result: Dict[str, Any]
+    analysis_result: Dict[str, Any]
+    analysis_error: Dict[str, Any]
 
 
 class IntakeRouterState(AgentState, total=False):
@@ -131,6 +187,7 @@ class GuidelineGraphState(AgentState, total=False):
     handoff: HandoffPayload
     guideline_index_status: Dict[str, Any]
     guideline_data_exists: bool
+    guideline_context: GuidelineContextPayload
     guideline_result: GuidelineResultPayload
 
 
@@ -138,15 +195,9 @@ class AnalysisGraphState(AgentState, total=False):
     """Analysis 서브그래프 전용 상태."""
 
     handoff: HandoffPayload
-    question_understanding: QuestionUnderstanding
-    column_grounding: ColumnGroundingResult
-    analysis_plan_draft: AnalysisPlanDraft
-    analysis_plan: AnalysisPlan
+    preprocess_result: PreprocessResultPayload
     generated_code: str
     validated_code: str
-    sandbox_result: SandboxExecutionResult
-    analysis_result: AnalysisExecutionResult
-    analysis_error: AnalysisError
     retry_count: int
     final_status: FinalStatus
 
@@ -155,8 +206,6 @@ class VisualizationGraphState(AgentState, total=False):
     handoff: HandoffPayload
     preprocess_result: PreprocessResultPayload
     rag_result: RagResultPayload
-    analysis_plan: AnalysisPlan
-    analysis_result: AnalysisExecutionResult
     guideline_result: GuidelineResultPayload
     insight: Dict[str, Any]
     visualization_plan: Dict[str, Any]
@@ -168,13 +217,13 @@ class ReportGraphState(AgentState, total=False):
     handoff: HandoffPayload
     preprocess_result: PreprocessResultPayload
     rag_result: RagResultPayload
-    analysis_result: AnalysisExecutionResult
     guideline_result: GuidelineResultPayload
     insight: Dict[str, Any]
     visualization_result: VisualizationResultPayload
     merged_context: Dict[str, Any]
+    final_status: FinalStatus
     report_draft: Dict[str, Any]
-    report_result: Dict[str, Any]
+    report_result: ReportResultPayload
     output: OutputPayload
 
 
@@ -194,9 +243,6 @@ class MainWorkflowState(AgentState, total=False):
     guideline_result: GuidelineResultPayload
     insight: Dict[str, Any]
 
-    analysis_plan: AnalysisPlan
-    analysis_result: AnalysisExecutionResult
-    analysis_error: AnalysisError
     final_status: FinalStatus
 
     visualization_plan: Dict[str, Any]
@@ -204,9 +250,7 @@ class MainWorkflowState(AgentState, total=False):
     visualization_output: VisualizationOutput
     merged_context: Dict[str, Any]
     report_draft: Dict[str, Any]
-    report_result: Dict[str, Any]
+    report_result: ReportResultPayload
+    data_qa_result: Dict[str, Any]
 
     output: OutputPayload
-
-
-CommonAgentState = AgentState

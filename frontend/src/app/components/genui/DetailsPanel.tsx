@@ -15,8 +15,14 @@ import { CardShell, CardHeader, CardBody, CardFooter } from "./CardShell";
 import { ApprovalCard } from "./ApprovalCard";
 import { ErrorCard } from "./ErrorCard";
 import { SkeletonLine } from "./Skeletons";
-import type { VisualizationResultPayload } from "../../hooks/useAnalysisPipeline";
+import { VisualizationResultView } from "../visualization/VisualizationResultView";
 import type { PendingApprovalPayload } from "../../../lib/api";
+import {
+  getVisualizationChartData,
+  hasVisualizationArtifact,
+  hasVisualizationChartData,
+  type VisualizationResultPayload,
+} from "../../../lib/visualization";
 
 function formatPendingValue(value: unknown): string {
   if (Array.isArray(value)) {
@@ -59,20 +65,17 @@ interface DetailsPanelProps {
 export function DetailsPanel({ state, selectedItem, onAction, className }: DetailsPanelProps) {
   const visualization = selectedItem?.visualization ?? null;
   const hasVisualization =
-    typeof visualization?.artifact?.image_base64 === "string" &&
-    visualization.artifact.image_base64.length > 0;
+    hasVisualizationArtifact(visualization) || hasVisualizationChartData(visualization);
   const hasDatasetContext = selectedItem?.hasDatasetContext ?? false;
   const pendingApproval = selectedItem?.pendingApproval ?? null;
-  const chartType = visualization?.chart?.chart_type ?? "chart";
+  const chartMetadata = getVisualizationChartData(visualization) ?? visualization?.chart;
+  const chartType = chartMetadata?.chart_type ?? "chart";
   const chartTitle = hasVisualization
-    ? `${visualization?.chart?.x_key || "x"} vs ${visualization?.chart?.y_key || "y"}`
+    ? `${chartMetadata?.x_key || "x"} vs ${chartMetadata?.y_key || "y"}`
     : "Revenue Analysis";
   const chartMeta = hasVisualization
     ? `${chartType.toUpperCase()} Visualization`
     : "Visualization";
-  const chartImageSrc = hasVisualization
-    ? `data:${visualization?.artifact?.mime_type || "image/png"};base64,${visualization?.artifact?.image_base64}`
-    : "";
   const insightSummary =
     typeof visualization?.summary === "string" && visualization.summary.trim()
       ? visualization.summary.trim()
@@ -96,7 +99,7 @@ export function DetailsPanel({ state, selectedItem, onAction, className }: Detai
               {
                 step: "1",
                 title: "Upload Data",
-                desc: "Drag & drop a CSV or Excel file into the center panel, or use the + button in the command bar.",
+                desc: "Drag & drop a CSV file into the center panel, or use the + button in the command bar.",
               },
               {
                 step: "2",
@@ -394,11 +397,9 @@ export function DetailsPanel({ state, selectedItem, onAction, className }: Detai
             <CardBody className="flex-1 bg-[var(--genui-surface)]/30 rounded-lg border border-[var(--genui-border)] mt-4 p-4">
                 <div className="space-y-4">
                     {hasVisualization ? (
-                      <img
-                        src={chartImageSrc}
-                        alt={`${chartType} visualization`}
-                        className="h-48 w-full rounded border border-[var(--genui-border)] bg-white dark:bg-[#212121] object-contain"
-                      />
+                      visualization ? (
+                        <VisualizationResultView visualization={visualization} />
+                      ) : null
                     ) : (
                       <div className="h-48 bg-[var(--genui-surface)] rounded border border-dashed border-[var(--genui-border)] flex items-center justify-center">
                         <BarChart3 className="w-8 h-8 text-[var(--genui-muted)]/50" />
@@ -416,7 +417,7 @@ export function DetailsPanel({ state, selectedItem, onAction, className }: Detai
                             <li className="flex gap-2 text-xs text-[var(--genui-muted)]">
                                <Lightbulb className="w-3 h-3 text-[var(--genui-warning)] flex-shrink-0" />
                                <span>
-                                 시각화: {visualization?.chart?.x_key || "x"} vs {visualization?.chart?.y_key || "y"} ({chartType})
+                                 시각화: {chartMetadata?.x_key || "x"} vs {chartMetadata?.y_key || "y"} ({chartType})
                                </span>
                             </li>
                           </>

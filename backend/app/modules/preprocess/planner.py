@@ -148,7 +148,7 @@ def build_preprocess_review_payload(
         or reason_summary.strip()
         or "전처리 계획을 검토한 뒤 승인 여부를 결정해 주세요."
     )
-    row_count = dataset_profile.get("row_count")
+    row_count = dataset_profile.get("sample_row_count")
 
     return {
         "stage": "preprocess",

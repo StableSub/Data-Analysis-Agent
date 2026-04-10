@@ -33,6 +33,7 @@ export interface MCPAction {
 export interface RawLogEntry {
   id: string;
   label: string;
+  traceId?: string;
   /** JSON payload string (pretty-printed) */
   payload: string;
   /** Error-level entry turns label red */

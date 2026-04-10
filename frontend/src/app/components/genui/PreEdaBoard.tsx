@@ -1,17 +1,24 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
 import {
   AlertTriangle,
   CheckCircle2,
-  ChevronDown,
-  ChevronRight,
-  Code2,
-  Lightbulb,
+  LoaderCircle,
   ShieldAlert,
   Sparkles,
 } from "lucide-react";
+import type {
+  EdaPreprocessRecommendation,
+  EdaRecommendedOperation,
+} from "../../../lib/api";
 import { cn } from "../../../lib/utils";
-import type { DistributionBin, PreEdaProfile, PreprocessStrategy } from "../../lib/preEdaProfile";
+import type { PreEdaProfile } from "../../lib/preEdaProfile";
+import {
+  countAutoApplicableRecommendedOperations,
+  formatRecommendedOperationLabel,
+  getRecommendedOperationKey,
+  isAutoApplicableRecommendedOperation,
+} from "../../lib/preprocessRecommendation";
 import {
   AssistantReportMessage,
   type ReportSection,
@@ -25,9 +32,14 @@ import {
 interface PreEdaBoardProps {
   profile: PreEdaProfile;
   summarySections: ReportSection[];
-  /** 전처리 추천 승인 버튼 클릭 시 호출 */
-  onApprovePreprocess?: () => void;
-  approveActionMode?: "prepare" | "run" | "approved";
+  recommendationMode?: "llm" | "fallback" | "none" | null;
+  recommendationWarning?: string | null;
+  applyError?: string | null;
+  applyingOperationKey?: string | null;
+  onApplyOperation?: (operation: EdaRecommendedOperation, index: number) => void;
+  onSelectDistributionColumn?: (column: string) => void;
+  distributionLoadingColumn?: string | null;
+  distributionError?: string | null;
 }
 
 function formatPercent(value: number): string {
@@ -55,48 +67,76 @@ function formatDistributionBound(value: number): string {
     return "-";
   }
 
-  return value.toLocaleString(undefined, {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  });
+  return formatMetric(value);
 }
 
 function formatDistributionLabel(label: string): string {
-  if (!label.includes("-")) {
-    return label;
+  const intervalMatch = label.match(/^[\[(]\s*([^,]+)\s*,\s*([^\])]+)\s*[\])]\s*$/);
+  if (intervalMatch) {
+    const [, startRaw, endRaw] = intervalMatch;
+    const start = Number(startRaw);
+    const end = Number(endRaw);
+
+    if (Number.isFinite(start) && Number.isFinite(end)) {
+      return `${formatDistributionBound(start)}~${formatDistributionBound(end)}`;
+    }
   }
 
-  const [startRaw, endRaw] = label.split("-");
-  const start = Number(startRaw);
-  const end = Number(endRaw);
+  if (label.includes("-")) {
+    const [startRaw, endRaw] = label.split("-");
+    const start = Number(startRaw);
+    const end = Number(endRaw);
 
-  if (!Number.isFinite(start) || !Number.isFinite(end)) {
-    return label;
+    if (Number.isFinite(start) && Number.isFinite(end)) {
+      return `${formatDistributionBound(start)}~${formatDistributionBound(end)}`;
+    }
   }
 
-  return `${formatDistributionBound(start)}~${formatDistributionBound(end)}`;
-}
-
-function formatBarChartAxisLabel(label: string): string {
-  return label.length > 5 ? `${label.slice(0, 5)}...` : label;
+  return label;
 }
 
 function formatDistributionAxisLabel(label: string, kind: "numeric" | "categorical"): string {
   const formatted = formatDistributionLabel(label);
-  return kind === "categorical" ? formatBarChartAxisLabel(formatted) : formatted;
+  return kind === "categorical" && formatted.length > 5
+    ? `${formatted.slice(0, 5)}...`
+    : formatted;
 }
 
 const DISTRIBUTION_VISIBLE_BAR_COUNT = 8;
 const DISTRIBUTION_BAR_SLOT_WIDTH = 72;
 const DISTRIBUTION_BAR_MAX_WIDTH = 30;
 const PREVIEW_DISTRIBUTION_BAR_MAX_WIDTH = 19;
+const NUMERIC_DISTRIBUTION_SCROLL_THRESHOLD = 24;
+const NUMERIC_DISTRIBUTION_BAR_SLOT_WIDTH = 22;
+
+function getRenderableDistributionColumns(profile: PreEdaProfile): string[] {
+  const seen = new Set<string>();
+
+  return [
+    ...profile.numericColumns,
+    ...profile.categoricalColumns,
+    ...profile.datetimeColumns,
+    ...profile.booleanColumns,
+    ...profile.groupKeyColumns,
+  ].filter((column) => {
+    if (!column || profile.identifierColumns.includes(column) || seen.has(column)) {
+      return false;
+    }
+    seen.add(column);
+    return true;
+  });
+}
 
 function getDistributionChartMinWidth(kind: "numeric" | "categorical", count: number): number | undefined {
-  if (kind !== "categorical") {
-    return undefined;
+  if (kind === "categorical") {
+    return Math.max(count, DISTRIBUTION_VISIBLE_BAR_COUNT) * DISTRIBUTION_BAR_SLOT_WIDTH;
   }
 
-  return Math.max(count, DISTRIBUTION_VISIBLE_BAR_COUNT) * DISTRIBUTION_BAR_SLOT_WIDTH;
+  if (count > NUMERIC_DISTRIBUTION_SCROLL_THRESHOLD) {
+    return count * NUMERIC_DISTRIBUTION_BAR_SLOT_WIDTH;
+  }
+
+  return undefined;
 }
 
 function getDistributionBarMaxWidth(kind: "numeric" | "categorical", compact = false): number | undefined {
@@ -169,124 +209,84 @@ function MetricTile({ label, value }: { label: string; value: string }) {
   );
 }
 
-/** Generate a Python code snippet for the selected strategy */
-function buildCodePreview(
-  column: string,
-  strategyId: string,
-  fillValue: string,
+function buildRecommendationSummary(
+  recommendation: EdaPreprocessRecommendation | null,
 ): string {
-  switch (strategyId) {
-    case "median":
-      return `df["${column}"].fillna(df["${column}"].median(), inplace=True)`;
-    case "mean":
-      return `df["${column}"].fillna(df["${column}"].mean(), inplace=True)`;
-    case "mode":
-      return `df["${column}"].fillna(df["${column}"].mode()[0], inplace=True)`;
-    case "unknown":
-    case "custom":
-      return `df["${column}"].fillna("${fillValue}", inplace=True)`;
-    case "drop_rows":
-      return `df.dropna(subset=["${column}"], inplace=True)`;
-    case "drop_column":
-      return `df.drop(columns=["${column}"], inplace=True)`;
+  if (!recommendation) {
+    return "";
+  }
+  const summary = recommendation.summary.trim();
+  if (summary) {
+    return summary;
+  }
+  return `${recommendation.operations.length}개의 전처리 작업을 검토합니다.`;
+}
+
+function formatOperationPriority(
+  priority: EdaRecommendedOperation["priority"],
+): string {
+  switch (priority) {
+    case "high":
+      return "HIGH";
+    case "medium":
+      return "MEDIUM";
+    case "low":
+      return "LOW";
     default:
-      return `df["${column}"].fillna(${JSON.stringify(fillValue)}, inplace=True)`;
+      return priority;
   }
 }
 
-/** Simulate what distribution bins would look like after applying the strategy */
-function simulatePreviewBins(
-  originalBins: DistributionBin[],
-  strategyId: string,
-  fillValue: string,
-  missingCount: number,
-): DistributionBin[] {
-  if (strategyId === "drop_rows" || strategyId === "drop_column") {
-    // Just return original bins (rows removed don't change existing distribution shape)
-    return originalBins.map((b) => ({ ...b }));
+function getOperationPriorityClass(
+  priority: EdaRecommendedOperation["priority"],
+): string {
+  switch (priority) {
+    case "high":
+      return "border-[var(--genui-warning)]/35 bg-[var(--genui-warning)]/10 text-[var(--genui-warning)]";
+    case "medium":
+      return "border-[var(--genui-running)]/35 bg-[var(--genui-running)]/10 text-[var(--genui-running)]";
+    case "low":
+      return "border-[var(--genui-border)] bg-[var(--genui-panel)] text-[var(--genui-muted)]";
+    default:
+      return "border-[var(--genui-border)] bg-[var(--genui-panel)] text-[var(--genui-muted)]";
   }
+}
 
-  // For fill strategies, add missingCount to the matching bin or create a new one
-  const bins = originalBins.map((b) => ({ ...b }));
-
-  const targetLabel = strategyId === "median" || strategyId === "mean"
-    ? null // numeric — distribute into nearest bin
-    : fillValue;
-
-  if (targetLabel) {
-    const existing = bins.find((b) => b.label === targetLabel);
-    if (existing) {
-      existing.value += missingCount;
-    } else {
-      bins.push({ label: targetLabel, value: missingCount });
-    }
-  } else {
-    // Numeric: spread into middle bin as approximation
-    const midIdx = Math.floor(bins.length / 2);
-    const midBin = bins[midIdx];
-    if (midBin) {
-      midBin.value += missingCount;
-    }
+function formatOperationColumns(columns: string[]): string {
+  if (columns.length === 0) {
+    return "전체 데이터셋 기준";
   }
-
-  return bins;
+  if (columns.length === 1) {
+    return columns[0] ?? "-";
+  }
+  return `${columns.slice(0, 3).join(", ")}${columns.length > 3 ? ` 외 ${columns.length - 3}개` : ""}`;
 }
 
 function PreprocessRecommendationCard({
-  recommendation,
   profile,
-  onApprovePreprocess,
-  approveActionMode = "prepare",
+  recommendationMode = null,
+  recommendationWarning = null,
+  applyError = null,
+  applyingOperationKey = null,
+  onApplyOperation,
 }: {
-  recommendation: PreEdaProfile["recommendation"];
   profile: PreEdaProfile;
-  onApprovePreprocess?: () => void;
-  approveActionMode?: "prepare" | "run" | "approved";
+  recommendationMode?: "llm" | "fallback" | "none" | null;
+  recommendationWarning?: string | null;
+  applyError?: string | null;
+  applyingOperationKey?: string | null;
+  onApplyOperation?: (operation: EdaRecommendedOperation, index: number) => void;
 }) {
-  const [selectedStrategyId, setSelectedStrategyId] = useState<string | null>(null);
-  const [showPreview, setShowPreview] = useState(false);
-  const startsAnalysisOnApprove = approveActionMode === "run";
-  const isApproved = approveActionMode === "approved";
+  const serverRecommendation = profile.serverRecommendation;
+  const [editingDerivedKey, setEditingDerivedKey] = useState<string | null>(null);
+  const [derivedDrafts, setDerivedDrafts] = useState<Record<string, { targetColumn: string; zeroDivision: string }>>({});
+  const operations = serverRecommendation?.operations ?? [];
+  const recommendationSummary = buildRecommendationSummary(serverRecommendation);
+  const autoApplicableCount = countAutoApplicableRecommendedOperations(serverRecommendation);
+  const manualOperationCount = operations.length - autoApplicableCount;
+  const hasRunningOperation = Boolean(applyingOperationKey);
 
-  // Resolve currently selected strategy
-  const alts = recommendation?.alternativeStrategies ?? [];
-  const activeStrategy: PreprocessStrategy | null = useMemo(() => {
-    if (!recommendation || alts.length === 0) return null;
-    if (selectedStrategyId) {
-      const found = alts.find((s) => s.id === selectedStrategyId);
-      return found ?? alts[0] ?? null;
-    }
-    return alts[0] ?? null;
-  }, [recommendation, alts, selectedStrategyId]);
-
-  // Find the distribution for the target column (for preview)
-  const targetDistribution = useMemo(() => {
-    if (!recommendation) return null;
-    return profile.distributions.find((d) => d.column === recommendation.column) ?? null;
-  }, [recommendation, profile.distributions]);
-
-  // Simulated preview bins
-  const previewBins = useMemo(() => {
-    if (!targetDistribution || !activeStrategy || !recommendation) return [];
-    return simulatePreviewBins(
-      targetDistribution.bins,
-      activeStrategy.id,
-      activeStrategy.fillValue,
-      recommendation.missingCount,
-    );
-  }, [targetDistribution, activeStrategy, recommendation]);
-
-  const chartConfig = useMemo(
-    () => ({
-      value: {
-        label: "Count",
-        color: "hsl(var(--chart-1, 173 58% 39%))",
-      },
-    }),
-    [],
-  );
-
-  if (!recommendation) {
+  if (operations.length === 0) {
     return (
       <div className="grid gap-4 xl:grid-cols-12">
         <CardShell status="success" className="xl:col-span-12">
@@ -301,7 +301,9 @@ function PreprocessRecommendationCard({
             <div className="flex items-center gap-2.5 rounded-xl border border-[var(--genui-success)]/20 bg-[var(--genui-success)]/5 px-4 py-3.5">
               <CheckCircle2 className="w-5 h-5 text-[var(--genui-success)] shrink-0" />
               <p className="text-sm text-[var(--genui-text)]">
-                결측률이 낮아 전처리 없이 바로 질문할 수 있습니다.
+                {recommendationMode === "none"
+                  ? "필수 전처리 항목이 감지되지 않아 바로 질문할 수 있습니다."
+                  : "구조화된 전처리 추천이 없어 바로 질문할 수 있습니다."}
               </p>
             </div>
           </CardBody>
@@ -309,11 +311,6 @@ function PreprocessRecommendationCard({
       </div>
     );
   }
-
-  const columnTypeLabel =
-    (recommendation.columnType ?? "categorical") === "numeric" ? "수치형" :
-    (recommendation.columnType ?? "categorical") === "categorical" ? "범주형" :
-    (recommendation.columnType ?? "categorical") === "datetime" ? "날짜형" : "불리언";
 
   return (
     <div className="grid gap-4 xl:grid-cols-12">
@@ -326,258 +323,241 @@ function PreprocessRecommendationCard({
           className="px-3.5 py-2.5"
         />
         <CardBody className="space-y-3 p-3">
-
-          {/* Step 1: Issue Summary Header */}
           <div className="rounded-xl border border-[var(--genui-needs-user)]/25 bg-[var(--genui-needs-user)]/6 px-4 py-3.5">
             <div className="flex items-start gap-3">
               <AlertTriangle className="w-5 h-5 text-[var(--genui-warning)] shrink-0 mt-0.5" />
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-semibold text-[var(--genui-text)]">
-                  <span className="font-mono text-[var(--genui-needs-user)]">{recommendation.column}</span>
-                  {" "}컬럼에 결측이 감지되었습니다
+                  {recommendationSummary}
                 </p>
                 <p className="mt-1 text-sm text-[var(--genui-muted)]">
-                  {recommendation.missingCount.toLocaleString()}건 ({recommendation.missingPercent}%) · {columnTypeLabel} 컬럼
+                  {autoApplicableCount > 0
+                    ? `${operations.length.toLocaleString()}개 추천 중 ${autoApplicableCount.toLocaleString()}개는 바로 적용 가능${manualOperationCount > 0 ? `, ${manualOperationCount.toLocaleString()}개는 수동 검토 필요` : ""}`
+                    : `${operations.length.toLocaleString()}개 추천이 있으며 현재는 수동 검토가 필요합니다.`}
                 </p>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <span className="rounded-full border border-[var(--genui-border)] bg-[var(--genui-panel)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--genui-muted)]">
+                    {recommendationMode === "fallback"
+                      ? "Rule-based fallback"
+                      : recommendationMode === "llm"
+                        ? "LLM recommendation"
+                        : recommendationMode === "none"
+                          ? "No preprocess required"
+                          : "Recommendation"}
+                  </span>
+                </div>
+                {recommendationWarning && (
+                  <p className="mt-2 text-xs leading-relaxed text-[var(--genui-muted)]">
+                    {recommendationWarning}
+                  </p>
+                )}
               </div>
             </div>
           </div>
 
-          {/* Domain Warning (if any) */}
-          {recommendation.domainWarning && (
-            <div className="flex items-start gap-2.5 rounded-lg border border-[var(--genui-warning)]/30 bg-[var(--genui-warning)]/8 px-3.5 py-3">
-              <ShieldAlert className="w-4 h-4 text-[var(--genui-warning)] shrink-0 mt-0.5" />
-              <p className="text-xs leading-relaxed text-[var(--genui-text)]">
-                {recommendation.domainWarning}
-              </p>
+          {manualOperationCount > 0 && (
+            <div className="rounded-lg border border-[var(--genui-warning)]/30 bg-[var(--genui-warning)]/8 px-3.5 py-3">
+              <div className="flex items-start gap-2.5">
+                <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-[var(--genui-warning)]" />
+                <div>
+                  <p className="text-sm font-medium text-[var(--genui-text)]">
+                    수동 검토가 필요한 작업 포함
+                  </p>
+                  <p className="mt-1 text-xs leading-relaxed text-[var(--genui-muted)]">
+                    자동 적용 가능한 작업은 아래에서 바로 실행할 수 있고, 나머지 작업은 추가 입력이 필요해 현재는 검토만 가능합니다.
+                  </p>
+                </div>
+              </div>
             </div>
           )}
 
-          {/* Step 2: AI Rationale */}
-          {recommendation.rationale && (
-            <div className="rounded-lg border border-[var(--genui-border)] bg-[var(--genui-surface)] px-3.5 py-3">
-              <div className="flex items-center gap-2 mb-2">
-                <Lightbulb className="w-3.5 h-3.5 text-[var(--genui-running)]" />
-                <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--genui-muted)]">
-                  AI 추천 근거
-                </span>
+          {applyError && (
+            <div className="rounded-lg border border-[var(--genui-danger)]/30 bg-[var(--genui-danger)]/8 px-3.5 py-3">
+              <div className="flex items-start gap-2.5">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-[var(--genui-danger)]" />
+                <div>
+                  <p className="text-sm font-medium text-[var(--genui-text)]">
+                    전처리 적용 실패
+                  </p>
+                  <p className="mt-1 text-xs leading-relaxed text-[var(--genui-muted)]">
+                    {applyError}
+                  </p>
+                </div>
               </div>
-              <p className="text-sm leading-relaxed text-[var(--genui-text)]">
-                {recommendation.rationale}
-              </p>
             </div>
           )}
 
-          {/* Step 3: Strategy Selection */}
-          {alts.length > 0 && (
-            <div>
-              <div className="flex items-center gap-2 mb-2 px-0.5">
-                <Sparkles className="w-3.5 h-3.5 text-[var(--genui-muted)]" />
-                <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--genui-muted)]">
-                  전처리 전략 선택
-                </span>
-              </div>
-              <div className="grid gap-2 sm:grid-cols-2">
-                {alts.map((strategy, index) => {
-                  const isSelected = activeStrategy?.id === strategy.id;
-                  const isRecommended = index === 0;
-                  return (
-                    <button
-                      key={strategy.id}
-                      type="button"
-                      onClick={() => setSelectedStrategyId(strategy.id)}
-                      className={cn(
-                        "relative text-left rounded-xl border px-3.5 py-3 transition-all duration-200",
-                        isSelected
-                          ? "border-[var(--genui-running)] bg-[var(--genui-running)]/8 ring-1 ring-[var(--genui-running)]/30"
-                          : "border-[var(--genui-border)] bg-[var(--genui-panel)] hover:border-[var(--genui-muted)] hover:bg-[var(--genui-surface)]",
-                      )}
-                    >
-                      {isRecommended && (
-                        <span className="absolute -top-2 right-3 rounded-full bg-[var(--genui-running)] px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-white">
-                          추천
+          <div className="rounded-lg border border-[var(--genui-border)] bg-[var(--genui-surface)] px-3.5 py-3">
+            <div className="flex items-center gap-2 mb-2">
+              <Sparkles className="w-3.5 h-3.5 text-[var(--genui-muted)]" />
+              <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--genui-muted)]">
+                전처리 작업 목록
+              </span>
+            </div>
+            <div className="space-y-2">
+              {operations.map((operation, index) => {
+                const autoApplicable = isAutoApplicableRecommendedOperation(operation);
+                const operationKey = getRecommendedOperationKey(operation, index);
+                const isApplying = applyingOperationKey === operationKey;
+                const isDerived = operation.op === "derived_column";
+                const draft = derivedDrafts[operationKey] ?? {
+                  targetColumn: operation.target_column,
+                  zeroDivision:
+                    typeof operation.params?.zero_division === "string"
+                      ? operation.params.zero_division
+                      : "null",
+                };
+
+                return (
+                  <div
+                    key={operationKey}
+                    className="rounded-lg border border-[var(--genui-border)] bg-[var(--genui-panel)] px-3 py-2.5"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-[var(--genui-text)]">
+                          {index + 1}. {formatRecommendedOperationLabel(operation.op)}
+                        </p>
+                        <p className="mt-1 text-xs text-[var(--genui-muted)]">
+                          대상: {formatOperationColumns(operation.target_columns)}
+                        </p>
+                      </div>
+                      <span
+                        className={cn(
+                          "rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em]",
+                          getOperationPriorityClass(operation.priority),
+                        )}
+                      >
+                        {formatOperationPriority(operation.priority)}
+                      </span>
+                    </div>
+                    <p className="mt-2 text-sm leading-relaxed text-[var(--genui-text)]">
+                      {operation.reason}
+                    </p>
+                    {isDerived && (
+                      <div className="mt-2 text-xs text-[var(--genui-muted)]">
+                        원본: {operation.source_columns.join(", ")} · 변환: {operation.transform_type ?? "-"} · 결과: {operation.target_column}
+                      </div>
+                    )}
+                    {isDerived && editingDerivedKey === operationKey && (
+                      <div className="mt-3 rounded-lg border border-[var(--genui-border)] bg-[var(--genui-surface)] px-3 py-3">
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <label className="space-y-1">
+                            <span className="text-[11px] font-medium text-[var(--genui-muted)]">새 컬럼명</span>
+                            <input
+                              value={draft.targetColumn}
+                              onChange={(event) => {
+                                const value = event.target.value;
+                                setDerivedDrafts((prev) => ({
+                                  ...prev,
+                                  [operationKey]: { ...draft, targetColumn: value },
+                                }));
+                              }}
+                              className="w-full rounded-md border border-[var(--genui-border)] bg-[var(--genui-panel)] px-3 py-2 text-sm text-[var(--genui-text)]"
+                            />
+                          </label>
+                          {operation.transform_type === "ratio" ? (
+                            <label className="space-y-1">
+                              <span className="text-[11px] font-medium text-[var(--genui-muted)]">0 나누기 처리</span>
+                              <select
+                                value={draft.zeroDivision}
+                                onChange={(event) => {
+                                  const value = event.target.value;
+                                  setDerivedDrafts((prev) => ({
+                                    ...prev,
+                                    [operationKey]: { ...draft, zeroDivision: value },
+                                  }));
+                                }}
+                                className="w-full rounded-md border border-[var(--genui-border)] bg-[var(--genui-panel)] px-3 py-2 text-sm text-[var(--genui-text)]"
+                              >
+                                <option value="null">NaN으로 처리</option>
+                              </select>
+                            </label>
+                          ) : (
+                            <div className="space-y-1">
+                              <span className="text-[11px] font-medium text-[var(--genui-muted)]">변환 방식</span>
+                              <div className="rounded-md border border-[var(--genui-border)] bg-[var(--genui-panel)] px-3 py-2 text-sm text-[var(--genui-text)]">
+                                {operation.transform_type ?? "-"}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                        <div className="mt-3 flex items-center justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setEditingDerivedKey(null)}
+                            className="rounded-lg border border-[var(--genui-border)] bg-[var(--genui-panel)] px-3 py-2 text-xs font-semibold text-[var(--genui-text)]"
+                          >
+                            취소
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              onApplyOperation?.({
+                                ...operation,
+                                target_column: draft.targetColumn.trim(),
+                                target_columns: draft.targetColumn.trim() ? [draft.targetColumn.trim()] : [],
+                                params: operation.transform_type === "ratio"
+                                  ? { ...(operation.params ?? {}), zero_division: draft.zeroDivision }
+                                  : operation.params,
+                              }, index);
+                            }}
+                            disabled={!draft.targetColumn.trim() || hasRunningOperation}
+                            className={cn(
+                              "rounded-lg px-3 py-2 text-xs font-semibold text-white",
+                              !draft.targetColumn.trim() || hasRunningOperation
+                                ? "cursor-not-allowed bg-[var(--genui-muted)]/60"
+                                : "bg-[var(--genui-running)]",
+                            )}
+                          >
+                            확인 후 적용
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                    <div className="mt-3 flex items-center justify-end">
+                      {autoApplicable ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (isDerived) {
+                              setDerivedDrafts((prev) => ({
+                                ...prev,
+                                [operationKey]: prev[operationKey] ?? draft,
+                              }));
+                              setEditingDerivedKey((current) => current === operationKey ? null : operationKey);
+                              return;
+                            }
+                            onApplyOperation?.(operation, index);
+                          }}
+                          disabled={!onApplyOperation || hasRunningOperation}
+                          className={cn(
+                            "inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-xs font-semibold text-white transition-all",
+                            !onApplyOperation || hasRunningOperation
+                              ? "cursor-not-allowed bg-[var(--genui-muted)]/60"
+                              : "bg-[var(--genui-running)] hover:opacity-90 active:scale-[0.98]",
+                          )}
+                        >
+                          {isApplying ? (
+                          <>
+                            <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                            적용 중...
+                          </>
+                        ) : (
+                          isDerived ? "설정 후 적용" : "적용"
+                        )}
+                      </button>
+                      ) : (
+                        <span className="rounded-full border border-[var(--genui-warning)]/30 bg-[var(--genui-warning)]/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--genui-warning)]">
+                          수동 작업 필요
                         </span>
                       )}
-                      <p className="text-sm font-semibold text-[var(--genui-text)]">
-                        {strategy.label}
-                      </p>
-                      <p className="mt-0.5 text-xs text-[var(--genui-muted)] leading-relaxed">
-                        {strategy.description}
-                      </p>
-                      {strategy.fillValue !== "-" && (
-                        <p className="mt-1.5 text-xs text-[var(--genui-muted)]">
-                          대체값: <span className="font-mono font-semibold text-[var(--genui-text)]">{strategy.fillValue}</span>
-                        </p>
-                      )}
-                      <p className="mt-1 text-[11px] text-[var(--genui-muted)]">
-                        <ChevronRight className="inline w-3 h-3 -mt-px" />
-                        {" "}{strategy.expectedImpact}
-                      </p>
-                    </button>
-                  );
-                })}
-
-              </div>
-            </div>
-          )}
-
-          {/* Code Preview Tooltip */}
-          {activeStrategy && (
-            <div className="rounded-lg border border-[var(--genui-border)] bg-[var(--genui-surface)] px-3.5 py-2.5">
-              <div className="flex items-center gap-2">
-                <Code2 className="w-3.5 h-3.5 text-[var(--genui-muted)]" />
-                <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--genui-muted)]">
-                  적용될 코드
-                </span>
-              </div>
-              <pre className="mt-1.5 overflow-x-auto rounded-md bg-[var(--genui-panel)] border border-[var(--genui-border)] px-3 py-2 text-xs font-mono text-[var(--genui-text)] leading-relaxed">
-                {buildCodePreview(recommendation.column, activeStrategy.id, activeStrategy.fillValue)}
-              </pre>
-            </div>
-          )}
-
-          {/* Interactive Preview — Mini Histogram */}
-          {targetDistribution && activeStrategy && activeStrategy.id !== "drop_column" && (
-            <div>
-              <button
-                type="button"
-                onClick={() => setShowPreview((v) => !v)}
-                className="flex items-center gap-1.5 text-xs font-medium text-[var(--genui-muted)] hover:text-[var(--genui-text)] transition-colors mb-2"
-              >
-                <ChevronDown className={cn(
-                  "w-3.5 h-3.5 transition-transform duration-200",
-                  showPreview ? "rotate-0" : "-rotate-90",
-                )} />
-                전처리 후 예상 분포 미리보기
-              </button>
-              {showPreview && (
-                <div className="grid gap-3 sm:grid-cols-2 animate-in fade-in slide-in-from-top-1 duration-200">
-                  {/* Before */}
-                  <div className="rounded-lg border border-[var(--genui-border)] bg-[var(--genui-surface)] p-2.5">
-                    <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--genui-muted)] mb-1.5 px-1">
-                      Before (현재)
-                    </p>
-                    <div className={cn(targetDistribution.kind === "categorical" && "overflow-x-auto")}>
-                      <ChartContainer
-                        config={chartConfig}
-                        className={cn("h-[120px] aspect-auto", targetDistribution.kind === "categorical" ? "w-auto min-w-full" : "w-full")}
-                        style={{
-                          minWidth: getDistributionChartMinWidth(targetDistribution.kind, targetDistribution.bins.length),
-                        }}
-                      >
-                        <BarChart data={targetDistribution.bins} margin={{ top: 4, right: 4, left: 0, bottom: 4 }} barCategoryGap="14%">
-                          <CartesianGrid vertical={false} strokeDasharray="3 3" opacity={0.3} />
-                          <XAxis
-                            dataKey="label"
-                            tickLine={false}
-                            axisLine={false}
-                            tick={{ fontSize: 8, fill: "var(--genui-muted)" }}
-                            interval={0}
-                            minTickGap={4}
-                            tickFormatter={(label) => formatDistributionAxisLabel(String(label), targetDistribution.kind)}
-                          />
-                          <YAxis allowDecimals={false} tickLine={false} axisLine={false} width={36} tick={{ fontSize: 9, fill: "var(--genui-muted)" }} />
-                          <Bar
-                            dataKey="value"
-                            fill="var(--color-value)"
-                            radius={[4, 4, 0, 0]}
-                            maxBarSize={getDistributionBarMaxWidth(targetDistribution.kind, true)}
-                            opacity={0.6}
-                          />
-                        </BarChart>
-                      </ChartContainer>
                     </div>
                   </div>
-                  {/* After */}
-                  <div className="rounded-lg border border-[var(--genui-running)]/30 bg-[var(--genui-running)]/4 p-2.5">
-                    <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--genui-running)] mb-1.5 px-1">
-                      After (예상)
-                    </p>
-                    <div className={cn(targetDistribution.kind === "categorical" && "overflow-x-auto")}>
-                      <ChartContainer
-                        config={chartConfig}
-                        className={cn("h-[120px] aspect-auto", targetDistribution.kind === "categorical" ? "w-auto min-w-full" : "w-full")}
-                        style={{
-                          minWidth: getDistributionChartMinWidth(targetDistribution.kind, previewBins.length),
-                        }}
-                      >
-                        <BarChart data={previewBins} margin={{ top: 4, right: 4, left: 0, bottom: 4 }} barCategoryGap="14%">
-                          <CartesianGrid vertical={false} strokeDasharray="3 3" opacity={0.3} />
-                          <XAxis
-                            dataKey="label"
-                            tickLine={false}
-                            axisLine={false}
-                            tick={{ fontSize: 8, fill: "var(--genui-muted)" }}
-                            interval={0}
-                            minTickGap={4}
-                            tickFormatter={(label) => formatDistributionAxisLabel(String(label), targetDistribution.kind)}
-                          />
-                          <YAxis allowDecimals={false} tickLine={false} axisLine={false} width={36} tick={{ fontSize: 9, fill: "var(--genui-muted)" }} />
-                          <Bar
-                            dataKey="value"
-                            fill="var(--genui-running)"
-                            radius={[4, 4, 0, 0]}
-                            maxBarSize={getDistributionBarMaxWidth(targetDistribution.kind, true)}
-                          />
-                        </BarChart>
-                      </ChartContainer>
-                    </div>
-                  </div>
-                </div>
-              )}
+                );
+              })}
             </div>
-          )}
-
-          {/* Step 4: Action Bar */}
-          {(onApprovePreprocess || isApproved) && (
-            <div className="flex items-center justify-between gap-3 rounded-xl border border-[var(--genui-border)] bg-[var(--genui-surface)] px-4 py-3">
-              <div className="min-w-0">
-                {isApproved ? (
-                  <>
-                    <p className="text-sm font-semibold text-[var(--genui-success)]">
-                      전처리 추천이 승인되었습니다
-                    </p>
-                    <p className="mt-0.5 text-xs text-[var(--genui-muted)]">
-                      질문을 입력하면 승인된 전략을 반영해 Deep EDA를 이어갑니다
-                    </p>
-                  </>
-                ) : activeStrategy ? (
-                  <>
-                    <p className="text-sm text-[var(--genui-text)]">
-                      선택된 전략: <span className="font-semibold">{activeStrategy.label}</span>
-                    </p>
-                    <p className="text-xs text-[var(--genui-muted)] mt-0.5">
-                      {activeStrategy.fillValue !== "-" && activeStrategy.fillValue !== "(미입력)"
-                        ? startsAnalysisOnApprove
-                          ? <>대체값 <span className="font-mono">{activeStrategy.fillValue}</span> 적용 후 Deep EDA를 시작합니다</>
-                          : <>대체값 <span className="font-mono">{activeStrategy.fillValue}</span> 적용을 승인하고, 이후 질문을 입력하면 Deep EDA를 시작합니다</>
-                        : startsAnalysisOnApprove
-                          ? "이 전략을 적용한 뒤 Deep EDA를 시작합니다"
-                          : "이 전략을 승인하면 이후 질문을 입력할 때 Deep EDA를 시작합니다"}
-                    </p>
-                  </>
-                ) : (
-                  <p className="text-sm text-[var(--genui-text)]">
-                    전략: <span className="font-semibold">{recommendation.strategy}</span>
-                    {recommendation.fillValue !== "-" && (
-                      <span className="text-[var(--genui-muted)]"> · 대체값 <span className="font-mono">{recommendation.fillValue}</span></span>
-                    )}
-                  </p>
-                )}
-              </div>
-              {onApprovePreprocess && (
-                <button
-                  type="button"
-                  onClick={onApprovePreprocess}
-                  className="shrink-0 flex items-center gap-2 rounded-lg bg-[var(--genui-running)] px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:opacity-90 active:scale-[0.98] transition-all"
-                >
-                  {startsAnalysisOnApprove ? "승인하고 분석 시작" : "승인하고 계속"}
-                  <ChevronRight className="w-4 h-4" />
-                </button>
-              )}
-            </div>
-          )}
-
+          </div>
         </CardBody>
       </CardShell>
     </div>
@@ -587,31 +567,68 @@ function PreprocessRecommendationCard({
 export function PreEdaBoard({
   profile,
   summarySections,
-  onApprovePreprocess,
-  approveActionMode = "prepare",
+  recommendationMode = null,
+  recommendationWarning = null,
+  applyError = null,
+  applyingOperationKey = null,
+  onApplyOperation,
+  onSelectDistributionColumn,
+  distributionLoadingColumn = null,
+  distributionError = null,
 }: PreEdaBoardProps) {
-  const previewColumns = profile.columns.slice(0, 5);
-  const distributionOptions = profile.distributions;
+  const previewColumns = profile.columns;
+  const distributionOptions = useMemo(() => getRenderableDistributionColumns(profile), [profile]);
   const [selectedDistributionColumn, setSelectedDistributionColumn] = useState(
-    distributionOptions[0]?.column ?? "",
+    distributionOptions[0] ?? "",
   );
+
+  useEffect(() => {
+    setSelectedDistributionColumn(distributionOptions[0] ?? "");
+  }, [profile.sourceLabel, profile.uploadedAt]);
 
   useEffect(() => {
     if (
       !selectedDistributionColumn ||
-      !distributionOptions.some((item) => item.column === selectedDistributionColumn)
+      !distributionOptions.includes(selectedDistributionColumn)
     ) {
-      setSelectedDistributionColumn(distributionOptions[0]?.column ?? "");
+      setSelectedDistributionColumn(distributionOptions[0] ?? "");
     }
   }, [distributionOptions, selectedDistributionColumn]);
 
   const selectedDistribution = useMemo(
     () =>
-      distributionOptions.find((item) => item.column === selectedDistributionColumn)
-      ?? distributionOptions[0]
+      profile.distributions.find((item) => item.column === selectedDistributionColumn)
       ?? null,
-    [distributionOptions, selectedDistributionColumn],
+    [profile.distributions, selectedDistributionColumn],
   );
+  const isDistributionLoading =
+    selectedDistributionColumn.length > 0
+    && distributionLoadingColumn === selectedDistributionColumn;
+  const showDistributionLoading =
+    distributionOptions.length > 0
+    && selectedDistributionColumn.length > 0
+    && !distributionError
+    && (isDistributionLoading || selectedDistribution === null);
+
+  useEffect(() => {
+    if (
+      !selectedDistributionColumn ||
+      selectedDistribution !== null ||
+      isDistributionLoading ||
+      distributionError ||
+      !onSelectDistributionColumn
+    ) {
+      return;
+    }
+
+    void onSelectDistributionColumn(selectedDistributionColumn);
+  }, [
+    distributionError,
+    isDistributionLoading,
+    onSelectDistributionColumn,
+    selectedDistribution,
+    selectedDistributionColumn,
+  ]);
 
   const chartConfig = useMemo(
     () => ({
@@ -622,6 +639,19 @@ export function PreEdaBoard({
     }),
     [],
   );
+  const distributionScrollRef = useRef<HTMLDivElement | null>(null);
+  const distributionDragRef = useRef({
+    active: false,
+    startX: 0,
+    startScrollLeft: 0,
+  });
+  const isDistributionScrollable =
+    selectedDistribution !== null
+    && getDistributionChartMinWidth(selectedDistribution.kind, selectedDistribution.bins.length) !== undefined;
+
+  useEffect(() => {
+    distributionDragRef.current.active = false;
+  }, [selectedDistributionColumn]);
 
   return (
     <div className="space-y-3 animate-in fade-in zoom-in-95 duration-300">
@@ -818,33 +848,88 @@ export function PreEdaBoard({
           <CardHeader
             title="분포 시각화"
             meta="COLUMN DISTRIBUTION"
-            statusLabel={selectedDistribution?.kind === "numeric" ? "Histogram" : "Bar Chart"}
-            statusVariant="neutral"
+            statusLabel={distributionOptions.length === 0
+              ? "Empty"
+              : showDistributionLoading
+                ? "Loading"
+                : distributionError
+                  ? "Error"
+                  : selectedDistribution?.kind === "numeric"
+                    ? "Histogram"
+                    : "Bar Chart"}
+            statusVariant={distributionError ? "warning" : "neutral"}
             className="px-3.5 py-2.5"
           >
             {distributionOptions.length > 0 ? (
               <select
-                value={selectedDistribution?.column ?? ""}
-                onChange={(event) => setSelectedDistributionColumn(event.target.value)}
+                value={selectedDistributionColumn}
+                onChange={(event) => {
+                  const nextColumn = event.target.value;
+                  setSelectedDistributionColumn(nextColumn);
+                  void onSelectDistributionColumn?.(nextColumn);
+                }}
                 className="h-8 rounded-md border border-[var(--genui-border)] bg-[var(--genui-panel)] px-2 text-xs text-[var(--genui-text)] focus:outline-none focus:ring-1 focus:ring-[var(--genui-focus-ring)]"
               >
-                {distributionOptions.map((item) => (
-                  <option key={item.column} value={item.column}>
-                    {item.column}
+                {distributionOptions.map((column) => (
+                  <option key={column} value={column}>
+                    {column}
                   </option>
                 ))}
               </select>
             ) : null}
           </CardHeader>
           <CardBody className="space-y-2.5 p-3">
-            {selectedDistribution ? (
+            {distributionOptions.length === 0 ? (
+              <div className="rounded-xl border border-[var(--genui-border)] bg-[var(--genui-surface)] px-4 py-4 text-sm text-[var(--genui-text)]">
+                분포를 표시할 컬럼이 없습니다.
+              </div>
+            ) : showDistributionLoading ? (
+              <div className="flex min-h-[220px] items-center justify-center rounded-xl border border-[var(--genui-border)] bg-[var(--genui-surface)] px-4 py-4 text-sm text-[var(--genui-text)]">
+                <div className="flex items-center gap-2">
+                  <LoaderCircle className="h-4 w-4 animate-spin" />
+                  <span>분포를 불러오는 중입니다.</span>
+                </div>
+              </div>
+            ) : distributionError ? (
+              <div className="rounded-xl border border-[var(--genui-border)] bg-[var(--genui-surface)] px-4 py-4 text-sm text-[var(--genui-text)]">
+                {distributionError}
+              </div>
+            ) : selectedDistribution ? (
               <>
-                <div className={cn(selectedDistribution.kind === "categorical" && "overflow-x-auto")}>
+                <div
+                  ref={distributionScrollRef}
+                  className={cn(
+                    isDistributionScrollable && "overflow-x-auto cursor-grab active:cursor-grabbing select-none",
+                  )}
+                  onMouseDown={(event) => {
+                    if (!isDistributionScrollable || !distributionScrollRef.current) {
+                      return;
+                    }
+                    distributionDragRef.current = {
+                      active: true,
+                      startX: event.clientX,
+                      startScrollLeft: distributionScrollRef.current.scrollLeft,
+                    };
+                  }}
+                  onMouseMove={(event) => {
+                    if (!distributionDragRef.current.active || !distributionScrollRef.current) {
+                      return;
+                    }
+                    const delta = event.clientX - distributionDragRef.current.startX;
+                    distributionScrollRef.current.scrollLeft = distributionDragRef.current.startScrollLeft - delta;
+                  }}
+                  onMouseUp={() => {
+                    distributionDragRef.current.active = false;
+                  }}
+                  onMouseLeave={() => {
+                    distributionDragRef.current.active = false;
+                  }}
+                >
                   <ChartContainer
                     config={chartConfig}
                     className={cn(
                       "h-[220px] aspect-auto rounded-lg border border-[var(--genui-border)] bg-[var(--genui-surface)] px-2 py-2 [&_.recharts-tooltip-cursor]:opacity-0 [&_.recharts-rectangle.recharts-tooltip-cursor]:fill-transparent [&_.recharts-rectangle.recharts-tooltip-cursor]:stroke-transparent",
-                      selectedDistribution.kind === "categorical" ? "w-auto min-w-full" : "w-full",
+                      isDistributionScrollable ? "w-auto min-w-full" : "w-full",
                     )}
                     style={{
                       minWidth: getDistributionChartMinWidth(selectedDistribution.kind, selectedDistribution.bins.length),
@@ -860,8 +945,8 @@ export function PreEdaBoard({
                         dataKey="label"
                         tickLine={false}
                         axisLine={false}
-                        interval={0}
-                        minTickGap={8}
+                        interval={selectedDistribution.kind === "numeric" ? "preserveStartEnd" : 0}
+                        minTickGap={selectedDistribution.kind === "numeric" ? 32 : 8}
                         tickMargin={10}
                         tickFormatter={(label) => formatDistributionAxisLabel(String(label), selectedDistribution.kind)}
                         tick={{ fontSize: 9, fill: "var(--genui-muted)" }}
@@ -887,6 +972,9 @@ export function PreEdaBoard({
                     </BarChart>
                   </ChartContainer>
                 </div>
+                <p className="text-center text-sm font-medium text-[var(--genui-text)]">
+                  {selectedDistribution.column}
+                </p>
                 <p className="text-xs text-[var(--genui-muted)]">
                   {selectedDistribution.kind === "numeric"
                     ? "numeric 컬럼은 binning 후 histogram으로 표시합니다."
@@ -895,7 +983,7 @@ export function PreEdaBoard({
               </>
             ) : (
               <div className="rounded-xl border border-[var(--genui-border)] bg-[var(--genui-surface)] px-4 py-4 text-sm text-[var(--genui-text)]">
-                분포 시각화 대상 컬럼이 아직 없습니다.
+                분포를 불러오는 중입니다.
               </div>
             )}
           </CardBody>
@@ -982,10 +1070,12 @@ export function PreEdaBoard({
       </div>
 
       <PreprocessRecommendationCard
-        recommendation={profile.recommendation}
         profile={profile}
-        onApprovePreprocess={onApprovePreprocess}
-        approveActionMode={approveActionMode}
+        recommendationMode={recommendationMode}
+        recommendationWarning={recommendationWarning}
+        applyError={applyError}
+        applyingOperationKey={applyingOperationKey}
+        onApplyOperation={onApplyOperation}
       />
     </div>
   );

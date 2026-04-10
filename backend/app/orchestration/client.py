@@ -9,17 +9,18 @@ from typing import Any, AsyncIterator, Dict
 
 from langgraph.types import Command
 
+from ..core.trace_logging import log_trace
+from .state_view import build_approval_wait_step, collect_thought_steps, make_thought_step
+
 
 class AgentClient:
     def __init__(
         self,
         *,
         workflow_runtime_factory: Any,
-        checkpointer: Any,
         default_model: str = "gpt-5-nano",
     ) -> None:
         self.default_model = default_model
-        self._checkpointer = checkpointer
         self._workflow_runtime_factory = workflow_runtime_factory
 
     async def astream_with_trace(
@@ -32,7 +33,7 @@ class AgentClient:
         model_id: str | None = None,
         resume: Dict[str, Any] | None = None,
     ) -> AsyncIterator[Dict[str, Any]]:
-        with self._runtime() as runtime:
+        async with self._runtime() as runtime:
             workflow = getattr(runtime, "workflow", runtime)
             config = self._build_config(run_id=run_id, session_id=session_id)
             if resume is None:
@@ -56,10 +57,11 @@ class AgentClient:
             thought_steps: list[Dict[str, str]] = []
 
             if resume is None:
-                initial_step = self._make_step(
+                initial_step = make_thought_step(
                     phase="analysis",
                     message="요청을 분석하고 처리 경로를 결정하는 중입니다.",
                     status="active",
+                    display_message="질문을 이해하고 있습니다.",
                 )
                 seen.add((initial_step["phase"], initial_step["message"]))
                 thought_steps.append(initial_step)
@@ -68,22 +70,23 @@ class AgentClient:
             final_state: Dict[str, Any] = {}
             async for snapshot in self._astream_workflow_values(workflow, input_payload, config):
                 final_state = snapshot
+                log_trace(
+                    layer="workflow",
+                    event="snapshot",
+                    payload=self._summarize_snapshot(snapshot),
+                )
                 pending_approval = self._extract_interrupt_payload(snapshot)
                 if pending_approval is not None:
-                    pending_stage = str(pending_approval.get("stage") or "")
-                    approval_phase = "preprocess_approval"
-                    approval_message = "전처리 계획 승인을 기다리는 중입니다."
-                    if pending_stage == "visualization":
-                        approval_phase = "visualization_approval"
-                        approval_message = "시각화 계획 승인을 기다리는 중입니다."
-                    elif pending_stage == "report":
-                        approval_phase = "report_approval"
-                        approval_message = "리포트 초안 검토를 기다리는 중입니다."
-                    approval_step = self._make_step(
-                        phase=approval_phase,
-                        message=approval_message,
-                        status="active",
+                    log_trace(
+                        layer="workflow",
+                        event="workflow_interrupt",
+                        payload={
+                            "stage": pending_approval.get("stage"),
+                            "kind": pending_approval.get("kind"),
+                        },
                     )
+                    pending_stage = str(pending_approval.get("stage") or "")
+                    approval_step = build_approval_wait_step(pending_stage)
                     key = (approval_step["phase"], approval_step["message"])
                     if key not in seen:
                         seen.add(key)
@@ -95,7 +98,7 @@ class AgentClient:
                         "thought_steps": thought_steps,
                     }
                     return
-                for step in self._collect_thought_steps(snapshot):
+                for step in collect_thought_steps(snapshot):
                     key = (step["phase"], step["message"])
                     if key in seen:
                         continue
@@ -103,6 +106,11 @@ class AgentClient:
                     thought_steps.append(step)
                     yield {"type": "thought", "step": step}
 
+            log_trace(
+                layer="workflow",
+                event="workflow_final_state",
+                payload=self._summarize_snapshot(final_state),
+            )
             answer = self._extract_answer(final_state)
             for index in range(0, len(answer), 24):
                 delta = answer[index:index + 24]
@@ -120,27 +128,52 @@ class AgentClient:
             preprocess_result = final_state.get("preprocess_result")
             if isinstance(preprocess_result, dict):
                 done_event["preprocess_result"] = preprocess_result
+            analysis_result = final_state.get("analysis_result")
+            if isinstance(analysis_result, dict):
+                done_event["analysis_result"] = analysis_result
             visualization_result = final_state.get("visualization_result")
             if (
                 isinstance(visualization_result, dict)
                 and visualization_result.get("status") == "generated"
             ):
                 done_event["visualization_result"] = visualization_result
+            report_result = final_state.get("report_result")
+            if isinstance(report_result, dict):
+                done_event["report_result"] = report_result
             yield done_event
 
     def _runtime(self):
         return self._workflow_runtime_factory()
 
-    def get_pending_approval(self, *, run_id: str) -> Dict[str, Any] | None:
-        with self._runtime() as runtime:
+    async def get_pending_approval(self, *, run_id: str) -> Dict[str, Any] | None:
+        async with self._runtime() as runtime:
             workflow = getattr(runtime, "workflow", runtime)
-            snapshot = workflow.get_state(self._build_config(run_id=run_id, session_id=None))
+            snapshot = await workflow.aget_state(
+                self._build_config(run_id=run_id, session_id=None)
+            )
 
         interrupts = getattr(snapshot, "interrupts", ())
         if not interrupts:
             return None
         pending_approval = getattr(interrupts[0], "value", None)
-        return pending_approval if isinstance(pending_approval, dict) else None
+        if not isinstance(pending_approval, dict):
+            return None
+
+        values = getattr(snapshot, "values", None)
+        if isinstance(values, dict):
+            session_id = values.get("session_id")
+            if isinstance(session_id, int):
+                pending_approval = {
+                    **pending_approval,
+                    "session_id": session_id,
+                }
+            elif isinstance(session_id, str) and session_id.strip().isdigit():
+                pending_approval = {
+                    **pending_approval,
+                    "session_id": int(session_id),
+                }
+
+        return pending_approval
 
     def _build_state(
         self,
@@ -163,7 +196,7 @@ class AgentClient:
             "session_id": str(session_id or ""),
             "run_id": str(run_id or ""),
             "model_id": model_id or self.default_model,
-            "dataset_id": getattr(dataset, "id", None) if dataset is not None else None,
+            # source_id is the dataset this run should actively use.
             "source_id": getattr(dataset, "source_id", None) if dataset is not None else None,
         }
         return state, None
@@ -202,333 +235,108 @@ class AgentClient:
         return "응답을 생성하지 못했습니다."
 
     @staticmethod
-    def _make_step(*, phase: str, message: str, status: str = "completed") -> Dict[str, str]:
-        return {"phase": phase, "message": message, "status": status}
+    def _summarize_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
+        handoff = snapshot.get("handoff")
+        planning_result = snapshot.get("planning_result")
+        output = snapshot.get("output")
+        analysis_result = snapshot.get("analysis_result")
+        analysis_error = snapshot.get("analysis_error")
+        sandbox_result = snapshot.get("sandbox_result")
+        visualization_result = snapshot.get("visualization_result")
+        report_result = snapshot.get("report_result")
+        interrupt = AgentClient._extract_interrupt_payload(snapshot)
+        error_stage = None
+        error_message = None
+        error_type = None
 
-    @classmethod
-    def _collect_thought_steps(cls, state: Dict[str, Any]) -> list[Dict[str, str]]:
-        steps: list[Dict[str, str]] = []
+        if isinstance(analysis_error, dict):
+            error_stage = analysis_error.get("stage")
+            error_message = analysis_error.get("message")
+            detail = analysis_error.get("detail")
+            if isinstance(detail, dict):
+                error_type = detail.get("exception_type") or detail.get("error_type")
 
-        handoff = state.get("handoff")
-        if not isinstance(handoff, dict):
-            handoff = {}
-        else:
-            next_step = handoff.get("next_step")
-            if next_step == "data_pipeline":
-                steps.append(
-                    cls._make_step(
-                        phase="intake",
-                        message="데이터셋 기반 파이프라인으로 라우팅했습니다.",
-                    )
-                )
-            elif next_step == "general_question":
-                steps.append(
-                    cls._make_step(
-                        phase="intake",
-                        message="일반 질의 경로로 라우팅했습니다.",
-                    )
-                )
-
-            if bool(handoff.get("ask_visualization", False)):
-                steps.append(
-                    cls._make_step(
-                        phase="intent",
-                        message="시각화 요청이 감지되어 시각화 경로를 준비했습니다.",
-                    )
-                )
-            if bool(handoff.get("ask_report", False)):
-                steps.append(
-                    cls._make_step(
-                        phase="intent",
-                        message="리포트 요청이 감지되어 리포트 경로를 준비했습니다.",
-                    )
-                )
-            if bool(handoff.get("ask_preprocess", False)):
-                steps.append(
-                    cls._make_step(
-                        phase="intent",
-                        message="전처리 요청이 감지되어 전처리 단계를 준비했습니다.",
-                    )
-                )
-            elif "ask_preprocess" in handoff:
-                steps.append(
-                    cls._make_step(
-                        phase="intent",
-                        message="전처리 요청이 없어 전처리 생략 경로를 준비했습니다.",
-                    )
-                )
-
-        decision = state.get("preprocess_decision")
-        if isinstance(decision, dict):
-            reason_summary = decision.get("reason_summary")
-            if isinstance(reason_summary, str) and reason_summary.strip():
-                steps.append(
-                    cls._make_step(
-                        phase="preprocess_decision",
-                        message=reason_summary.strip(),
-                    )
-                )
-            else:
-                decision_step = decision.get("step")
-                if decision_step == "run_preprocess":
-                    steps.append(
-                        cls._make_step(
-                            phase="preprocess_decision",
-                            message="전처리가 필요하다고 판단했습니다.",
-                        )
-                    )
-                elif decision_step == "skip_preprocess":
-                    steps.append(
-                        cls._make_step(
-                            phase="preprocess_decision",
-                            message="전처리를 생략해도 된다고 판단했습니다.",
-                        )
-                    )
-
-        plan = state.get("preprocess_plan")
-        if isinstance(plan, dict):
-            planner_comment = plan.get("planner_comment")
-            if isinstance(planner_comment, str) and planner_comment.strip():
-                steps.append(
-                    cls._make_step(
-                        phase="preprocess_plan",
-                        message=planner_comment.strip(),
-                    )
-                )
-            else:
-                operations = plan.get("operations")
-                if isinstance(operations, list) and operations:
-                    steps.append(
-                        cls._make_step(
-                            phase="preprocess_plan",
-                            message=f"전처리 연산 {len(operations)}개를 계획했습니다.",
-                        )
-                    )
-
-        result = state.get("preprocess_result")
-        if isinstance(result, dict):
-            status = result.get("status")
-            if status == "applied":
-                applied_count = result.get("applied_ops_count", 0)
-                steps.append(
-                    cls._make_step(
-                        phase="preprocess_result",
-                        message=f"전처리 연산 {applied_count}개를 적용했습니다.",
-                    )
-                )
-            elif status == "skipped":
-                steps.append(
-                    cls._make_step(
-                        phase="preprocess_result",
-                        message="전처리 없이 다음 단계로 진행했습니다.",
-                    )
-                )
-            elif status == "failed":
-                error_message = result.get("error")
-                if isinstance(error_message, str) and error_message.strip():
-                    steps.append(
-                        cls._make_step(
-                            phase="preprocess_result",
-                            message=f"전처리 단계에서 오류가 발생했습니다: {error_message.strip()}",
-                            status="failed",
-                        )
-                    )
-            elif status == "cancelled":
-                steps.append(
-                    cls._make_step(
-                        phase="preprocess_result",
-                        message="전처리 계획 검토 단계에서 실행을 취소했습니다.",
-                    )
-                )
-
-        analysis_result = state.get("analysis_result")
-        if isinstance(analysis_result, dict):
-            execution_status = analysis_result.get("execution_status")
-            if execution_status == "success":
-                summary = analysis_result.get("summary")
-                if isinstance(summary, str) and summary.strip():
-                    steps.append(
-                        cls._make_step(
-                            phase="analysis",
-                            message=summary.strip(),
-                        )
-                    )
-                else:
-                    steps.append(
-                        cls._make_step(
-                            phase="analysis",
-                            message="분석 결과를 생성했습니다.",
-                        )
-                    )
-            elif execution_status == "fail":
-                error_message = analysis_result.get("error_message")
-                if isinstance(error_message, str) and error_message.strip():
-                    steps.append(
-                        cls._make_step(
-                            phase="analysis",
-                            message=f"분석 단계에서 오류가 발생했습니다: {error_message.strip()}",
-                            status="failed",
-                        )
-                    )
-
-        clarification_question = state.get("clarification_question")
-        if isinstance(clarification_question, str) and clarification_question.strip():
-            steps.append(
-                cls._make_step(
-                    phase="analysis_clarification",
-                    message=clarification_question.strip(),
-                )
+        if not error_stage and isinstance(analysis_result, dict):
+            error_stage = analysis_result.get("error_stage")
+        if not error_message and isinstance(analysis_result, dict):
+            error_message = analysis_result.get("error_message")
+        if (
+            not error_stage
+            and isinstance(report_result, dict)
+            and report_result.get("status") == "failed"
+        ):
+            error_stage = "report"
+        if (
+            not error_message
+            and isinstance(report_result, dict)
+            and report_result.get("status") == "failed"
+        ):
+            error_message = report_result.get("error") or report_result.get("summary")
+        if not error_type and isinstance(sandbox_result, dict):
+            error_type = sandbox_result.get("error_type")
+        is_failed_snapshot = (
+            snapshot.get("final_status") == "fail"
+            or (
+                isinstance(analysis_result, dict)
+                and analysis_result.get("execution_status") == "fail"
             )
-
-        rag_index_status = state.get("rag_index_status")
-        if isinstance(rag_index_status, dict):
-            index_status = rag_index_status.get("status")
-            source_id = rag_index_status.get("source_id")
-            source_text = source_id if isinstance(source_id, str) and source_id else "-"
-            if index_status == "created":
-                steps.append(
-                    cls._make_step(
-                        phase="rag_index",
-                        message=f"RAG 인덱스를 생성했습니다. (source_id={source_text})",
-                    )
-                )
-            elif index_status == "existing":
-                steps.append(
-                    cls._make_step(
-                        phase="rag_index",
-                        message=f"기존 RAG 인덱스를 재사용합니다. (source_id={source_text})",
-                    )
-                )
-            elif index_status == "dataset_missing":
-                steps.append(
-                    cls._make_step(
-                        phase="rag_index",
-                        message=f"RAG 인덱싱 대상 데이터셋을 찾지 못했습니다. (source_id={source_text})",
-                        status="failed",
-                    )
-                )
-
-        rag_result = state.get("rag_result")
-        if isinstance(rag_result, dict):
-            retrieved_count_raw = rag_result.get("retrieved_count")
-            retrieved_count = retrieved_count_raw if isinstance(retrieved_count_raw, int) else 0
-            source_id = rag_result.get("source_id")
-            source_text = source_id if isinstance(source_id, str) and source_id else "-"
-            if retrieved_count > 0:
-                steps.append(
-                    cls._make_step(
-                        phase="rag_retrieval",
-                        message=(
-                            f"RAG 검색으로 관련 청크 {retrieved_count}개를 찾았습니다. "
-                            f"(source_id={source_text})"
-                        ),
-                    )
-                )
-            else:
-                steps.append(
-                    cls._make_step(
-                        phase="rag_retrieval",
-                        message=(
-                            f"RAG 검색에서 관련 청크를 찾지 못했습니다. "
-                            f"(source_id={source_text})"
-                        ),
-                    )
-                )
-
-        insight = state.get("insight")
-        if isinstance(insight, dict):
-            insight_summary = insight.get("summary")
-            if isinstance(insight_summary, str) and insight_summary.strip():
-                steps.append(
-                    cls._make_step(
-                        phase="insight",
-                        message=insight_summary.strip(),
-                    )
-                )
-
-        visualization_result = state.get("visualization_result")
-        if isinstance(visualization_result, dict):
-            viz_summary = visualization_result.get("summary")
-            viz_status = visualization_result.get("status")
-            if isinstance(viz_summary, str) and viz_summary.strip():
-                steps.append(
-                    cls._make_step(
-                        phase="visualization",
-                        message=viz_summary.strip(),
-                    )
-                )
-            elif viz_status == "generated":
-                steps.append(
-                    cls._make_step(
-                        phase="visualization",
-                        message="시각화 결과를 생성했습니다.",
-                    )
-                )
-
-        merged_context = state.get("merged_context")
-        if isinstance(merged_context, dict):
-            applied_steps = merged_context.get("applied_steps")
-            if isinstance(applied_steps, list):
-                steps.append(
-                    cls._make_step(
-                        phase="merge_context",
-                        message=f"누적 컨텍스트를 병합했습니다. (steps={len(applied_steps)})",
-                    )
-                )
-
-        report_draft = state.get("report_draft")
-        if isinstance(report_draft, dict):
-            report_summary = report_draft.get("summary")
-            if isinstance(report_summary, str) and report_summary.strip():
-                revision_count = int(report_draft.get("revision_count", 0) or 0)
-                steps.append(
-                    cls._make_step(
-                        phase="report_draft",
-                        message=(
-                            "수정 요청을 반영해 리포트 초안을 다시 작성했습니다."
-                            if revision_count > 0
-                            else "리포트 초안을 작성했습니다."
-                        ),
-                    )
-                )
-
-        report_result = state.get("report_result")
-        if isinstance(report_result, dict):
-            report_summary = report_result.get("summary")
-            if isinstance(report_summary, str) and report_summary.strip():
-                steps.append(
-                    cls._make_step(
-                        phase="report",
-                        message="리포트 응답을 구성했습니다.",
-                    )
-                )
-
-        revision_request = state.get("revision_request")
-        if isinstance(revision_request, dict) and revision_request.get("stage") == "report":
-            instruction = revision_request.get("instruction")
-            if isinstance(instruction, str) and instruction.strip():
-                steps.append(
-                    cls._make_step(
-                        phase="report_revision",
-                        message=f"리포트 수정 요청을 반영합니다: {instruction.strip()}",
-                    )
-                )
-
-        output = state.get("output")
-        if not isinstance(output, dict):
-            return steps
-        output_type = output.get("type")
-        if isinstance(output_type, str) and output_type.strip():
-            steps.append(
-                cls._make_step(
-                    phase="output",
-                    message=f"{output_type} 응답을 구성하고 있습니다.",
-                )
+            or (
+                isinstance(report_result, dict)
+                and report_result.get("status") == "failed"
             )
-        return steps
+        )
+        if is_failed_snapshot and not error_message and isinstance(output, dict):
+            output_content = output.get("content")
+            if isinstance(output_content, str) and output_content:
+                error_message = output_content
 
-    @staticmethod
+        return {
+            "handoff_next_step": (
+                handoff.get("next_step") if isinstance(handoff, dict) else None
+            ),
+            "planning_route": (
+                planning_result.get("route") if isinstance(planning_result, dict) else None
+            ),
+            "planning_preprocess_required": (
+                planning_result.get("preprocess_required")
+                if isinstance(planning_result, dict)
+                else None
+            ),
+            "planning_need_visualization": (
+                planning_result.get("need_visualization")
+                if isinstance(planning_result, dict)
+                else None
+            ),
+            "planning_need_report": (
+                planning_result.get("need_report")
+                if isinstance(planning_result, dict)
+                else None
+            ),
+            "final_status": snapshot.get("final_status"),
+            "output_type": output.get("type") if isinstance(output, dict) else None,
+            "analysis_execution_status": (
+                analysis_result.get("execution_status")
+                if isinstance(analysis_result, dict)
+                else None
+            ),
+            "visualization_status": (
+                visualization_result.get("status")
+                if isinstance(visualization_result, dict)
+                else None
+            ),
+            "report_status": (
+                report_result.get("status")
+                if isinstance(report_result, dict)
+                else None
+            ),
+            "error_stage": error_stage,
+            "error_message": error_message,
+            "error_type": error_type,
+            "interrupt_stage": interrupt.get("stage") if isinstance(interrupt, dict) else None,
+        }
+
     async def _astream_workflow_values(
+        self,
         workflow: Any,
         input_payload: Any,
         config: Dict[str, Any],

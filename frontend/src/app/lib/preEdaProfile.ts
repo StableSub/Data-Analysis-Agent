@@ -1,3 +1,5 @@
+import type { EdaPreprocessRecommendation } from "../../lib/api";
+
 export interface NumericSnapshot {
   column: string;
   q1: number;
@@ -108,7 +110,7 @@ export interface PreEdaProfile {
   outlierSummaries: OutlierSummary[];
   qualitySummary: string;
   summaryBullets: string[];
-  recommendation: PreprocessRecommendation | null;
+  serverRecommendation: EdaPreprocessRecommendation | null;
 }
 
 const DATETIME_NAME_RE = /(date|time|timestamp|created|updated|day|month|year)/i;
@@ -462,7 +464,7 @@ function createFallbackProfile(file: File, uploadedAt: string): PreEdaProfile {
       "CSV/JSON이 아닌 형식이라 브라우저 내 즉시 프로파일링은 생략했습니다.",
       "업로드 후 질문과 후속 리포트 흐름은 그대로 진행할 수 있습니다.",
     ],
-    recommendation: null,
+    serverRecommendation: null,
   };
 }
 
@@ -897,6 +899,6 @@ export async function buildPreEdaProfile(file: File): Promise<PreEdaProfile | nu
     outlierSummaries,
     qualitySummary,
     summaryBullets,
-    recommendation,
+    serverRecommendation: null,
   };
 }

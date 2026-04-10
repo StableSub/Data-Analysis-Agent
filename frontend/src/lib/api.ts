@@ -1,3 +1,5 @@
+import type { VisualizationResultPayload } from "./visualization";
+
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 
 export class ApiError extends Error {
@@ -43,7 +45,7 @@ export interface DatasetResponse {
   id: number;
   source_id: string;
   filename: string;
-  storage_path: string;
+  storage_path?: string;
   filesize: number | null;
 }
 
@@ -62,12 +64,18 @@ export interface ChatResponse {
   answer: string;
   session_id: number;
   run_id?: string;
-  thought_steps?: {
-    phase: string;
-    message: string;
-    status: string;
-  }[];
+  trace_id?: string;
+  thought_steps?: ThoughtStepPayload[];
   pending_approval?: PendingApprovalPayload;
+}
+
+export interface ThoughtStepPayload {
+  phase: string;
+  message: string;
+  status: string;
+  display_message?: string;
+  detail_message?: string;
+  audience?: "user" | "debug";
 }
 
 export interface ChatHistoryMessage {
@@ -101,13 +109,12 @@ export interface ReportResponse {
   summary_text: string;
 }
 
-// --- Request types ---
-
 export interface ChatRequest {
   question: string;
   session_id?: number;
   model_id?: string;
   source_id?: string;
+  trace_id?: string;
 }
 
 export interface PendingApprovalColumnSummary {
@@ -173,6 +180,7 @@ export interface ResumeRunRequest {
   decision: "approve" | "revise" | "cancel";
   stage: "preprocess" | "visualization" | "report";
   instruction?: string;
+  trace_id?: string;
 }
 
 export interface PendingApprovalResponse {
@@ -193,20 +201,27 @@ export type PreprocessOpType =
   | "drop_columns"
   | "rename_columns"
   | "scale"
-  | "derived_column";
+  | "derived_column"
+  | "encode_categorical"
+  | "parse_datetime"
+  | "outlier";
 
-export interface PreprocessOperation {
+export type PreprocessOperation = {
   op: PreprocessOpType;
-  params: Record<string, unknown>;
-}
+} & Record<string, unknown>;
 
 export interface PreprocessApplyRequest {
-  dataset_id: number;
+  source_id: string;
   operations: PreprocessOperation[];
 }
 
 export interface PreprocessApplyResponse {
-  dataset_id: number;
+  input_source_id: string;
+  output_source_id: string;
+  output_filename: string;
+  summary_before?: Record<string, unknown> | null;
+  summary_after?: Record<string, unknown> | null;
+  summary_diff?: Record<string, unknown> | null;
 }
 
 export interface ReportCreateRequest {
@@ -235,18 +250,22 @@ export function fetchSample(sourceId: string): Promise<SampleResponse> {
   return apiRequest<SampleResponse>(`/datasets/${sourceId}/sample`);
 }
 
+/** GET /datasets/ */
+export function listDatasets(
+  skip = 0,
+  limit = 20,
+): Promise<DatasetListResponse> {
+  const params = new URLSearchParams({
+    skip: String(skip),
+    limit: String(limit),
+  });
+  return apiRequest<DatasetListResponse>(`/datasets/?${params.toString()}`);
+}
+
 /** DELETE /datasets/{source_id} */
 export function deleteDataset(sourceId: string): Promise<void> {
   return apiRequest<void>(`/datasets/${sourceId}`, {
     method: "DELETE",
-  });
-}
-
-/** POST /chats/ */
-export function sendChat(req: ChatRequest): Promise<ChatResponse> {
-  return apiRequest<ChatResponse>("/chats/", {
-    method: "POST",
-    body: JSON.stringify(req),
   });
 }
 
@@ -255,11 +274,9 @@ export function getChatHistory(sessionId: number): Promise<ChatHistoryResponse> 
   return apiRequest<ChatHistoryResponse>(`/chats/${sessionId}/history`);
 }
 
-export function fetchPendingApproval(
-  sessionId: number,
-  runId: string,
-): Promise<PendingApprovalResponse> {
-  return apiRequest<PendingApprovalResponse>(`/chats/${sessionId}/runs/${runId}/pending-approval`);
+/** GET /chats/runs/{run_id}/pending-approval */
+export function fetchPendingApproval(runId: string): Promise<PendingApprovalResponse> {
+  return apiRequest<PendingApprovalResponse>(`/chats/runs/${runId}/pending-approval`);
 }
 
 export function resumeChatRun(
@@ -299,32 +316,11 @@ export function applyPreprocess(req: PreprocessApplyRequest): Promise<Preprocess
   });
 }
 
-/** POST /report/ */
-export function createReport(req: ReportCreateRequest): Promise<ReportResponse> {
-  return apiRequest<ReportResponse>("/report/", {
-    method: "POST",
-    body: JSON.stringify(req),
-  });
-}
-
 /** POST /vizualization/manual (note: backend uses "vizualization") */
 export function createManualViz(req: ManualVizRequest): Promise<ManualVizResponse> {
   return apiRequest<ManualVizResponse>("/vizualization/manual", {
     method: "POST",
     body: JSON.stringify(req),
-  });
-}
-
-/** POST /export/csv — returns raw Blob for download */
-export function exportCsv(resultId: string): Promise<Blob> {
-  const url = `${API_BASE}/export/csv`;
-  return fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ result_id: resultId }),
-  }).then((res) => {
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return res.blob();
   });
 }
 
@@ -356,6 +352,9 @@ export interface AnalysisResultResponse {
   source_id: string;
   question: string;
   analysis_type: string;
+  analysis_plan_json?: unknown;
+  generated_code?: string | null;
+  used_columns?: string[] | null;
   execution_status: string;
   result_json: unknown;
   table?: unknown;
@@ -365,10 +364,11 @@ export interface AnalysisResultResponse {
   created_at: string;
 }
 
-export interface VisualizationFromAnalysisResponse {
-  visualization_status: string;
-  chart_data?: unknown;
-  fallback_table?: unknown;
+export interface VisualizationFromAnalysisResponse extends VisualizationResultPayload {
+  status: string;
+  source_id: string;
+  summary: string;
+  fallback_table?: Record<string, unknown>[] | null;
 }
 
 export interface AnalysisRunRequest {
@@ -412,21 +412,19 @@ export function submitClarification(
   );
 }
 
-/** GET /api/analysis/results/{analysis_result_id} */
+/** GET /analysis/results/{analysis_result_id} */
 export function getAnalysisResult(
   analysisResultId: string,
-): Promise<ApiEnvelope<AnalysisResultResponse>> {
-  return apiRequest<ApiEnvelope<AnalysisResultResponse>>(
-    `/api/analysis/results/${analysisResultId}`,
-  );
+): Promise<AnalysisResultResponse> {
+  return apiRequest<AnalysisResultResponse>(`/analysis/results/${analysisResultId}`);
 }
 
-/** POST /api/visualization/from-analysis */
+/** POST /vizualization/from-analysis */
 export function createVisualizationFromAnalysis(
   analysisResultId: string,
-): Promise<ApiEnvelope<VisualizationFromAnalysisResponse>> {
-  return apiRequest<ApiEnvelope<VisualizationFromAnalysisResponse>>(
-    "/api/visualization/from-analysis",
+): Promise<VisualizationFromAnalysisResponse> {
+  return apiRequest<VisualizationFromAnalysisResponse>(
+    "/vizualization/from-analysis",
     { method: "POST", body: JSON.stringify({ analysis_result_id: analysisResultId }) },
   );
 }
@@ -438,64 +436,120 @@ export function buildAnalysisStreamUrl(analysisRunId: string): string {
 
 // --- EDA API (server-driven Pre-EDA) ---
 
-export interface EdaSummary {
+export type EdaColumnProfileType =
+  | "numerical"
+  | "categorical"
+  | "identifier"
+  | "datetime"
+  | "boolean"
+  | "group_key";
+
+export interface EdaSummaryCounts {
+  numerical: number;
+  categorical: number;
+  datetime: number;
+  boolean: number;
+  identifier: number;
+  group_key: number;
+}
+
+export interface EdaSummaryResponse {
+  source_id: string;
   row_count: number;
   column_count: number;
-  numeric_columns: string[];
-  categorical_columns: string[];
-  datetime_columns: string[];
-  boolean_columns: string[];
-  identifier_columns: string[];
-  group_key_columns: string[];
-  quality_summary: string;
-  summary_bullets: string[];
+  sample_row_count: number;
+  type_counts: EdaSummaryCounts;
+  columns: string[];
 }
 
 export interface EdaQualityColumn {
   column: string;
-  missing_count: number;
-  missing_rate: number;
+  inferred_type: EdaColumnProfileType;
+  null_count: number;
+  null_ratio: number;
 }
 
-export interface EdaQuality {
-  total_rows: number;
-  missing_columns: EdaQualityColumn[];
+export interface EdaQualityResponse {
+  source_id: string;
+  row_count: number;
+  column_count: number;
+  missing_total: number;
+  missing_ratio: number;
+  top_missing_columns: EdaQualityColumn[];
+  columns: EdaQualityColumn[];
 }
 
 export interface EdaCorrelationPair {
-  col_a: string;
-  col_b: string;
+  column_1: string;
+  column_2: string;
   correlation: number;
 }
 
-export interface EdaCorrelations {
-  top_pairs: EdaCorrelationPair[];
+export interface EdaCorrelationsResponse {
+  source_id: string;
+  pairs: EdaCorrelationPair[];
+}
+
+export interface EdaStatsColumn {
+  column: string;
+  mean: number | null;
+  min: number | null;
+  max: number | null;
+  median: number | null;
+  std: number | null;
+  q1: number | null;
+  q3: number | null;
+  skew: number | null;
+}
+
+export interface EdaStatsResponse {
+  source_id: string;
+  row_count: number;
+  column_count: number;
+  numeric_column_count: number;
+  columns: EdaStatsColumn[];
 }
 
 export interface EdaOutlierColumn {
   column: string;
   outlier_count: number;
-  lower_bound: number;
-  upper_bound: number;
+  outlier_ratio: number;
+  q1: number | null;
+  q3: number | null;
+  iqr: number | null;
+  lower_bound: number | null;
+  upper_bound: number | null;
 }
 
-export interface EdaOutliers {
-  outlier_columns: EdaOutlierColumn[];
+export interface EdaOutliersResponse {
+  source_id: string;
+  numeric_column_count: number;
+  columns: EdaOutlierColumn[];
 }
 
 export interface EdaDistributionBin {
   label: string;
-  count: number;
+  value: number;
+  lower?: number | null;
+  upper?: number | null;
 }
 
-export interface EdaDistribution {
+export interface EdaDistributionResponse {
+  source_id: string;
   column: string;
+  inferred_type: EdaColumnProfileType;
+  chart_type: string;
+  total_count: number;
+  other_count: number;
+  truncated: boolean;
   bins: EdaDistributionBin[];
 }
 
-export interface EdaInsight {
-  summary: string;
-  preprocess_recommendation: EdaPreprocessRecommendation | null;
+export interface EdaInsightResponse {
+  source_id: string;
+  structure_summary: string;
+  quality_issues: string[];
+  key_insights: string[];
 }
 
 export interface EdaPreprocessRecommendation {
@@ -504,59 +558,132 @@ export interface EdaPreprocessRecommendation {
 }
 
 export interface EdaRecommendedOperation {
-  op: string;
+  op:
+    | "drop_missing"
+    | "impute"
+    | "drop_columns"
+    | "scale"
+    | "encode_categorical"
+    | "outlier"
+    | "parse_datetime"
+    | "derived_column";
   target_columns: string[];
+  source_columns: string[];
+  target_column: string;
+  transform_type: "log1p" | "sum" | "difference" | "ratio" | null;
+  params: Record<string, unknown> | null;
   reason: string;
   priority: "high" | "medium" | "low";
+}
+
+export interface EdaPreprocessRecommendationResponse {
+  source_id: string;
+  recommendation: EdaPreprocessRecommendation;
+  generation_mode: "llm" | "fallback" | "none";
+  warning: string | null;
+}
+
+export interface EdaProfileColumn {
+  name: string;
+  raw_dtype: string;
+  inferred_type: EdaColumnProfileType;
+  null_count: number;
+  missing_rate: number;
+  unique_count: number;
+  unique_ratio: number;
+  sample_values: unknown[];
+}
+
+export interface EdaProfileResponse {
+  source_id: string;
+  available: boolean;
+  row_count: number;
+  sample_row_count: number;
+  column_count: number;
+  columns: string[];
+  dtypes: Record<string, string>;
+  missing_rates: Record<string, number>;
+  sample_rows: Record<string, unknown>[];
+  numeric_columns: string[];
+  datetime_columns: string[];
+  categorical_columns: string[];
+  boolean_columns: string[];
+  identifier_columns: string[];
+  group_key_columns: string[];
+  type_columns: Record<string, string[]>;
+  logical_types: Record<string, EdaColumnProfileType>;
+  column_profiles: EdaProfileColumn[];
+}
+
+/** GET /eda/{source_id}/profile */
+export function fetchEdaProfile(
+  sourceId: string,
+): Promise<EdaProfileResponse> {
+  return apiRequest<EdaProfileResponse>(`/eda/${sourceId}/profile`);
 }
 
 /** GET /eda/{source_id}/summary */
 export function fetchEdaSummary(
   sourceId: string,
-): Promise<ApiEnvelope<EdaSummary>> {
-  return apiRequest<ApiEnvelope<EdaSummary>>(`/eda/${sourceId}/summary`);
+): Promise<EdaSummaryResponse> {
+  return apiRequest<EdaSummaryResponse>(`/eda/${sourceId}/summary`);
 }
 
 /** GET /eda/{source_id}/quality */
 export function fetchEdaQuality(
   sourceId: string,
-): Promise<ApiEnvelope<EdaQuality>> {
-  return apiRequest<ApiEnvelope<EdaQuality>>(`/eda/${sourceId}/quality`);
+): Promise<EdaQualityResponse> {
+  return apiRequest<EdaQualityResponse>(`/eda/${sourceId}/quality`);
 }
 
 /** GET /eda/{source_id}/correlations/top */
 export function fetchEdaCorrelations(
   sourceId: string,
-): Promise<ApiEnvelope<EdaCorrelations>> {
-  return apiRequest<ApiEnvelope<EdaCorrelations>>(
+): Promise<EdaCorrelationsResponse> {
+  return apiRequest<EdaCorrelationsResponse>(
     `/eda/${sourceId}/correlations/top`,
   );
+}
+
+/** GET /eda/{source_id}/stats */
+export function fetchEdaStats(
+  sourceId: string,
+): Promise<EdaStatsResponse> {
+  return apiRequest<EdaStatsResponse>(`/eda/${sourceId}/stats`);
 }
 
 /** GET /eda/{source_id}/outliers */
 export function fetchEdaOutliers(
   sourceId: string,
-): Promise<ApiEnvelope<EdaOutliers>> {
-  return apiRequest<ApiEnvelope<EdaOutliers>>(`/eda/${sourceId}/outliers`);
+): Promise<EdaOutliersResponse> {
+  return apiRequest<EdaOutliersResponse>(`/eda/${sourceId}/outliers`);
 }
 
 /** GET /eda/{source_id}/distribution?column=... */
 export function fetchEdaDistribution(
   sourceId: string,
   column: string,
-): Promise<ApiEnvelope<EdaDistribution>> {
-  return apiRequest<ApiEnvelope<EdaDistribution>>(
+): Promise<EdaDistributionResponse> {
+  return apiRequest<EdaDistributionResponse>(
     `/eda/${sourceId}/distribution?column=${encodeURIComponent(column)}`,
+  );
+}
+
+/** GET /eda/{source_id}/preprocess-recommendations */
+export function fetchEdaPreprocessRecommendations(
+  sourceId: string,
+): Promise<EdaPreprocessRecommendationResponse> {
+  return apiRequest<EdaPreprocessRecommendationResponse>(
+    `/eda/${sourceId}/preprocess-recommendations`,
   );
 }
 
 /** GET /eda/{source_id}/insights */
 export function fetchEdaInsights(
   sourceId: string,
-): Promise<ApiEnvelope<EdaInsight>> {
-  return apiRequest<ApiEnvelope<EdaInsight>>(`/eda/${sourceId}/insights`);
+): Promise<EdaInsightResponse> {
+  return apiRequest<EdaInsightResponse>(`/eda/${sourceId}/insights`);
 }
-
 // --- Upload with XHR progress tracking ---
 
 export function uploadFile(

@@ -1,19 +1,34 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import {
+  applyPreprocess,
   uploadFile,
   buildApiUrl,
   deleteDataset,
   resumeChatRun,
-  fetchEdaSummary,
+  fetchEdaDistribution,
+  fetchEdaProfile,
   fetchEdaQuality,
   fetchEdaCorrelations,
+  fetchEdaStats,
   fetchEdaOutliers,
+  fetchEdaPreprocessRecommendations,
   fetchEdaInsights,
   type DatasetResponse,
   type ChatResponse,
+  type EdaDistributionResponse,
   type ChatHistoryMessage,
+  type EdaInsightResponse,
+  type EdaPreprocessRecommendation,
+  type EdaProfileResponse,
+  type EdaRecommendedOperation,
+  type EdaStatsResponse,
   type PendingApprovalPayload,
+  type ThoughtStepPayload,
 } from "../../lib/api";
+import {
+  parseVisualizationResult,
+  type VisualizationResultPayload,
+} from "../../lib/visualization";
 import type { ReportSection } from "../components/genui/AssistantReportMessage";
 import type {
   ToolCallEntry,
@@ -26,10 +41,15 @@ import type { RawLogEntry } from "../components/genui/MCPPanel";
 import type { TimelineItemStatus } from "../components/genui/TimelineItem";
 import type { PipelineStepStatus } from "../components/genui/PipelineTracker";
 import {
-  buildPreEdaProfile,
   type PreEdaProfile,
-  type PreprocessRecommendation,
 } from "../lib/preEdaProfile";
+import {
+  buildPreprocessOperationsFromRecommendedOperation,
+  countAutoApplicableRecommendedOperations,
+  getRecommendedOperationKey,
+  isAutoApplicableRecommendedOperation,
+} from "../lib/preprocessRecommendation";
+import { normalizeRestoredSessionContext } from "../lib/pipelineSessionContext";
 
 /* ─────────────────────────────────────────────
    Types
@@ -65,30 +85,32 @@ export interface UploadedDatasetMeta {
   fileName: string;
   uploadedAt: string;
   preEdaProfile: PreEdaProfile | null;
+  preEdaStatus: "ready" | "unavailable";
+  preEdaWarning: string | null;
+  recommendationMode: "llm" | "fallback" | "none" | null;
   preprocessApproved: boolean;
 }
 
-export interface VisualizationResultPayload {
-  status?: string;
-  source_id?: string;
-  summary?: string;
-  chart?: {
-    chart_type?: string;
-    x_key?: string;
-    y_key?: string;
+type PreEdaLoadResult =
+  | {
+    status: "ready";
+    profile: PreEdaProfile;
+    recommendationMode: "llm" | "fallback" | "none";
+    warning: string | null;
+    initialDistributionColumn: string | null;
+    distributionError: string | null;
+  }
+  | {
+    status: "unavailable";
+    message: string;
   };
-  artifact?: {
-    mime_type?: string;
-    image_base64?: string;
-    code?: string;
-  };
-}
 
 export type PipelineSessionStateHint = "empty" | "ready" | "success" | "error" | "needs-user";
 
 export interface PipelineSessionContext {
   backendSessionId: number | null;
   runId: string | null;
+  traceId: string | null;
   fileName: string;
   uploadedDatasets: UploadedDatasetMeta[];
   selectedSourceId: string | null;
@@ -100,10 +122,18 @@ export interface PipelineSessionContext {
   errorMessage: string | null;
 }
 
+interface LastQuestionRequest {
+  question: string;
+  sourceId: string | null;
+}
+
 interface ThoughtStep {
   phase: string;
   message: string;
   status?: "active" | "completed" | "failed";
+  displayMessage: string;
+  detailMessage?: string;
+  audience?: "user" | "debug";
 }
 
 export interface UseAnalysisPipelineReturn {
@@ -120,6 +150,7 @@ export interface UseAnalysisPipelineReturn {
   pipelineSteps: PipelineStep[] | undefined;
   decisionChips: DecisionChip[];
   evidence: EvidenceFooterProps;
+  thoughtSteps: ThoughtStep[];
   chatHistory: ChatHistoryMessage[];
   milestones: HistoryItem[];
   history: HistoryItem[];
@@ -128,6 +159,11 @@ export interface UseAnalysisPipelineReturn {
   rawLogs: RawLogEntry[];
   latestVisualizationResult: VisualizationResultPayload | null;
   selectedPreEdaProfile: PreEdaProfile | null;
+  selectedPreEdaApplyError: string | null;
+  selectedApplyingPreEdaOperationKey: string | null;
+  isPreEdaApplying: boolean;
+  selectedPreEdaDistributionLoadingColumn: string | null;
+  selectedPreEdaDistributionError: string | null;
 
   // Upload selection
   uploadedDatasets: UploadedDatasetMeta[];
@@ -138,10 +174,16 @@ export interface UseAnalysisPipelineReturn {
   // Actions
   startUpload: (file: File) => void;
   resumeRun: (decision: "approve" | "revise" | "cancel", instruction?: string) => void;
-  handleApprove: () => void;
+  handleApprove: () => Promise<"approved" | "failed" | "noop">;
   handleReject: () => void;
   handleEditInstruction: (text: string) => void;
   handleRetry: () => void;
+  retrySelectedPreEda: () => Promise<"ready" | "unavailable" | "noop">;
+  loadSelectedPreEdaDistribution: (column: string) => Promise<void>;
+  applyRecommendedOperation: (
+    operation: EdaRecommendedOperation,
+    index: number,
+  ) => Promise<"applied" | "failed" | "noop">;
   handleSend: (message: string) => void;
   handleCancel: () => void;
   reset: () => void;
@@ -161,12 +203,12 @@ export interface UseAnalysisPipelineReturn {
 
 const STAGES = ["intake", "preprocess", "rag", "viz", "merge", "report"] as const;
 const STAGE_LABELS: Record<string, string> = {
-  intake: "Intake",
-  preprocess: "Preprocess",
-  rag: "RAG",
-  viz: "Visualization",
-  merge: "Merge",
-  report: "Report",
+  intake: "질문 확인",
+  preprocess: "데이터 준비",
+  rag: "참고 정보 확인",
+  viz: "시각화",
+  merge: "결과 정리",
+  report: "리포트",
 };
 
 /** Map RunningSubPhase to STAGES index key */
@@ -187,6 +229,13 @@ function mapThoughtPhaseToSubPhase(phase: string): RunningSubPhase {
 
 function now(): string {
   return new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function createTraceId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `trace-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 function formatElapsed(s: number): string {
@@ -223,49 +272,276 @@ function failToolCall(
   return { ...tc, status: "failed", result, duration: `${dur}s` };
 }
 
-function makeRawLog(label: string, payload: Record<string, unknown>, isError?: boolean): RawLogEntry {
+function makeRawLog(
+  label: string,
+  payload: Record<string, unknown>,
+  isError?: boolean,
+  traceId?: string | null,
+): RawLogEntry {
   return {
     id: crypto.randomUUID(),
     label,
+    traceId: traceId ?? undefined,
     payload: JSON.stringify(payload, null, 2),
     isError,
   };
 }
 
-function buildLocalPreprocessPendingApproval(
-  recommendation: PreprocessRecommendation,
-  sourceId: string,
-): PendingApprovalPayload {
+function getRenderableDistributionColumns(source: {
+  numericColumns: string[];
+  categoricalColumns: string[];
+  datetimeColumns: string[];
+  booleanColumns: string[];
+  groupKeyColumns: string[];
+}): string[] {
+  const seen = new Set<string>();
+  const orderedColumns = [
+    ...source.numericColumns,
+    ...source.categoricalColumns,
+    ...source.datetimeColumns,
+    ...source.booleanColumns,
+    ...source.groupKeyColumns,
+  ];
+
+  return orderedColumns.filter((column) => {
+    const normalized = column.trim();
+    if (!normalized || seen.has(normalized)) {
+      return false;
+    }
+    seen.add(normalized);
+    return true;
+  });
+}
+
+function buildNumericColumnStats(
+  profile: EdaProfileResponse,
+  stats: EdaStatsResponse,
+): PreEdaProfile["numericColumnStats"] {
+  const nullCountByColumn = new Map(
+    profile.column_profiles.map((column) => [column.name, column.null_count] as const),
+  );
+
+  return stats.columns.map((column) => ({
+    column: column.column,
+    count: Math.max(profile.row_count - (nullCountByColumn.get(column.column) ?? 0), 0),
+    mean: column.mean ?? 0,
+    min: column.min ?? 0,
+    max: column.max ?? 0,
+    median: column.median ?? 0,
+    std: column.std ?? 0,
+    q1: column.q1 ?? 0,
+    q3: column.q3 ?? 0,
+  }));
+}
+
+function buildNumericSnapshots(
+  numericColumnStats: PreEdaProfile["numericColumnStats"],
+): PreEdaProfile["numericSnapshots"] {
+  return numericColumnStats.slice(0, 4).map((column) => ({
+    column: column.column,
+    q1: column.q1,
+    median: column.median,
+    q3: column.q3,
+  }));
+}
+
+function mapDistributionResponse(
+  distribution: EdaDistributionResponse,
+): PreEdaProfile["distributions"][number] {
   return {
-    stage: "preprocess",
-    kind: "plan_review",
-    title: "Preprocess plan review",
-    summary: `${recommendation.column} 컬럼의 결측 ${recommendation.missingCount}건 (${recommendation.missingPercent.toFixed(1)}%)을 ${
-      recommendation.strategy
-    } 방식으로 처리한 뒤 Deep EDA를 진행합니다.`,
-    source_id: sourceId,
-    plan: {
-      operations: [
-        {
-          op: "impute",
-          column: recommendation.column,
-          strategy: recommendation.strategy,
-          fill_value: recommendation.fillValue,
-          missing_count: recommendation.missingCount,
-          missing_percent: recommendation.missingPercent,
-        },
-      ],
-      planner_comment: `추천 전략: ${recommendation.strategy} -> ${recommendation.fillValue}`,
-      top_missing_columns: [
-        {
-          column: recommendation.column,
-          missing_rate: recommendation.missingPercent / 100,
-        },
-      ],
-      affected_columns: [recommendation.column],
-      row_count: null,
-    },
+    column: distribution.column,
+    kind: distribution.inferred_type === "numerical" ? "numeric" : "categorical",
+    bins: distribution.bins.map((bin) => ({
+      label: bin.label,
+      value: bin.value,
+    })),
   };
+}
+
+function mapProfileColumnRole(
+  inferredType: EdaProfileResponse["column_profiles"][number]["inferred_type"],
+): PreEdaProfile["columnRoleSummaries"][number]["role"] {
+  switch (inferredType) {
+    case "numerical":
+      return "numeric";
+    case "group_key":
+      return "group-key";
+    default:
+      return inferredType;
+  }
+}
+
+function normalizeProfileSampleRows(
+  sampleRows: EdaProfileResponse["sample_rows"],
+): PreEdaProfile["sampleRows"] {
+  return sampleRows.map((row) => {
+    const normalized: Record<string, string | null> = {};
+    Object.entries(row).forEach(([key, value]) => {
+      normalized[key] = value == null ? null : String(value);
+    });
+    return normalized;
+  });
+}
+
+function buildServerQualitySummary(
+  profile: EdaProfileResponse,
+  insight: EdaInsightResponse,
+): string {
+  const summary = insight.structure_summary.trim();
+  if (summary) {
+    return summary;
+  }
+  return [
+    `전체 ${profile.row_count.toLocaleString()} rows / ${profile.column_count.toLocaleString()} columns입니다.`,
+    `numeric ${profile.numeric_columns.length}개, categorical ${profile.categorical_columns.length}개, datetime ${profile.datetime_columns.length}개입니다.`,
+  ].join(" ");
+}
+
+function buildServerSummaryBullets(
+  profile: EdaProfileResponse,
+  insight: EdaInsightResponse,
+): string[] {
+  const bullets = [...insight.quality_issues, ...insight.key_insights]
+    .map((item) => item.trim())
+    .filter(Boolean);
+  if (bullets.length > 0) {
+    return bullets;
+  }
+  return [
+    `${profile.columns.length.toLocaleString()}개 컬럼의 구조와 품질 정보를 기반으로 질문 전 맥락을 준비했습니다.`,
+  ];
+}
+
+function getRecommendationWarning(
+  recommendation: EdaPreprocessRecommendation | null | undefined,
+): string | null {
+  if (!recommendation || recommendation.operations.length === 0) {
+    return null;
+  }
+  const autoApplicableCount = countAutoApplicableRecommendedOperations(recommendation);
+  if (autoApplicableCount === recommendation.operations.length) {
+    return null;
+  }
+  if (autoApplicableCount > 0) {
+    return "자동 적용 가능한 작업만 개별 적용할 수 있습니다. 나머지 작업은 수동 검토가 필요합니다.";
+  }
+  return "이 추천에는 자동 적용할 수 없는 작업만 포함되어 있어 현재는 검토만 가능합니다.";
+}
+
+function isRecommendationExhausted(
+  recommendationMode: "llm" | "fallback" | "none" | null,
+  recommendation: EdaPreprocessRecommendation | null | undefined,
+): boolean {
+  return recommendationMode === "none" || countAutoApplicableRecommendedOperations(recommendation) === 0;
+}
+
+async function loadServerPreEdaProfile(
+  sourceId: string,
+  sourceLabel: string,
+  uploadedAt: string,
+): Promise<PreEdaLoadResult> {
+  try {
+    const [profile, quality, correlations, stats, outliers, preprocessRecommendationResponse, insights] =
+      await Promise.all([
+        fetchEdaProfile(sourceId),
+        fetchEdaQuality(sourceId),
+        fetchEdaCorrelations(sourceId),
+        fetchEdaStats(sourceId),
+        fetchEdaOutliers(sourceId),
+        fetchEdaPreprocessRecommendations(sourceId),
+        fetchEdaInsights(sourceId),
+      ]);
+
+    const missingColumns = quality.columns.map((column) => ({
+      column: column.column,
+      missingCount: column.null_count,
+      missingRate: column.null_ratio,
+    }));
+    const topMissingColumns = quality.top_missing_columns.map((column) => ({
+      column: column.column,
+      missingCount: column.null_count,
+      missingRate: column.null_ratio,
+    }));
+    const serverRecommendation = preprocessRecommendationResponse.recommendation;
+    const recommendationWarning =
+      preprocessRecommendationResponse.warning ?? getRecommendationWarning(serverRecommendation);
+    const numericColumnStats = buildNumericColumnStats(profile, stats);
+    const numericSnapshots = buildNumericSnapshots(numericColumnStats);
+    const initialDistributionColumn = getRenderableDistributionColumns({
+      numericColumns: profile.numeric_columns,
+      categoricalColumns: profile.categorical_columns,
+      datetimeColumns: profile.datetime_columns,
+      booleanColumns: profile.boolean_columns,
+      groupKeyColumns: profile.group_key_columns,
+    })[0] ?? null;
+    const distributions: PreEdaProfile["distributions"] = [];
+    let distributionError: string | null = null;
+
+    if (initialDistributionColumn) {
+      try {
+        const initialDistribution = await fetchEdaDistribution(sourceId, initialDistributionColumn);
+        distributions.push(mapDistributionResponse(initialDistribution));
+      } catch (error: unknown) {
+        distributionError = error instanceof Error ? error.message : "분포 정보를 불러오지 못했습니다.";
+      }
+    }
+
+    return {
+      status: "ready",
+      profile: {
+        sourceLabel,
+        uploadedAt,
+        rowCount: profile.row_count,
+        columnCount: profile.column_count,
+        columns: profile.columns,
+        sampleRows: normalizeProfileSampleRows(profile.sample_rows),
+        numericColumns: profile.numeric_columns,
+        categoricalColumns: profile.categorical_columns,
+        datetimeColumns: profile.datetime_columns,
+        identifierColumns: profile.identifier_columns,
+        booleanColumns: profile.boolean_columns,
+        groupKeyColumns: profile.group_key_columns,
+        groupKeyCandidates: profile.group_key_columns,
+        columnRoleSummaries: profile.column_profiles.map((column) => ({
+          column: column.name,
+          role: mapProfileColumnRole(column.inferred_type),
+          note: column.raw_dtype,
+          missingCount: column.null_count,
+          missingRate: column.missing_rate,
+          uniqueCount: column.unique_count,
+        })),
+        missingColumns,
+        topMissingColumns,
+        numericSnapshots,
+        numericColumnStats,
+        distributions,
+        correlationTopPairs: correlations.pairs.map((pair) => ({
+          left: pair.column_1,
+          right: pair.column_2,
+          value: pair.correlation,
+        })),
+        outlierSummaries: outliers.columns.map((column) => ({
+          column: column.column,
+          outlierCount: column.outlier_count,
+          outlierRate: column.outlier_ratio,
+          lowerBound: column.lower_bound ?? 0,
+          upperBound: column.upper_bound ?? 0,
+        })),
+        qualitySummary: buildServerQualitySummary(profile, insights),
+        summaryBullets: buildServerSummaryBullets(profile, insights),
+        serverRecommendation,
+      },
+      recommendationMode: preprocessRecommendationResponse.generation_mode,
+      warning: recommendationWarning,
+      initialDistributionColumn,
+      distributionError,
+    };
+  } catch (error: unknown) {
+    return {
+      status: "unavailable",
+      message: error instanceof Error ? error.message : "Pre-EDA 정보를 불러오지 못했습니다.",
+    };
+  }
 }
 
 function parseThoughtStep(payload: unknown): ThoughtStep | null {
@@ -285,44 +561,19 @@ function parseThoughtStep(payload: unknown): ThoughtStep | null {
     data.status === "active" || data.status === "completed" || data.status === "failed"
       ? data.status
       : undefined;
-  return { phase, message, status };
-}
-
-function parseVisualizationResult(payload: unknown): VisualizationResultPayload | null {
-  if (!payload || typeof payload !== "object") {
-    return null;
-  }
-  const data = payload as Record<string, unknown>;
-  const artifactRaw = data.artifact;
-  if (!artifactRaw || typeof artifactRaw !== "object") {
-    return null;
-  }
-  const artifact = artifactRaw as Record<string, unknown>;
-  const imageBase64 = artifact.image_base64;
-  if (typeof imageBase64 !== "string" || !imageBase64) {
-    return null;
-  }
-
-  const chartRaw = data.chart;
-  const chart = chartRaw && typeof chartRaw === "object"
-    ? chartRaw as Record<string, unknown>
-    : {};
-
-  return {
-    status: typeof data.status === "string" ? data.status : "generated",
-    source_id: typeof data.source_id === "string" ? data.source_id : undefined,
-    summary: typeof data.summary === "string" ? data.summary : undefined,
-    chart: {
-      chart_type: typeof chart.chart_type === "string" ? chart.chart_type : undefined,
-      x_key: typeof chart.x_key === "string" ? chart.x_key : undefined,
-      y_key: typeof chart.y_key === "string" ? chart.y_key : undefined,
-    },
-    artifact: {
-      mime_type: typeof artifact.mime_type === "string" ? artifact.mime_type : "image/png",
-      image_base64: imageBase64,
-      code: typeof artifact.code === "string" ? artifact.code : undefined,
-    },
-  };
+  const displayMessage =
+    typeof data.display_message === "string" && data.display_message.trim()
+      ? data.display_message.trim()
+      : message;
+  const detailMessage =
+    typeof data.detail_message === "string" && data.detail_message.trim()
+      ? data.detail_message.trim()
+      : undefined;
+  const audience =
+    data.audience === "user" || data.audience === "debug"
+      ? data.audience
+      : undefined;
+  return { phase, message, status, displayMessage, detailMessage, audience };
 }
 
 function pickVisualizationResultFromDoneRecord(
@@ -577,6 +828,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
   const [fileName, setFileName] = useState("");
   const [sessionId, setSessionId] = useState<number | null>(null);
   const [runId, setRunId] = useState<string | null>(null);
+  const [traceId, setTraceId] = useState<string | null>(null);
   const [chatResponse, setChatResponse] = useState<ChatResponse | null>(null);
   const [streamingAnswer, setStreamingAnswer] = useState("");
   const [thoughtSteps, setThoughtSteps] = useState<ThoughtStep[]>([]);
@@ -595,13 +847,26 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
   const [rawLogs, setRawLogs] = useState<RawLogEntry[]>([]);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [errorStep, setErrorStep] = useState<string | null>(null);
+  const [preEdaApplyErrors, setPreEdaApplyErrors] = useState<Record<string, string | null>>({});
+  const [applyingPreEdaSourceId, setApplyingPreEdaSourceId] = useState<string | null>(null);
+  const [applyingPreEdaOperationKey, setApplyingPreEdaOperationKey] = useState<string | null>(null);
+  const [selectedPreEdaDistributionColumn, setSelectedPreEdaDistributionColumn] = useState<string | null>(null);
+  const [preEdaDistributionLoading, setPreEdaDistributionLoading] = useState<{
+    sourceId: string;
+    column: string;
+  } | null>(null);
+  const [preEdaDistributionError, setPreEdaDistributionError] = useState<{
+    sourceId: string;
+    column: string;
+    message: string;
+  } | null>(null);
 
   // --- Completed stage tracking ---
   const completedStagesRef = useRef<Set<string>>(new Set());
 
   // --- Abort / retry refs ---
   const abortRef = useRef<AbortController | null>(null);
-  const lastQuestionRef = useRef<string>("");
+  const lastQuestionRef = useRef<LastQuestionRequest | null>(null);
   const localMessageIdRef = useRef(0);
   const nextLocalMessageId = useCallback(() => {
     localMessageIdRef.current += 1;
@@ -669,14 +934,233 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
     });
   }, []);
 
-  const updateUploadedDataset = useCallback(
-    (sourceId: string, updater: (current: UploadedDatasetMeta) => UploadedDatasetMeta) => {
+  const mergePreEdaDistribution = useCallback(
+    (
+      sourceId: string,
+      distribution: PreEdaProfile["distributions"][number],
+    ) => {
       setUploadedDatasets((prev) =>
-        prev.map((item) => (item.sourceId === sourceId ? updater(item) : item)),
+        prev.map((item) => {
+          if (item.sourceId !== sourceId || !item.preEdaProfile) {
+            return item;
+          }
+
+          const nextDistributions = item.preEdaProfile.distributions.some(
+            (existing) => existing.column === distribution.column,
+          )
+            ? item.preEdaProfile.distributions.map((existing) =>
+                existing.column === distribution.column ? distribution : existing,
+              )
+            : [...item.preEdaProfile.distributions, distribution];
+
+          return {
+            ...item,
+            preEdaProfile: {
+              ...item.preEdaProfile,
+              distributions: nextDistributions,
+            },
+          };
+        }),
       );
     },
     [],
   );
+
+  const activateProcessedDataset = useCallback(
+    async ({
+      sourceId,
+      fileName: nextFileName,
+      uploadedAt,
+    }: {
+      sourceId: string;
+      fileName: string;
+      uploadedAt: string;
+    }) => {
+      const preEdaResult = await loadServerPreEdaProfile(sourceId, nextFileName, uploadedAt);
+      const preEdaProfile = preEdaResult.status === "ready" ? preEdaResult.profile : null;
+      const preEdaWarning = preEdaResult.status === "ready"
+        ? preEdaResult.warning
+        : preEdaResult.message;
+      const recommendationMode = preEdaResult.status === "ready"
+        ? preEdaResult.recommendationMode
+        : null;
+
+      if (preEdaResult.status === "unavailable") {
+        addLog(makeRawLog("eda_unavailable", {
+          reason: preEdaResult.message,
+          source_id: sourceId,
+        }));
+        setPreEdaDistributionError((prev) => (prev?.sourceId === sourceId ? null : prev));
+      } else {
+        setSelectedPreEdaDistributionColumn(preEdaResult.initialDistributionColumn);
+        setPreEdaDistributionError(
+          preEdaResult.distributionError && preEdaResult.initialDistributionColumn
+            ? {
+                sourceId,
+                column: preEdaResult.initialDistributionColumn,
+                message: preEdaResult.distributionError,
+              }
+            : null,
+        );
+      }
+
+      setSelectedSourceId(sourceId);
+      setFileName(nextFileName);
+      upsertUploadedDataset({
+        datasetId: 0,
+        sourceId,
+        fileName: nextFileName,
+        uploadedAt,
+        preEdaProfile,
+        preEdaStatus: preEdaResult.status,
+        preEdaWarning,
+        recommendationMode,
+        preprocessApproved:
+          preEdaResult.status === "ready"
+            ? isRecommendationExhausted(
+              preEdaResult.recommendationMode,
+              preEdaResult.profile.serverRecommendation,
+            )
+            : false,
+      });
+    },
+    [addLog, upsertUploadedDataset],
+  );
+
+  const retrySelectedPreEda = useCallback(async (): Promise<"ready" | "unavailable" | "noop"> => {
+    if (!selectedSourceId) {
+      return "noop";
+    }
+    const selectedDataset = uploadedDatasets.find((item) => item.sourceId === selectedSourceId) ?? null;
+    if (!selectedDataset) {
+      return "noop";
+    }
+
+    const preEdaResult = await loadServerPreEdaProfile(
+      selectedSourceId,
+      selectedDataset.fileName,
+      selectedDataset.uploadedAt,
+    );
+
+    if (preEdaResult.status === "ready") {
+      upsertUploadedDataset({
+        ...selectedDataset,
+        preEdaProfile: preEdaResult.profile,
+        preEdaStatus: "ready",
+        preEdaWarning: preEdaResult.warning,
+        recommendationMode: preEdaResult.recommendationMode,
+        preprocessApproved: isRecommendationExhausted(
+          preEdaResult.recommendationMode,
+          preEdaResult.profile.serverRecommendation,
+        ),
+    });
+      setPreEdaApplyErrors((prev) => ({ ...prev, [selectedSourceId]: null }));
+      setSelectedPreEdaDistributionColumn(preEdaResult.initialDistributionColumn);
+      setPreEdaDistributionError(
+        preEdaResult.distributionError && preEdaResult.initialDistributionColumn
+          ? {
+              sourceId: selectedSourceId,
+              column: preEdaResult.initialDistributionColumn,
+              message: preEdaResult.distributionError,
+            }
+          : null,
+      );
+      return "ready";
+    }
+
+    upsertUploadedDataset({
+      ...selectedDataset,
+      preEdaProfile: null,
+      preEdaStatus: "unavailable",
+      preEdaWarning: preEdaResult.message,
+      recommendationMode: null,
+    });
+    setPreEdaDistributionError((prev) => (prev?.sourceId === selectedSourceId ? null : prev));
+    return "unavailable";
+  }, [selectedSourceId, uploadedDatasets, upsertUploadedDataset]);
+
+  const loadSelectedPreEdaDistribution = useCallback(
+    async (column: string): Promise<void> => {
+      const sourceId = selectedSourceId;
+      const normalizedColumn = column.trim();
+      if (!sourceId || !normalizedColumn) {
+        return;
+      }
+
+      setSelectedPreEdaDistributionColumn(normalizedColumn);
+
+      const selectedDataset = uploadedDatasets.find((item) => item.sourceId === sourceId);
+      const profile = selectedDataset?.preEdaProfile;
+      if (!profile) {
+        return;
+      }
+
+      const renderableColumns = getRenderableDistributionColumns({
+        numericColumns: profile.numericColumns,
+        categoricalColumns: profile.categoricalColumns,
+        datetimeColumns: profile.datetimeColumns,
+        booleanColumns: profile.booleanColumns,
+        groupKeyColumns: profile.groupKeyColumns,
+      });
+      if (!renderableColumns.includes(normalizedColumn)) {
+        return;
+      }
+
+      setPreEdaDistributionError((prev) => (prev?.sourceId === sourceId ? null : prev));
+
+      if (profile.distributions.some((distribution) => distribution.column === normalizedColumn)) {
+        return;
+      }
+
+      if (
+        preEdaDistributionLoading?.sourceId === sourceId
+        && preEdaDistributionLoading.column === normalizedColumn
+      ) {
+        return;
+      }
+
+      setPreEdaDistributionLoading({ sourceId, column: normalizedColumn });
+
+      try {
+        const distribution = await fetchEdaDistribution(sourceId, normalizedColumn);
+        mergePreEdaDistribution(sourceId, mapDistributionResponse(distribution));
+        setPreEdaDistributionError((prev) => (prev?.sourceId === sourceId ? null : prev));
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : "분포 정보를 불러오지 못했습니다.";
+        setPreEdaDistributionError({ sourceId, column: normalizedColumn, message });
+      } finally {
+        setPreEdaDistributionLoading((prev) =>
+          prev?.sourceId === sourceId && prev.column === normalizedColumn ? null : prev,
+        );
+      }
+    },
+    [mergePreEdaDistribution, preEdaDistributionLoading, selectedSourceId, uploadedDatasets],
+  );
+
+  useEffect(() => {
+    const currentPreEdaProfile =
+      uploadedDatasets.find((item) => item.sourceId === selectedSourceId)?.preEdaProfile ?? null;
+
+    if (!currentPreEdaProfile) {
+      setSelectedPreEdaDistributionColumn(null);
+      return;
+    }
+
+    const renderableColumns = getRenderableDistributionColumns({
+      numericColumns: currentPreEdaProfile.numericColumns,
+      categoricalColumns: currentPreEdaProfile.categoricalColumns,
+      datetimeColumns: currentPreEdaProfile.datetimeColumns,
+      booleanColumns: currentPreEdaProfile.booleanColumns,
+      groupKeyColumns: currentPreEdaProfile.groupKeyColumns,
+    });
+
+    if (
+      !selectedPreEdaDistributionColumn
+      || !renderableColumns.includes(selectedPreEdaDistributionColumn)
+    ) {
+      setSelectedPreEdaDistributionColumn(renderableColumns[0] ?? null);
+    }
+  }, [selectedPreEdaDistributionColumn, selectedSourceId, uploadedDatasets]);
 
   const appendThoughtStep = useCallback(
     (step: ThoughtStep) => {
@@ -702,6 +1186,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
       response,
       tc,
       startMs,
+      requestTraceId,
       question,
       successMilestoneTitle,
       successMilestoneSubtext,
@@ -709,6 +1194,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
       response: Response;
       tc: ToolCallEntry;
       startMs: number;
+      requestTraceId: string;
       question?: string;
       successMilestoneTitle?: string;
       successMilestoneSubtext?: string;
@@ -729,8 +1215,11 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
       let finalAnswer = "";
       let doneReceived = false;
       let approvalReceived = false;
+      let activeTraceId = requestTraceId;
+      let terminalErrorStep: string | null = null;
+      let terminalErrorMessage: string | null = null;
 
-      const handleEvent = (rawEvent: string) => {
+      const handleEvent = async (rawEvent: string) => {
         const lines = rawEvent.split("\n");
         let eventName = "message";
         const dataLines: string[] = [];
@@ -758,6 +1247,11 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
           : {};
 
         if (eventName === "session") {
+          const nextTraceId = record.trace_id;
+          if (typeof nextTraceId === "string" && nextTraceId.trim()) {
+            activeTraceId = nextTraceId;
+            setTraceId(nextTraceId);
+          }
           const nextSession = record.session_id;
           if (typeof nextSession === "number") {
             setSessionId(nextSession);
@@ -766,10 +1260,23 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
           if (typeof nextRunId === "string" && nextRunId.trim()) {
             setRunId(nextRunId);
           }
+          addLog(
+            makeRawLog(
+              "sse: session",
+              {
+                session_id: nextSession,
+                run_id: nextRunId,
+                trace_id: activeTraceId,
+              },
+              false,
+              activeTraceId,
+            ),
+          );
           return;
         }
 
         if (eventName === "thought") {
+          addLog(makeRawLog("sse: thought", record, false, activeTraceId));
           const step = parseThoughtStep(record);
           if (step) {
             appendThoughtStep(step);
@@ -788,6 +1295,12 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
 
         if (eventName === "approval_required") {
           approvalReceived = true;
+
+          const nextTraceId = record.trace_id;
+          if (typeof nextTraceId === "string" && nextTraceId.trim()) {
+            activeTraceId = nextTraceId;
+            setTraceId(nextTraceId);
+          }
 
           const nextSession = record.session_id;
           if (typeof nextSession === "number") {
@@ -839,16 +1352,39 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
             timestamp: now(),
             selected: true,
           });
-          addLog(makeRawLog("approval_required", pending as unknown as Record<string, unknown>));
+          addLog(
+            makeRawLog(
+              "sse: approval_required",
+              {
+                trace_id: activeTraceId,
+                session_id: nextSession,
+                run_id: nextRunId,
+                pending_approval: pending,
+              },
+              false,
+              activeTraceId,
+            ),
+          );
           return;
         }
 
         if (eventName === "done") {
           doneReceived = true;
+          const nextTraceId = record.trace_id;
+          if (typeof nextTraceId === "string" && nextTraceId.trim()) {
+            activeTraceId = nextTraceId;
+            setTraceId(nextTraceId);
+          }
           const answer = typeof record.answer === "string" ? record.answer : streamText;
+          const outputType = typeof record.output_type === "string" ? record.output_type : null;
+          const isReportFailure = outputType === "report_failed";
           finalAnswer = answer;
           setStreamingAnswer(answer);
           setPendingApproval(null);
+          if (isReportFailure) {
+            terminalErrorStep = "report";
+            terminalErrorMessage = answer.trim() || "리포트 생성에 실패했습니다.";
+          }
 
           const nextSession = record.session_id;
           const resolvedSessionId = typeof nextSession === "number" ? nextSession : sessionId;
@@ -876,7 +1412,8 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
               answer,
               session_id: resolvedSessionId,
               run_id: typeof nextRunId === "string" ? nextRunId : undefined,
-              thought_steps: Array.isArray(doneThoughts) ? doneThoughts as ChatResponse["thought_steps"] : [],
+              trace_id: activeTraceId,
+              thought_steps: Array.isArray(doneThoughts) ? doneThoughts as ThoughtStepPayload[] : [],
             });
           }
 
@@ -904,26 +1441,45 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
               preprocess.status === "applied" &&
               typeof preprocess.output_source_id === "string" &&
               preprocess.output_source_id
-                ) {
-              upsertUploadedDataset({
-                datasetId: 0,
+            ) {
+              const outputFileName =
+                typeof preprocess.output_filename === "string" && preprocess.output_filename
+                  ? preprocess.output_filename
+                  : `processed_${preprocess.output_source_id}`;
+              await activateProcessedDataset({
                 sourceId: preprocess.output_source_id,
-                fileName:
-                  typeof preprocess.output_filename === "string" && preprocess.output_filename
-                    ? preprocess.output_filename
-                    : `processed_${preprocess.output_source_id}`,
+                fileName: outputFileName,
                 uploadedAt: new Date().toISOString(),
-                preEdaProfile: null,
-                preprocessApproved: true,
               });
             }
           }
 
-          setState("success");
+          addLog(
+            makeRawLog(
+              "sse: done",
+              {
+                trace_id: activeTraceId,
+                run_id: typeof nextRunId === "string" ? nextRunId : null,
+                output_type: outputType,
+                answer_length: answer.length,
+              },
+              isReportFailure,
+              activeTraceId,
+            ),
+          );
+          if (!isReportFailure) {
+            setState("success");
+          }
           return;
         }
 
         if (eventName === "error") {
+          const nextTraceId = record.trace_id;
+          if (typeof nextTraceId === "string" && nextTraceId.trim()) {
+            activeTraceId = nextTraceId;
+            setTraceId(nextTraceId);
+          }
+          addLog(makeRawLog("sse: error", record, true, activeTraceId));
           const message = typeof record.message === "string"
             ? record.message
             : "스트리밍 처리 중 오류가 발생했습니다.";
@@ -947,7 +1503,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
           if (!rawEvent) {
             continue;
           }
-          handleEvent(rawEvent);
+          await handleEvent(rawEvent);
         }
       }
 
@@ -956,10 +1512,16 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
         buffer += tail.replace(/\r\n/g, "\n");
       }
       if (buffer.trim()) {
-        handleEvent(buffer.trim());
+        await handleEvent(buffer.trim());
       }
 
       if (approvalReceived) {
+        return;
+      }
+
+      if (terminalErrorMessage) {
+        updateToolCall(tc.id, failToolCall(tc, terminalErrorMessage, startMs));
+        transitionToError(terminalErrorStep ?? "chat_stream", terminalErrorMessage);
         return;
       }
 
@@ -967,7 +1529,12 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
       if (!doneReceived && finalText) {
         setStreamingAnswer(finalText);
         if (sessionId !== null) {
-          setChatResponse({ answer: finalText, session_id: sessionId, thought_steps: [] });
+          setChatResponse({
+            answer: finalText,
+            session_id: sessionId,
+            trace_id: activeTraceId,
+            thought_steps: [],
+          });
         }
         setChatHistory((prev) => [
           ...prev,
@@ -979,6 +1546,19 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
           },
         ]);
         setState("success");
+        addLog(
+          makeRawLog(
+            "sse: done",
+            {
+              trace_id: activeTraceId,
+              run_id: runId,
+              output_type: null,
+              answer_length: finalText.length,
+            },
+            false,
+            activeTraceId,
+          ),
+        );
       }
 
       updateToolCall(tc.id, completeToolCall(tc, finalText.slice(0, 80) || "stream done", startMs));
@@ -990,19 +1570,17 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
           timestamp: now(),
         });
       }
-      addLog(makeRawLog("tool_result", {
-        tool: tc.name,
-        answer_length: finalText.length,
-      }));
     },
     [
       addLog,
       addMilestone,
       appendThoughtStep,
+      activateProcessedDataset,
       nextLocalMessageId,
+      runId,
       sessionId,
       updateToolCall,
-      upsertUploadedDataset,
+      transitionToError,
     ],
   );
 
@@ -1010,6 +1588,9 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
 
   const selectUploadedDataset = useCallback(
     (sourceId: string | null) => {
+      if (applyingPreEdaSourceId !== null) {
+        return;
+      }
       setSelectedSourceId(sourceId);
       if (!sourceId) {
         return;
@@ -1019,11 +1600,14 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
         setFileName(selected.fileName);
       }
     },
-    [uploadedDatasets],
+    [applyingPreEdaSourceId, uploadedDatasets],
   );
 
   const removeUploadedDataset = useCallback(
     async (sourceId: string) => {
+      if (applyingPreEdaSourceId !== null) {
+        return;
+      }
       await deleteDataset(sourceId);
 
       const nextDatasets = uploadedDatasets.filter((item) => item.sourceId !== sourceId);
@@ -1047,7 +1631,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
         timestamp: now(),
       });
     },
-    [uploadedDatasets, selectedSourceId, state, addMilestone],
+    [applyingPreEdaSourceId, uploadedDatasets, selectedSourceId, state, addMilestone],
   );
 
   const startUpload = useCallback(
@@ -1061,11 +1645,15 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
       setPendingApproval(null);
       setUploadProgress(0);
       setFileName(file.name);
+
+      if (!file.name.toLowerCase().endsWith(".csv")) {
+        transitionToError("upload", "CSV 파일만 업로드할 수 있습니다.");
+        return;
+      }
+
       setState("uploading");
 
       const uploadedAt = new Date().toISOString();
-      // 로컬 프로파일은 서버 EDA 실패 시 폴백용으로 병렬 준비
-      const localProfilePromise = buildPreEdaProfile(file).catch(() => null);
 
       uploadFile(file, (percent) => {
         setUploadProgress(percent);
@@ -1083,102 +1671,42 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
             timestamp: now(),
           });
 
-          // 서버 EDA 우선 조회 시도
           let preEdaProfile: PreEdaProfile | null = null;
-          try {
-            const [summaryRes, qualityRes, corrRes, outlierRes, insightRes] =
-              await Promise.all([
-                fetchEdaSummary(dataset.source_id),
-                fetchEdaQuality(dataset.source_id),
-                fetchEdaCorrelations(dataset.source_id),
-                fetchEdaOutliers(dataset.source_id),
-                fetchEdaInsights(dataset.source_id),
-              ]);
-
-            const summary = summaryRes.data;
-            const quality = qualityRes.data;
-            const correlations = corrRes.data;
-            const outliers = outlierRes.data;
-            const insight = insightRes.data;
-
-            preEdaProfile = {
-              sourceLabel: dataset.filename || file.name,
-              uploadedAt,
-              rowCount: summary.row_count,
-              columnCount: summary.column_count,
-              columns: [
-                ...summary.numeric_columns,
-                ...summary.categorical_columns,
-                ...summary.datetime_columns,
-                ...summary.boolean_columns,
-                ...summary.identifier_columns,
-                ...summary.group_key_columns,
-              ],
-              sampleRows: [], // 서버 EDA는 sampleRows 미포함 — fetchSample로 별도 조회 가능
-              numericColumns: summary.numeric_columns,
-              categoricalColumns: summary.categorical_columns,
-              datetimeColumns: summary.datetime_columns,
-              identifierColumns: summary.identifier_columns,
-              booleanColumns: summary.boolean_columns,
-              groupKeyColumns: summary.group_key_columns,
-              groupKeyCandidates: summary.group_key_columns,
-              columnRoleSummaries: [],
-              missingColumns: quality.missing_columns.map((c) => ({
-                column: c.column,
-                missingCount: c.missing_count,
-                missingRate: c.missing_rate,
-              })),
-              topMissingColumns: quality.missing_columns
-                .sort((a, b) => b.missing_rate - a.missing_rate)
-                .slice(0, 3)
-                .map((c) => ({
-                  column: c.column,
-                  missingCount: c.missing_count,
-                  missingRate: c.missing_rate,
-                })),
-              numericSnapshots: [],
-              numericColumnStats: [],
-              distributions: [],
-              correlationTopPairs: correlations.top_pairs.map((p) => ({
-                left: p.col_a,
-                right: p.col_b,
-                value: p.correlation,
-              })),
-              outlierSummaries: outliers.outlier_columns.map((o) => ({
-                column: o.column,
-                outlierCount: o.outlier_count,
-                outlierRate: 0,
-                lowerBound: o.lower_bound,
-                upperBound: o.upper_bound,
-              })),
-              qualitySummary: summary.quality_summary,
-              summaryBullets: summary.summary_bullets,
-              recommendation: insight.preprocess_recommendation
+          let preEdaStatus: UploadedDatasetMeta["preEdaStatus"] = "unavailable";
+          let preEdaWarning: string | null = null;
+          let recommendationMode: UploadedDatasetMeta["recommendationMode"] = null;
+          const preEdaResult = await loadServerPreEdaProfile(
+            dataset.source_id,
+            dataset.filename || file.name,
+            uploadedAt,
+          );
+          if (preEdaResult.status === "ready") {
+            preEdaProfile = preEdaResult.profile;
+            preEdaStatus = "ready";
+            preEdaWarning = preEdaResult.warning;
+            recommendationMode = preEdaResult.recommendationMode;
+            setSelectedPreEdaDistributionColumn(preEdaResult.initialDistributionColumn);
+            setPreEdaDistributionError(
+              preEdaResult.distributionError && preEdaResult.initialDistributionColumn
                 ? {
-                    column: insight.preprocess_recommendation.operations[0]?.target_columns[0] ?? "",
-                    columnType: "categorical" as const,
-                    strategy: insight.preprocess_recommendation.operations[0]?.op ?? "",
-                    fillValue: "",
-                    missingCount: 0,
-                    missingPercent: 0,
-                    rationale: "",
-                    domainWarning: null,
-                    alternativeStrategies: [],
+                    sourceId: dataset.source_id,
+                    column: preEdaResult.initialDistributionColumn,
+                    message: preEdaResult.distributionError,
                   }
                 : null,
-            };
-
+            );
             addMilestone({
               status: "completed",
               title: "Server EDA loaded",
-              subtext: `${summary.row_count} rows · ${summary.column_count} cols`,
+              subtext: `${preEdaProfile.rowCount} rows · ${preEdaProfile.columnCount} cols`,
               timestamp: now(),
             });
-          } catch {
-            // 서버 EDA 미구현 또는 실패 → 로컬 프로파일로 폴백
-            preEdaProfile = await localProfilePromise;
-            addLog(makeRawLog("eda_fallback", {
-              reason: "Server EDA unavailable, using local profile",
+          } else {
+            preEdaWarning = preEdaResult.message;
+            setPreEdaDistributionError((prev) => (prev?.sourceId === dataset.source_id ? null : prev));
+            addLog(makeRawLog("eda_unavailable", {
+              reason: preEdaResult.message,
+              source_id: dataset.source_id,
             }));
           }
 
@@ -1189,8 +1717,15 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
             fileName: dataset.filename || file.name,
             uploadedAt,
             preEdaProfile,
-            preprocessApproved: !preEdaProfile?.recommendation,
+            preEdaStatus,
+            preEdaWarning,
+            recommendationMode,
+            preprocessApproved: isRecommendationExhausted(
+              recommendationMode,
+              preEdaProfile?.serverRecommendation,
+            ),
           });
+          setPreEdaApplyErrors((prev) => ({ ...prev, [dataset.source_id]: null }));
         })
         .catch((err: Error) => {
           transitionToError("upload", err.message);
@@ -1200,7 +1735,16 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
   );
 
   const runQuestionStream = useCallback(
-    (question: string) => {
+    (question: string, sourceIdOverride?: string | null) => {
+      const requestSourceId = typeof sourceIdOverride === "string"
+        ? (sourceIdOverride.trim() || null)
+        : selectedSourceId;
+
+      lastQuestionRef.current = {
+        question,
+        sourceId: requestSourceId,
+      };
+
       setErrorMessage(null);
       setErrorStep(null);
       setState("running");
@@ -1209,18 +1753,21 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
       setChatResponse(null);
       setThoughtSteps([]);
       setRunId(null);
+      const nextTraceId = createTraceId();
+      setTraceId(nextTraceId);
       setPendingApproval(null);
       completedStagesRef.current = new Set();
 
-      const request: { question: string; session_id?: number; source_id?: string } = {
+      const request: { question: string; session_id?: number; source_id?: string; trace_id: string } = {
         question,
+        trace_id: nextTraceId,
       };
       if (sessionId !== null) request.session_id = sessionId;
-      if (selectedSourceId) request.source_id = selectedSourceId;
+      if (requestSourceId) request.source_id = requestSourceId;
 
       const tc = makeToolCall("chat_stream", request);
       addToolCall(tc);
-      addLog(makeRawLog("tool_call: chat_stream", request));
+      addLog(makeRawLog("tool_call: chat_stream", request, false, nextTraceId));
 
       const startMs = Date.now();
       const abortController = new AbortController();
@@ -1239,6 +1786,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
             response,
             tc,
             startMs,
+            requestTraceId: nextTraceId,
             question,
             successMilestoneTitle: "Follow-up",
             successMilestoneSubtext: question.slice(0, 40),
@@ -1253,7 +1801,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
 
           const message = error instanceof Error ? error.message : "채팅 요청에 실패했습니다.";
           updateToolCall(tc.id, failToolCall(tc, message, startMs));
-          addLog(makeRawLog("tool_error: chat_stream", { error: message }, true));
+          addLog(makeRawLog("tool_error: chat_stream", { error: message }, true, nextTraceId));
           transitionToError("chat_stream", message);
         } finally {
           abortRef.current = null;
@@ -1277,23 +1825,36 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
         return;
       }
 
+      const approvalTitle = pendingApproval.title;
+      const approvalStage = pendingApproval.stage;
+
       setErrorMessage(null);
       setErrorStep(null);
       setState("running");
-      setRunningSubPhase(approvalStageToSubPhase(pendingApproval.stage));
+      setRunningSubPhase(approvalStageToSubPhase(approvalStage));
       setStreamingAnswer("");
       setThoughtSteps([]);
-      completedStagesRef.current = approvalStageCompletedStages(pendingApproval.stage);
+      completedStagesRef.current = approvalStageCompletedStages(approvalStage);
+      const nextTraceId = traceId || createTraceId();
+      setTraceId(nextTraceId);
 
       const request = {
         decision,
-        stage: pendingApproval.stage,
+        stage: approvalStage,
         instruction: instruction?.trim() || undefined,
+        trace_id: nextTraceId,
       };
 
       const tc = makeToolCall("resume_run", request);
       addToolCall(tc);
-      addLog(makeRawLog("tool_call: resume_run", { session_id: sessionId, run_id: runId, ...request }));
+      addLog(
+        makeRawLog(
+          "tool_call: resume_run",
+          { session_id: sessionId, run_id: runId, ...request },
+          false,
+          nextTraceId,
+        ),
+      );
 
       const startMs = Date.now();
       const abortController = new AbortController();
@@ -1312,17 +1873,32 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
             response,
             tc,
             startMs,
+            requestTraceId: nextTraceId,
             successMilestoneTitle:
               decision === "approve"
-                ? `${approvalStageLabel(pendingApproval.stage)} approved`
+                ? `${approvalStageLabel(approvalStage)} approved`
                 : decision === "revise"
-                  ? approvalStageRevisionTitle(pendingApproval.stage)
-                  : approvalStageCancelTitle(pendingApproval.stage),
+                  ? approvalStageRevisionTitle(approvalStage)
+                  : approvalStageCancelTitle(approvalStage),
             successMilestoneSubtext:
               decision === "approve"
-                ? pendingApproval.title
-                : instruction?.trim() || pendingApproval.title,
+                ? approvalTitle
+                : instruction?.trim() || approvalTitle,
           });
+          setHistory((prev) => [
+            ...prev,
+            {
+              status: "completed",
+              title:
+                decision === "approve"
+                  ? "Approved"
+                  : decision === "revise"
+                    ? approvalStageRevisionTitle(approvalStage)
+                    : approvalStageCancelTitle(approvalStage),
+              subtext: decision === "approve" ? approvalTitle : instruction?.trim() || approvalTitle,
+              timestamp: now(),
+            },
+          ]);
         } catch (error: unknown) {
           if (error instanceof DOMException && error.name === "AbortError") {
             return;
@@ -1333,7 +1909,21 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
 
           const message = error instanceof Error ? error.message : "재개 요청에 실패했습니다.";
           updateToolCall(tc.id, failToolCall(tc, message, startMs));
-          addLog(makeRawLog("tool_error: resume_run", { error: message }, true));
+          addLog(makeRawLog("tool_error: resume_run", { error: message }, true, nextTraceId));
+          setHistory((prev) => [
+            ...prev,
+            {
+              status: "failed",
+              title:
+                decision === "approve"
+                  ? "Approve Failed"
+                  : decision === "revise"
+                    ? `${approvalStageRevisionTitle(approvalStage)} Failed`
+                    : `${approvalStageCancelTitle(approvalStage)} Failed`,
+              subtext: message,
+              timestamp: now(),
+            },
+          ]);
           transitionToError("resume_run", message);
         } finally {
           abortRef.current = null;
@@ -1347,6 +1937,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
       addToolCall,
       addLog,
       consumeSseResponse,
+      traceId,
       transitionToError,
       updateToolCall,
     ],
@@ -1355,9 +1946,12 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
   const handleSend = useCallback(
     (message: string) => {
       const question = message.trim();
-      if (!question || pendingApproval) return;
+      if (!question || pendingApproval || applyingPreEdaSourceId !== null) return;
 
-      lastQuestionRef.current = question;
+      lastQuestionRef.current = {
+        question,
+        sourceId: selectedSourceId,
+      };
 
       setChatHistory((prev) => [
         ...prev,
@@ -1371,88 +1965,95 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
 
       setErrorMessage(null);
       setErrorStep(null);
-      const selectedDataset =
-        uploadedDatasets.find((item) => item.sourceId === selectedSourceId) ?? null;
-      const recommendation = selectedDataset?.preEdaProfile?.recommendation ?? null;
-
-      if (selectedSourceId && recommendation && !selectedDataset?.preprocessApproved) {
-        setErrorMessage(null);
-        setErrorStep(null);
-        setChatResponse(null);
-        setStreamingAnswer("");
-        setThoughtSteps([]);
-        setRunningSubPhase("preprocessing");
-        setPendingApproval(buildLocalPreprocessPendingApproval(recommendation, selectedSourceId));
-        setState("needs-user");
-        completedStagesRef.current = new Set(["intake"]);
-        return;
-      }
-
-      runQuestionStream(question);
+      runQuestionStream(question, selectedSourceId);
     },
-    [pendingApproval, nextLocalMessageId, uploadedDatasets, selectedSourceId, runQuestionStream],
+    [applyingPreEdaSourceId, pendingApproval, nextLocalMessageId, selectedSourceId, runQuestionStream],
   );
 
-  const handleApprove = useCallback(() => {
-    if (pendingApproval && sessionId !== null && runId) {
-      resumeRun("approve");
-      return;
+  const handleApprove = useCallback(async (): Promise<"approved" | "failed" | "noop"> => {
+    if (!pendingApproval || sessionId === null || !runId) {
+      return "noop";
     }
 
-    setHistory((prev) => [
-      ...prev,
-      {
-        status: "completed" as TimelineItemStatus,
-        title: "Approved",
-        subtext: pendingApproval?.title ?? "User confirmed strategy",
-        timestamp: now(),
-      },
-    ]);
+    resumeRun("approve");
+    return "approved";
+  }, [pendingApproval, resumeRun, runId, sessionId]);
 
-    if (selectedSourceId) {
-      updateUploadedDataset(selectedSourceId, (current) => ({
-        ...current,
-        preprocessApproved: true,
-      }));
-    }
+  const applyRecommendedOperation = useCallback(
+    async (
+      operation: EdaRecommendedOperation,
+      index: number,
+    ): Promise<"applied" | "failed" | "noop"> => {
+      if (!selectedSourceId || !isAutoApplicableRecommendedOperation(operation)) {
+        return "noop";
+      }
+      const selectedDataset = uploadedDatasets.find((item) => item.sourceId === selectedSourceId) ?? null;
+      if (!selectedDataset?.preEdaProfile) {
+        return "noop";
+      }
 
-    setPendingApproval(null);
+      const operationKey = getRecommendedOperationKey(operation, index);
+      setPreEdaApplyErrors((prev) => ({ ...prev, [selectedSourceId]: null }));
+      setApplyingPreEdaSourceId(selectedSourceId);
+      setApplyingPreEdaOperationKey(operationKey);
 
-    if (lastQuestionRef.current.trim()) {
-      runQuestionStream(lastQuestionRef.current);
-      return;
-    }
+      try {
+        const response = await applyPreprocess({
+          source_id: selectedSourceId,
+          operations: buildPreprocessOperationsFromRecommendedOperation(
+            operation,
+            selectedDataset.preEdaProfile,
+          ),
+        });
+        const outputFileName = response.output_filename.trim()
+          ? response.output_filename
+          : `processed_${response.output_source_id}`;
 
-    setState(uploadedDatasets.length > 0 ? "ready" : "empty");
-  }, [
-    pendingApproval,
-    sessionId,
-    runId,
-    resumeRun,
-    selectedSourceId,
-    updateUploadedDataset,
-    runQuestionStream,
-    uploadedDatasets.length,
-  ]);
+        await activateProcessedDataset({
+          sourceId: response.output_source_id,
+          fileName: outputFileName,
+          uploadedAt: new Date().toISOString(),
+        });
+
+        setPreEdaApplyErrors((prev) => ({
+          ...prev,
+          [selectedSourceId]: null,
+          [response.output_source_id]: null,
+        }));
+        addMilestone({
+          status: "completed",
+          title: "Preprocess applied",
+          subtext: operation.reason.trim() || operation.op,
+          timestamp: now(),
+        });
+        return "applied";
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : "전처리 적용에 실패했습니다.";
+        setPreEdaApplyErrors((prev) => ({ ...prev, [selectedSourceId]: message }));
+        return "failed";
+      } finally {
+        setApplyingPreEdaSourceId(null);
+        setApplyingPreEdaOperationKey(null);
+      }
+    },
+    [activateProcessedDataset, addMilestone, selectedSourceId, uploadedDatasets],
+  );
 
   const handleReject = useCallback(() => {
-    setHistory((prev) => [
-      ...prev,
-      {
-        status: "failed" as TimelineItemStatus,
-        title:
-          pendingApproval && sessionId !== null && runId
-            ? approvalStageCancelTitle(pendingApproval.stage)
-            : "Rejected Changes",
-        subtext: pendingApproval?.title ?? "User cancelled action",
-        timestamp: now(),
-      },
-    ]);
-
     if (pendingApproval && sessionId !== null && runId) {
       resumeRun("cancel");
       return;
     }
+
+    setHistory((prev) => [
+      ...prev,
+      {
+        status: "failed" as TimelineItemStatus,
+        title: "Rejected Changes",
+        subtext: pendingApproval?.title ?? "User cancelled action",
+        timestamp: now(),
+      },
+    ]);
 
     setPendingApproval(null);
     setState(uploadedDatasets.length > 0 ? "ready" : "empty");
@@ -1464,31 +2065,29 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
       return;
     }
 
+    if (pendingApproval && sessionId !== null && runId) {
+      resumeRun("revise", nextText);
+      return;
+    }
+
     setHistory((prev) => [
       ...prev,
       {
         status: "completed" as TimelineItemStatus,
-        title:
-          pendingApproval && sessionId !== null && runId
-            ? approvalStageRevisionTitle(pendingApproval.stage)
-            : "User Edit",
+        title: "User Edit",
         subtext: nextText,
         timestamp: now(),
       },
     ]);
-
-    if (pendingApproval && sessionId !== null && runId) {
-      resumeRun("revise", nextText);
-    }
   }, [pendingApproval, sessionId, runId, resumeRun]);
 
   const handleRetry = useCallback(() => {
-    if (!lastQuestionRef.current) {
+    if (!lastQuestionRef.current?.question) {
       setState(uploadedDatasets.length > 0 ? "ready" : "empty");
       return;
     }
-    handleSend(lastQuestionRef.current);
-  }, [handleSend, uploadedDatasets.length]);
+    runQuestionStream(lastQuestionRef.current.question, lastQuestionRef.current.sourceId);
+  }, [runQuestionStream, uploadedDatasets.length]);
 
   const handleCancel = useCallback(() => {
     abortRef.current?.abort();
@@ -1510,6 +2109,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
     setFileName("");
     setSessionId(null);
     setRunId(null);
+    setTraceId(null);
     setChatResponse(null);
     setStreamingAnswer("");
     setThoughtSteps([]);
@@ -1524,9 +2124,15 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
     setPendingApproval(null);
     setLatestVisualizationResult(null);
     setChatHistory([]);
-    lastQuestionRef.current = "";
+    lastQuestionRef.current = null;
     localMessageIdRef.current = 0;
     completedStagesRef.current = new Set();
+    setPreEdaApplyErrors({});
+    setApplyingPreEdaSourceId(null);
+    setApplyingPreEdaOperationKey(null);
+    setSelectedPreEdaDistributionColumn(null);
+    setPreEdaDistributionLoading(null);
+    setPreEdaDistributionError(null);
   }, []);
 
   const captureSessionContext = useCallback((): PipelineSessionContext => {
@@ -1557,6 +2163,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
     return {
       backendSessionId: sessionId,
       runId,
+      traceId,
       fileName,
       uploadedDatasets: [...uploadedDatasets],
       selectedSourceId,
@@ -1574,6 +2181,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
     uploadedDatasets,
     sessionId,
     runId,
+    traceId,
     fileName,
     selectedSourceId,
     chatHistory,
@@ -1582,28 +2190,31 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
   ]);
 
   const restoreSessionContext = useCallback((context: PipelineSessionContext) => {
+    const normalizedContext = normalizeRestoredSessionContext(context);
     abortRef.current?.abort();
     abortRef.current = null;
 
-    const nextSessionId = context.backendSessionId ?? null;
-    const nextRunId = context.runId ?? null;
-    const nextUploadedDatasets = Array.isArray(context.uploadedDatasets)
-      ? context.uploadedDatasets
+    const nextSessionId = normalizedContext.backendSessionId ?? null;
+    const nextRunId = normalizedContext.runId ?? null;
+    const nextTraceId = normalizedContext.traceId ?? null;
+    const nextUploadedDatasets = Array.isArray(normalizedContext.uploadedDatasets)
+      ? normalizedContext.uploadedDatasets
       : [];
-    const nextStateHint: PipelineSessionStateHint = context.stateHint ?? "empty";
-    const nextPendingApproval = context.pendingApproval ?? null;
+    const nextStateHint: PipelineSessionStateHint = normalizedContext.stateHint ?? "empty";
+    const nextPendingApproval = normalizedContext.pendingApproval ?? null;
     const latestAnswer =
-      typeof context.latestAssistantAnswer === "string" && context.latestAssistantAnswer.trim()
-        ? context.latestAssistantAnswer
+      typeof normalizedContext.latestAssistantAnswer === "string" && normalizedContext.latestAssistantAnswer.trim()
+        ? normalizedContext.latestAssistantAnswer
         : null;
 
     setSessionId(nextSessionId);
     setRunId(nextRunId);
-    setFileName(context.fileName || "");
+    setTraceId(nextTraceId);
+    setFileName(normalizedContext.fileName || "");
     setUploadedDatasets(nextUploadedDatasets);
-    setSelectedSourceId(context.selectedSourceId ?? null);
-    setLatestVisualizationResult(context.latestVisualizationResult ?? null);
-    setChatHistory(context.chatHistory || []);
+    setSelectedSourceId(normalizedContext.selectedSourceId ?? null);
+    setLatestVisualizationResult(normalizedContext.latestVisualizationResult ?? null);
+    setChatHistory(normalizedContext.chatHistory || []);
 
     setUploadProgress(0);
     setElapsedSeconds(0);
@@ -1616,9 +2227,15 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
     setRawLogs([]);
     setPendingApproval(nextPendingApproval);
     setErrorStep(null);
+    setPreEdaApplyErrors({});
+    setApplyingPreEdaSourceId(null);
+    setApplyingPreEdaOperationKey(null);
+    setSelectedPreEdaDistributionColumn(null);
+    setPreEdaDistributionLoading(null);
+    setPreEdaDistributionError(null);
 
     if (nextStateHint === "error") {
-      setErrorMessage(context.errorMessage ?? "세션에서 오류 상태를 복원했습니다.");
+      setErrorMessage(normalizedContext.errorMessage ?? "세션에서 오류 상태를 복원했습니다.");
     } else {
       setErrorMessage(null);
     }
@@ -1627,6 +2244,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
       setChatResponse({
         answer: latestAnswer,
         session_id: nextSessionId,
+        trace_id: nextTraceId ?? undefined,
         thought_steps: [],
       });
     } else {
@@ -1647,7 +2265,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
       setState("empty");
     }
 
-    lastQuestionRef.current = "";
+    lastQuestionRef.current = null;
     if (!(nextStateHint === "needs-user" && nextPendingApproval)) {
       completedStagesRef.current = new Set();
     }
@@ -1661,17 +2279,43 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
 
   const selectedPreEdaProfile =
     uploadedDatasets.find((item) => item.sourceId === selectedSourceId)?.preEdaProfile ?? null;
+  const selectedPreEdaApplyError =
+    selectedSourceId ? (preEdaApplyErrors[selectedSourceId] ?? null) : null;
+  const selectedApplyingPreEdaOperationKey =
+    applyingPreEdaSourceId === selectedSourceId ? applyingPreEdaOperationKey : null;
+  const isPreEdaApplying = applyingPreEdaSourceId !== null;
+  const selectedPreEdaDistributionLoadingColumn =
+    preEdaDistributionLoading?.sourceId === selectedSourceId
+      ? preEdaDistributionLoading.column
+      : null;
+  const selectedPreEdaDistributionError =
+    preEdaDistributionError?.sourceId === selectedSourceId
+    && preEdaDistributionError.column === selectedPreEdaDistributionColumn
+      ? preEdaDistributionError.message
+      : null;
 
   const reportSections: ReportSection[] = (() => {
     if (state === "ready") {
       const selected = uploadedDatasets.find((item) => item.sourceId === selectedSourceId);
+      const preEdaUnavailable = selected?.preEdaStatus === "unavailable";
       return [
         {
           type: "paragraph" as const,
-          content: selectedPreEdaProfile?.qualitySummary
+          content: preEdaUnavailable
+            ? (selected?.preEdaWarning ?? "Pre-EDA 정보를 아직 불러오지 못했습니다. Retry EDA로 다시 시도할 수 있습니다.")
+            : selectedPreEdaProfile?.qualitySummary
             ?? "업로드가 완료되었습니다. 파일을 선택한 뒤 질문하면 해당 데이터셋 기준으로 Deep EDA와 리포트가 이어집니다.",
         },
-        ...(selectedPreEdaProfile?.summaryBullets?.length
+        ...(preEdaUnavailable
+          ? [{
+              type: "checklist" as const,
+              items: [
+                "데이터셋 업로드는 정상적으로 완료되었습니다.",
+                "Pre-EDA/추천 정보만 일시적으로 unavailable 상태입니다.",
+                "Retry EDA로 같은 source의 canonical EDA endpoint를 다시 조회할 수 있습니다.",
+              ],
+            }]
+          : selectedPreEdaProfile?.summaryBullets?.length
           ? [{ type: "checklist" as const, items: selectedPreEdaProfile.summaryBullets }]
           : [
               {
@@ -1690,7 +2334,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
           { type: "paragraph" as const, content: streamingAnswer || "질문을 처리 중입니다..." },
           {
             type: "numbered-list" as const,
-            items: thoughtSteps.map((step) => step.message),
+            items: thoughtSteps.map((step) => step.displayMessage),
           },
         ];
       }
@@ -1809,9 +2453,9 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
     }
 
     const phaseLabels: Record<RunningSubPhase, string> = {
-      intake: "데이터 수집",
-      preprocessing: "자동 전처리",
-      rag: "RAG 분석",
+      intake: "질문 확인",
+      preprocessing: "데이터 준비",
+      rag: "참고 정보 확인",
       visualization: "시각화",
       report: "리포트 생성",
     };
@@ -1857,7 +2501,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
         const lastStageThought = [...thoughtSteps]
           .reverse()
           .find((step) => subPhaseToStageKey(mapThoughtPhaseToSubPhase(step.phase)) === stageId);
-        sublabel = lastStageThought?.message ?? "Processing...";
+        sublabel = lastStageThought?.displayMessage ?? "처리 중입니다.";
       } else if (completed.has(stageId) || (state === "success" && i <= currentIdx)) {
         status = "success";
       }
@@ -1924,13 +2568,15 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
 
   const derivedEvidence: EvidenceFooterProps = (() => {
     const selectedDataset = uploadedDatasets.find((item) => item.sourceId === sourceId);
-    const ragUsed = thoughtSteps.some((step) => step.phase.startsWith("rag"));
+    const ragUsed = thoughtSteps.some(
+      (step) => step.phase === "rag_retrieval" && step.displayMessage === "질문과 관련된 참고 정보를 찾았습니다.",
+    );
 
     return {
       data: selectedDataset?.fileName || "-",
       scope: uploadedDatasets.length > 0 ? `${uploadedDatasets.length} files` : "-",
       compute: `v3 · ${formatElapsed(elapsedSeconds)}`,
-      rag: ragUsed ? "ON" : "OFF",
+      rag: ragUsed ? "사용함" : "사용 안 함",
     };
   })();
 
@@ -1946,6 +2592,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
     pipelineSteps: derivedPipelineSteps,
     decisionChips: derivedDecisionChips,
     evidence: derivedEvidence,
+    thoughtSteps,
     chatHistory,
     milestones,
     history,
@@ -1954,6 +2601,11 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
     rawLogs,
     latestVisualizationResult,
     selectedPreEdaProfile,
+    selectedPreEdaApplyError,
+    selectedApplyingPreEdaOperationKey,
+    isPreEdaApplying,
+    selectedPreEdaDistributionLoadingColumn,
+    selectedPreEdaDistributionError,
 
     uploadedDatasets,
     selectedSourceId,
@@ -1966,6 +2618,9 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
     handleReject,
     handleEditInstruction,
     handleRetry,
+    retrySelectedPreEda,
+    loadSelectedPreEdaDistribution,
+    applyRecommendedOperation,
     handleSend,
     handleCancel,
     reset,

@@ -7,17 +7,20 @@ from typing import Any, Dict
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 
+from backend.app.core.trace_logging import set_trace_stage
+from backend.app.modules.planner.service import (
+    build_preprocess_decision_from_planning_result,
+)
+from backend.app.modules.planner.schemas import PlanningResult
 from backend.app.modules.preprocess.executor import execute_preprocess_plan
 from backend.app.modules.preprocess.planner import (
     PreprocessPlan,
-    build_preprocess_decision,
     build_preprocess_plan,
     build_preprocess_review_payload,
     get_revision_instruction,
 )
 from backend.app.modules.eda.service import EDAService
 from backend.app.modules.preprocess.service import PreprocessService
-from backend.app.modules.profiling.schemas import DatasetProfile
 from backend.app.orchestration.state import PreprocessGraphState
 
 
@@ -28,6 +31,7 @@ def build_preprocess_workflow(
     default_model: str = "gpt-5-nano",
 ):
     def ingestion_and_profile_node(state: PreprocessGraphState) -> Dict[str, Any]:
+        set_trace_stage("preprocess_profile")
         if state.get("dataset_profile"):
             return {}
         return {
@@ -37,13 +41,17 @@ def build_preprocess_workflow(
         }
 
     def preprocess_decision_node(state: PreprocessGraphState) -> Dict[str, Any]:
-        decision = build_preprocess_decision(
-            user_input=str(state.get("user_input", "")),
-            dataset_profile=state.get("dataset_profile", {}),
-            handoff=state.get("handoff"),
-            model_id=state.get("model_id"),
-            default_model=default_model,
-        )
+        set_trace_stage("preprocess_decision")
+        planning_result = state.get("planning_result")
+        if isinstance(planning_result, dict):
+            decision = build_preprocess_decision_from_planning_result(
+                PlanningResult.model_validate(planning_result)
+            )
+            return {"preprocess_decision": decision}
+        decision = {
+            "step": "skip_preprocess",
+            "reason_summary": "planner 결과가 없어 전처리를 생략합니다.",
+        }
         return {"preprocess_decision": decision}
 
     def route_by_decision(state: PreprocessGraphState) -> str:
@@ -51,17 +59,16 @@ def build_preprocess_workflow(
         return "run_preprocess" if step == "run_preprocess" else "skip_preprocess"
 
     def planner_node(state: PreprocessGraphState) -> Dict[str, Any]:
+        set_trace_stage("preprocess_plan")
         dataset_profile = dict(state.get("dataset_profile") or {})
         if "preprocess_recommendations" not in dataset_profile:
-            profile_model = DatasetProfile.model_validate(dataset_profile)
-            recommendations = eda_service.get_preprocess_recommendations(
+            recommendation = eda_service.get_preprocess_recommendation(
                 str(state.get("source_id") or ""),
-                profile=profile_model,
-                include_outlier_analysis=False,
+                model_id=state.get("model_id"),
             )
             dataset_profile["preprocess_recommendations"] = (
-                recommendations.model_dump().get("recommendations", [])
-                if recommendations is not None
+                [operation.model_dump() for operation in recommendation.operations]
+                if recommendation is not None
                 else []
             )
 
@@ -79,6 +86,7 @@ def build_preprocess_workflow(
         }
 
     def approval_gate_node(state: PreprocessGraphState) -> Dict[str, Any]:
+        set_trace_stage("preprocess_approval")
         plan = PreprocessPlan.model_validate(state.get("preprocess_plan") or {})
         decision = state.get("preprocess_decision") or {}
         reason_summary = decision.get("reason_summary")
@@ -125,6 +133,7 @@ def build_preprocess_workflow(
             "revision_request": {},
             "preprocess_result": {
                 "status": "cancelled",
+                "summary": "전처리 계획 검토 단계에서 실행을 취소했습니다.",
                 "applied_ops_count": 0,
             },
             "output": {
@@ -142,6 +151,7 @@ def build_preprocess_workflow(
         return "approve"
 
     def executor_node(state: PreprocessGraphState) -> Dict[str, Any]:
+        set_trace_stage("preprocess_execute")
         return execute_preprocess_plan(
             source_id=str(state.get("source_id") or "") or None,
             preprocess_plan=state.get("preprocess_plan"),
@@ -151,7 +161,14 @@ def build_preprocess_workflow(
         )
 
     def skip_node(_: PreprocessGraphState) -> Dict[str, Any]:
-        return {"preprocess_result": {"status": "skipped", "applied_ops_count": 0}}
+        set_trace_stage("preprocess_skip")
+        return {
+            "preprocess_result": {
+                "status": "skipped",
+                "summary": "전처리 없이 다음 단계로 진행했습니다.",
+                "applied_ops_count": 0,
+            }
+        }
 
     def cancel_node(_: PreprocessGraphState) -> Dict[str, Any]:
         return {}

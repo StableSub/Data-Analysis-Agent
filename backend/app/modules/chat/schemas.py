@@ -18,12 +18,7 @@ class ChatRequest(BaseModel):
     session_id: Optional[int] = Field(default=None, description="Existing chat session identifier.")
     model_id: Optional[str] = Field(default=None, description="Optional model identifier.")
     source_id: Optional[str] = Field(default=None, description="Optional dataset source identifier.")
-
-
-class ChatThoughtStep(BaseModel):
-    phase: str
-    message: str
-    status: str = "completed"
+    trace_id: Optional[str] = Field(default=None, description="Optional trace identifier for request logging.")
 
 
 class PendingApproval(BaseModel):
@@ -37,18 +32,11 @@ class PendingApproval(BaseModel):
     review: dict[str, Any] = Field(default_factory=dict)
 
 
-class ChatResponse(BaseModel):
-    answer: str
-    session_id: int
-    run_id: Optional[str] = None
-    thought_steps: List[ChatThoughtStep] = Field(default_factory=list)
-    pending_approval: Optional[PendingApproval] = None
-
-
 class ResumeRunRequest(BaseModel):
     decision: Literal["approve", "revise", "cancel"]
     stage: Literal["preprocess", "visualization", "report"]
     instruction: Optional[str] = None
+    trace_id: Optional[str] = None
 
 
 class PendingApprovalResponse(BaseModel):

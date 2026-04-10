@@ -8,6 +8,7 @@ from .schemas import (
     ManualVizRequest,
     ManualVizResponse,
     VisualizationFromAnalysisRequest,
+    VisualizationFromAnalysisResponse,
 )
 from .service import VisualizationService
 
@@ -38,7 +39,7 @@ async def create_manual_visualization(
     return result
 
 
-@router.post("/from-analysis")
+@router.post("/from-analysis", response_model=VisualizationFromAnalysisResponse)
 async def create_visualization_from_analysis(
     request: VisualizationFromAnalysisRequest,
     service: VisualizationService = Depends(get_visualization_service),
@@ -49,6 +50,9 @@ async def create_visualization_from_analysis(
         raise HTTPException(status_code=404, detail="analysis result not found")
     if not result.analysis_plan_json:
         raise HTTPException(status_code=422, detail="analysis plan is missing")
+    source_id = results_repository.resolve_analysis_result_source_id(result)
+    if source_id is None:
+        raise HTTPException(status_code=422, detail="analysis result source is missing")
 
     analysis_plan = AnalysisPlan.model_validate(result.analysis_plan_json)
     analysis_result = AnalysisExecutionResult(
@@ -70,7 +74,7 @@ async def create_visualization_from_analysis(
     )
 
     visualization_result = service.build_from_analysis_result(
-        source_id=str(result.id),
+        source_id=source_id,
         analysis_plan=analysis_plan,
         analysis_result=analysis_result,
     )
