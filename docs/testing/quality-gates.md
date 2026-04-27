@@ -1,95 +1,138 @@
 # 품질 게이트
 
-## 문서 목적
+## 목적
 
-이 문서는 코드·문서 변경을 merge하거나 발표 자료 근거로 사용할 수 있는 최소 품질 게이트를 정의한다.
-현재 저장소에 존재하는 검증 수단만 기준으로 하며, 존재하지 않는 CI/lint/typecheck 체계를 가정하지 않는다.
+이 문서는 캡스톤 발표 전까지 팀이 PR, 데모 준비, 발표 리허설 전에 확인해야 할 최소 품질 게이트를 정리한다.
+현재 repository의 실제 스크립트와 테스트 존재 여부를 기준으로 작성하며, 존재하지 않는 lint/check-types/CI를 통과했다고 주장하지 않는다.
 
-## 현재 기준 검증 수단
+## 공통 원칙
 
-| 범위 | 목적 | 현재 기준 명령 | 비고 |
-| --- | --- | --- | --- |
-| 문서/아키텍처 | 링크, 코드 경로, API route drift 확인 | `PYTHONPATH=. pytest -q backend/tests/test_architecture_docs.py backend/tests/test_docs_harness.py` | docs 변경 시 기본 게이트 |
-| 프론트엔드 | 타입 포함 번들 수준 검증 | `npm --prefix frontend run build` | 별도 lint/typecheck script는 현재 없음 |
-| 백엔드 | 변경 영역 회귀 확인 | 관련 `pytest` 대상 명령 | 수정한 모듈 기준으로 선택 실행 |
-| diff 위생 | 공백/충돌/patch 이상 확인 | `git diff --check` | 모든 변경 공통 |
+- 품질 게이트는 "좋아 보인다"가 아니라 "실제로 확인했다"를 요구한다.
+- 명령이 없으면 없다고 적고, 대체 수동 점검을 정의한다.
+- 기능 변경과 문서 변경은 같은 수준의 검증 책임을 가진다.
 
-## 변경 유형별 필수 게이트
+## 현재 repo 기준 확인된 검증 수단
 
-### 1. 문서만 수정한 경우
+### 문서/아키텍처
 
-- [ ] `git diff --check`
-- [ ] `PYTHONPATH=. pytest -q backend/tests/test_architecture_docs.py backend/tests/test_docs_harness.py`
-- [ ] 문서 안 링크와 코드 경로 수동 확인
+```bash
+PYTHONPATH=. pytest -q backend/tests/test_architecture_docs.py backend/tests/test_docs_harness.py
+```
 
-### 2. 프론트엔드 포함 변경
+### 프론트엔드
 
-- [ ] 문서 게이트(해당 시)
-- [ ] `git diff --check`
-- [ ] `npm --prefix frontend run build`
-- [ ] 변경 화면 수동 확인 또는 스크린샷 증빙
+```bash
+npm --prefix frontend run build
+```
 
-### 3. 백엔드 포함 변경
+- `frontend/package.json`에는 현재 `dev`, `build`만 있다.
+- 별도 `lint`, `check-types` 스크립트는 현재 없다.
 
-- [ ] 문서 게이트(해당 시)
-- [ ] `git diff --check`
-- [ ] 관련 `pytest` 실행
-- [ ] API/상태 계약 변경 시 architecture 문서 동시 갱신
+### 백엔드 회귀 확인에 자주 쓰는 명령
+
+```bash
+PYTHONPATH=. pytest -q backend/tests/test_main_workflow_analysis_happy_path.py
+PYTHONPATH=. pytest -q backend/tests/test_analysis_planning_accuracy_guards.py backend/tests/test_planner_analysis_accuracy_guards.py
+```
+
+## 변경 유형별 게이트
+
+## 1. 문서만 수정한 경우
+
+필수:
+
+- [ ] 맞춤법/용어/링크를 직접 읽어 확인했다.
+- [ ] 코드 기준 문서라면 관련 구현 경로를 다시 확인했다.
+- [ ] 아래 명령을 실행했다.
+
+```bash
+PYTHONPATH=. pytest -q backend/tests/test_architecture_docs.py backend/tests/test_docs_harness.py
+```
+
+추가 수동 점검:
+
+- [ ] 발표 슬라이드에서 그대로 인용해도 오해가 없는 문장인지 확인했다.
+- [ ] "예정", "추후", "TODO" 같은 placeholder 표현이 남아 있지 않다.
+
+## 2. 프론트엔드 변경이 포함된 경우
+
+필수:
+
+- [ ] `npm --prefix frontend run build` 성공
+- [ ] SSE/approval UI 변경이면 관련 문서 영향 확인
+- [ ] 화면에서 핵심 흐름 1회 이상 수동 확인
+
+수동 확인 항목:
+
+- [ ] dataset 선택/질문 입력/응답 표시가 깨지지 않는다.
+- [ ] approval card가 있는 경우 상태 문구가 맞다.
+- [ ] 데모에서 사용할 브라우저 크기에서 레이아웃이 무너지지 않는다.
+
+## 3. 백엔드/워크플로우 변경이 포함된 경우
+
+필수:
+
+- [ ] 관련 pytest 실행
+- [ ] 변경된 API route, payload, status code 영향 확인
+- [ ] SSE event나 approval/resume 계약 변경 여부 확인
+
+수동 확인 항목:
+
+- [ ] happy path 1개 이상 재현
+- [ ] 대표 실패 path 1개 이상 재현 또는 로그로 검토
+- [ ] 문서 drift 여부 확인
 
 ## PR 리뷰 게이트
 
-PR은 아래 질문에 모두 답할 수 있어야 한다.
+PR을 merge 후보로 올리기 전, 작성자와 리뷰어는 아래를 모두 만족해야 한다.
 
-1. **왜 바꿨는가?**
-2. **무엇을 검증했는가?**
-3. **어떤 리스크가 남았는가?**
-4. **발표 자료/데모에 영향이 있는가?**
+### 작성자 체크리스트
 
-### PR 본문 필수 항목
+- [ ] 변경 목적이 제목/설명에서 한 문장으로 드러난다.
+- [ ] scope 밖 수정이 있으면 이유를 적었다.
+- [ ] 실행한 검증 명령과 결과를 적었다.
+- [ ] 미실행 검증이 있으면 왜 못 했는지 적었다.
+- [ ] 발표 데모나 문서에 영향이 있으면 명시했다.
 
-- 변경 목적 한 줄
-- 변경 파일 범주
-- 실행한 검증 명령과 결과
-- 남은 리스크 또는 미검증 항목
-- 발표 영향도
+### 리뷰어 체크리스트
 
-## 리뷰 차단 조건
+- [ ] 주장한 검증이 실제 repo 상황과 모순되지 않는다.
+- [ ] 문서가 runtime 사실을 잘못 단정하지 않는다.
+- [ ] naming, ownership, rollback 가능성이 수용 가능하다.
+- [ ] "나중에 고치자"식 리스크가 발표 직전 치명적이지 않은지 확인했다.
 
-아래 항목 중 하나라도 해당하면 merge하지 않는다.
+## 발표 리허설 게이트
 
-- 검증 명령이 없거나 실행 결과가 빠져 있다.
-- 존재하지 않는 lint/typecheck/CI를 통과했다고 적었다.
-- architecture/API 문서가 코드와 어긋난다.
-- benchmark 수치의 출처가 없다.
-- 데모 경로 변경인데 발표 담당 확인이 없다.
+발표 전날과 당일 오전에는 기능 단위가 아니라 데모 흐름 단위로 확인한다.
 
-## 발표 전 최종 게이트
+- [ ] 데모 데이터셋이 준비되어 있다.
+- [ ] 일반 질문, 분석 질문, approval 흐름 중 최소 2개가 재현 가능하다.
+- [ ] 발표자가 사용할 설명 문장이 현재 구현과 맞다.
+- [ ] 실패 시 대체 시나리오가 있다.
+- [ ] 핵심 지표/한계/향후 계획 답변이 문서와 일치한다.
 
-### H-24 체크
+## 실패 처리 규칙
 
-- [ ] 데모에 쓸 브랜치와 커밋을 고정했다.
-- [ ] 발표 자료의 시스템 설명이 `docs/architecture/*`와 일치한다.
-- [ ] benchmark/정확도 수치가 `./benchmark-spec.md` 기준 출처를 가진다.
-- [ ] 예상 질문(정확도, 실패 처리, 승인 흐름)에 대한 근거 파일을 준비했다.
+품질 게이트에서 하나라도 실패하면 다음 중 하나를 택한다.
 
-### H-1 체크
+1. 즉시 수정 후 재검증
+2. 발표 범위에서 제외
+3. 알려진 한계로 문서화하고 데모 경로에서 제거
 
-- [ ] 데모 핵심 시나리오를 실제로 다시 실행했다.
-- [ ] SSE 진행, 승인 카드, 완료/오류 흐름을 확인했다.
-- [ ] 최신 변경이 발표 메시지를 깨지 않는지 확인했다.
+"시간이 없어서 일단 merge"는 발표 직전일수록 금지한다.
 
-## 권장 증빙 포맷
+## PASS 보고 템플릿
 
 ```text
-Verification:
-- PASS | git diff --check
-- PASS | PYTHONPATH=. pytest -q backend/tests/test_architecture_docs.py backend/tests/test_docs_harness.py
-- PASS | npm --prefix frontend run build
-- NOTE | docs-only change, no backend runtime logic modified
+변경 범위:
+실행 명령:
+- [PASS/FAIL] <command>
+수동 확인:
+남은 리스크:
 ```
 
-## 팀 운영 팁
+## 현재 시점의 명시적 제한
 
-- 문서 PR도 코드 PR처럼 검증 로그를 남긴다.
-- 발표 직전에는 “좋아 보인다”보다 “다시 실행했다”를 우선한다.
-- 실패한 검증은 숨기지 말고, 원인과 우회 여부를 함께 기록한다.
+- 현재 repo에는 프론트엔드 lint/check-types 전용 스크립트가 없다.
+- 이 문서는 CI 파이프라인 존재를 전제하지 않는다.
+- 따라서 품질 게이트는 로컬 명령 + 수동 검토 + 문서 일치성 확인을 기준으로 운영한다.
