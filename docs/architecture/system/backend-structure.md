@@ -5,6 +5,14 @@
 이 문서는 백엔드 모듈 구조와 각 모듈의 역할을 설명한다.
 현재 기준의 백엔드 구현 구조를 기준으로 정리하며, 기획, 프론트엔드, 백엔드가 함께 참고할 수 있도록 쉬운 언어로 설명한다.
 
+현재 구조는 데이터 분석 AI Agent 런타임 기준이다. `chat`, `orchestration`, `datasets`, `eda`, `analysis`, `preprocess`, `visualization`, `rag`, `guidelines`, trace/logging은 모두 현재 제품 기능을 구성하는 주요 영역으로 본다.
+
+## 갱신 기준
+
+- 기준 코드: `backend/app/main.py`, `backend/app/modules/`, `backend/app/orchestration/`
+- 검증 테스트: `backend/tests/test_docs_harness.py`, `backend/tests/test_architecture_docs.py`
+- 갱신 트리거: module family 추가/삭제, public router mount 변경, orchestration 책임 변경, 내부 support module 책임 변경
+
 ## 백엔드 구조 개요
 
 현재 백엔드는 크게 아래 세 축으로 나뉜다.
@@ -141,7 +149,7 @@ planner와 분석 단계의 입력 준비를 지원한다.
 - `client`: Agent 실행 인터페이스
 - `intake_router`: 최상위 질문 분기
 - `workflows/*`: preprocess, analysis, rag, guideline, visualization, report
-- `state`, `state_view`, `utils`: 공통 상태와 보조 로직
+- `state`, `utils`: 공통 상태와 보조 로직
 
 즉, 실제 AI Agent 실행은 하나의 모델 호출이 아니라, 이 orchestration 계층이 여러 도메인 모듈을 연결해 만들어 내는 흐름이다.
 
@@ -187,15 +195,15 @@ planner와 분석 단계의 입력 준비를 지원한다.
 프론트엔드 요청은 주로 `chat` 또는 `datasets` 같은 공개 API 모듈로 들어온다.
 그중에서도 `chat` 모듈은 AgentClient와 orchestration을 연결하는 중심 진입점 역할을 한다.
 
-이후 orchestration은 planner와 각 도메인 모듈을 조합해 실행 흐름을 만든다.
+이후 orchestration은 intake routing, preprocess, analysis, RAG, guideline, visualization, report 계층과 각 도메인 모듈을 조합해 실행 흐름을 만든다.
 즉, 질문 하나가 바로 분석 모듈로 가는 것이 아니라, orchestration이 중간에서 route를 정하고 필요한 모듈을 연결한다.
 
-또한 `datasets`, `profiling`, `planner`, `analysis`, `visualization`, `reports`, `results`는 각각 독립된 책임을 가지면서도 하나의 분석 흐름 안에서 연결된다.
+또한 `datasets`, `profiling`, `analysis`, `preprocess`, `visualization`, `reports`, `results`는 각각 독립된 책임을 가지면서도 하나의 분석 흐름 안에서 연결된다.
 여기서 중요한 점은 시간 순서보다도, 어떤 모듈이 어떤 역할을 맡고 어떤 계층에서 협력하는지를 이해하는 것이다.
 
 ## 이 문서를 읽는 방법
 
 이 문서는 백엔드 전체 구조를 알고 싶을 때 읽는 문서다.
-질문의 시간 순서 흐름은 `시스템 플로우 개요`, 큰 박스 구조는 `시스템 아키텍처`, 요청 단위 설명은 `API 개요 및 명세` 문서로 이어서 보면 된다.
+질문의 시간 순서 흐름은 `../request-lifecycle.md`, 공유 state 계약은 `../shared-state.md`, 요청 단위 설명은 `api-spec.md` 문서로 이어서 보면 된다.
 
-더 깊은 실행 로직이나 AI 중심 흐름은 이후 `AI Agent` 문서에서 보는 것이 적합하다.
+더 깊은 실행 로직은 `../components/` 문서와 `../ai-agent/trace-and-logging.md`에서 보는 것이 적합하다.

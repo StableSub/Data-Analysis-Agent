@@ -1,7 +1,7 @@
 # 데이터 분석 AI Agent — 프로젝트 이슈 분석 보고서
 
 > 작성일: 2026-04-13  
-> 분석 범위: `docs/reference/capstone-presentation-analysis.md` + 현재 코드베이스  
+> 분석 범위: `docs/reference/presentation-ai-analysis.md` + 현재 코드베이스  
 > 분석 방식: 백엔드 AI 로직 에이전트 + 프론트엔드/통합 에이전트 병렬 분석  
 
 ---

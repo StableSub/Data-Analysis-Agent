@@ -1,4 +1,4 @@
-# 백엔드 정확성 감사: 선택 데이터셋 기반 질문 흐름
+# 선택 데이터셋 QA 감사
 
 ## 문서 목적
 
@@ -36,7 +36,7 @@ selected dataset request
 - `builder.py`에는 `planner` node가 없다.
 - `builder.py`에는 `dataset_lookup_terminal`이 없다.
 - `state.py`에는 문서에서 설명하는 `planning_result`, `dataset_context`, `answer_context` 필드가 없다.
-- `docs/architecture/request-lifecycle.md`, `components/main-workflow.md`, `components/planner.md`, `shared-state.md`는 현재 런타임보다 더 진보된 구조를 설명하고 있다.
+- 과거 architecture 문서 일부는 현재 런타임보다 더 진보된 planner 중심 구조를 설명하고 있었다.
 
 즉, 현재 브랜치는 **문서상 planner 중심 구조가 아니라, intake에서 coarse intent를 만든 뒤 preprocess/analysis/rag로 바로 들어가는 구조**다.
 

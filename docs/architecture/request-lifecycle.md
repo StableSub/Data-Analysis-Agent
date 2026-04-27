@@ -2,6 +2,12 @@
 
 이 문서는 사용자 질문이 메인 워크플로우 안에서 어떤 순서로 처리되는지를 설명한다. 현재 브랜치의 실제 런타임 분기 기준 코드는 `backend/app/orchestration/builder.py`와 `backend/app/orchestration/intake_router.py`다.
 
+## 갱신 기준
+
+- 기준 코드: `backend/app/orchestration/builder.py`, `backend/app/orchestration/intake_router.py`
+- 검증 테스트: `backend/tests/test_architecture_docs.py`, `backend/tests/test_docs_harness.py`
+- 갱신 트리거: workflow node/edge, terminal output type, `handoff.next_step`, `ask_*` branch 조건, no-dataset/dataset-selected 분기 변경
+
 ## 관련 노트
 
 - [[architecture/README|아키텍처 문서 안내]]
@@ -11,7 +17,6 @@
 - [[architecture/components/rag|RAG 컴포넌트]]
 - [[architecture/components/visualization|Visualization 컴포넌트]]
 - [[architecture/components/report|Report 컴포넌트]]
-- [[architecture/ai-agent/backend-accuracy-audit|선택 데이터셋 질문 정확성 감사]]
 
 ## 상위 흐름
 
@@ -62,6 +67,20 @@ flowchart TD
 - `intake_flow`는 `source_id` 존재 여부를 먼저 보고 no-dataset / dataset-selected를 나눈다.
 - no-dataset이면 `general_question` 또는 `clarification`으로 끝난다.
 - dataset-selected면 `analyze_intent(...)` 결과를 바탕으로 `handoff.next_step = "data_pipeline"`과 `ask_preprocess`, `ask_analysis`, `ask_visualization`, `ask_report`, `ask_guideline` 플래그를 만든다.
+
+## Planner 용어 정리
+
+현재 런타임에는 독립적인 `planner` node나 별도 planner 컴포넌트가 없다.
+문서에서 planner라고 부르는 판단은 실제 코드에서는 아래 위치에 나뉘어 있다.
+
+- 최상위 route 판단: `backend/app/orchestration/intake_router.py`
+- workflow 분기 계약: `handoff` 필드
+- 분석 실행 계획 확정: `backend/app/orchestration/workflows/analysis.py`
+- 전처리/시각화/리포트 승인 계획: 각 workflow 내부 planner 또는 draft 단계
+
+따라서 architecture 문서에서 우선 확인할 계약은 planner 문서가 아니라 `request-lifecycle.md`, `shared-state.md`, `components/main-workflow.md`다.
+
+이 섹션은 독립적인 planner 문서가 아니라 현재 코드의 분산된 planning 책임을 설명한다. `intake_router.py`, analysis workflow planning 단계, preprocess/visualization/report approval planning이 바뀌면 이 용어 정리를 함께 갱신한다.
 
 ### 3. preprocess 선행 경로
 

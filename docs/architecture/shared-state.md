@@ -2,6 +2,12 @@
 
 이 문서는 메인 워크플로우와 서브그래프가 공통으로 사용하는 핵심 state 필드를 설명한다. 현재 상태 계약의 기준 코드는 `backend/app/orchestration/state.py`다.
 
+## 갱신 기준
+
+- 기준 코드: `backend/app/orchestration/state.py`, `backend/app/orchestration/builder.py`, `backend/app/orchestration/client.py`
+- 검증 테스트: `backend/tests/test_architecture_docs.py`, `backend/tests/test_docs_harness.py`
+- 갱신 트리거: state key 추가/삭제/rename, `pending_approval` shape 변경, `output.type` 변경, `merged_context` 입력 변경, SSE-facing payload 변경
+
 ## 관련 노트
 
 - [[architecture/README|아키텍처 문서 안내]]
@@ -10,7 +16,6 @@
 - [[architecture/components/analysis|Analysis 컴포넌트]]
 - [[architecture/components/visualization|Visualization 컴포넌트]]
 - [[architecture/components/report|Report 컴포넌트]]
-- [[architecture/ai-agent/backend-accuracy-audit|선택 데이터셋 질문 정확성 감사]]
 
 ## 상태 계약의 역할
 
@@ -177,6 +182,13 @@
 - `visualization_result`, `report_result`, `data_qa_result`, `output`
   - 최종 응답 구성 단계 표현
   - 시각화 결과는 `renderer`, `vega_lite_spec`, legacy `chart/chart_data`, `artifact`를 함께 가질 수 있다
+
+## freshness 체크리스트
+
+- [ ] `state.py`의 `AgentState`, `MainWorkflowState`, subgraph state key와 이 문서의 핵심 필드가 어긋나지 않는다.
+- [ ] `builder.py`의 `merge_context` 입력이 `merged_context` 설명에 반영되어 있다.
+- [ ] `client.py`가 읽는 approval/output payload와 이 문서의 사용자-facing 상태 설명이 맞다.
+- [ ] 새 terminal `output.type`이 추가되면 종료 상태와 API/SSE 문서를 함께 갱신했다.
 
 ## 관련 구현 위치
 

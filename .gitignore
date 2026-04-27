@@ -34,6 +34,8 @@ coverage/
 *.tsbuildinfo
 .eslintcache
 tests/
+!backend/tests/
+!backend/tests/**
 
 # Uploaded / generated data
 storage/
@@ -43,6 +45,10 @@ backend/uploads/
 *.sqlite
 *.sqlite3
 *.db
+.graphify_python
+.graphify_*
+**/graphify-out/*
+!graphify-out/
 
 # Logs & temps
 *.log
@@ -59,9 +65,15 @@ pnpm-debug.log*
 dev.sh
 
 AGENTS.md
+!AGENTS.md
+!**/AGENTS.md
 graph_outputs/
 .omc/
+docs/.obsidian/
 CLAUDE.md
 # Claude workspace
 .claude/
 
+# Codex local workspace
+.codex/
+.agents/
