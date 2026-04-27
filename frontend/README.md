@@ -1,11 +1,10 @@
 
-  # Gen-UI Workbench Design
+  # Gen-UI Workbench 디자인
 
-  This is a code bundle for Gen-UI Workbench Design. The original project is available at https://www.figma.com/design/R9KnSB4hSGDhxkZcv56UkJ/Gen-UI-Workbench-Design.
+  이 디렉터리는 Gen-UI Workbench 디자인에서 가져온 코드 번들이다. 원본 프로젝트는 https://www.figma.com/design/R9KnSB4hSGDhxkZcv56UkJ/Gen-UI-Workbench-Design 에서 확인할 수 있다.
 
-  ## Running the code
+  ## 코드 실행
 
-  Run `npm i` to install the dependencies.
+  의존성을 설치하려면 `npm i`를 실행한다.
 
-  Run `npm run dev` to start the development server.
-  
+  개발 서버를 시작하려면 `npm run dev`를 실행한다.
