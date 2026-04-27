@@ -2,184 +2,178 @@
 
 ## 문서 목적
 
-이 문서는 현재 FastAPI public API와 채팅 SSE 스트림에서 관찰되는 오류 계약을 팀 관점에서 빠르게 확인할 수 있도록 정리한다.
-상세 route 목록은 `api-spec.md`를 기준으로 보고, 여기서는 상태 코드·오류 payload·SSE error 이벤트의 운영 의미를 집중해서 정리한다.
+이 문서는 현재 채팅 스트리밍 경로에서 프론트엔드가 기대하는 SSE 이벤트와 오류 처리 계약을 정리한다.
+기준 코드는 `backend/app/modules/chat/router.py`, `backend/app/modules/chat/service.py`, `backend/app/orchestration/client.py`, `frontend/src/app/hooks/useAnalysisPipeline.ts`다.
 
-## 기준 구현 위치
+## 범위
 
-- `backend/app/modules/chat/router.py`
-- `backend/app/modules/chat/service.py`
-- `backend/app/modules/chat/schemas.py`
-- `backend/app/orchestration/client.py`
-- `frontend/src/lib/api.ts`
+- `POST /chats/stream`
+- `POST /chats/{session_id}/runs/{run_id}/resume`
+- `GET /chats/{session_id}/runs/{run_id}/pending-approval`
+- 스트리밍 중 `error` 이벤트
 
-## 이 문서가 답하는 질문
+## 전송 형식
 
-- HTTP API는 오류를 어떤 형태로 돌려주는가?
-- SSE stream은 실패를 어떻게 알리는가?
-- approval/resume 흐름에서 404와 SSE error를 어떻게 구분해야 하는가?
-- 프론트엔드와 발표 설명에서 무엇을 사실로 말할 수 있는가?
+백엔드는 `_format_sse()`에서 아래 형식으로 이벤트를 직렬화한다.
 
-## 공통 HTTP 오류 계약
+```text
+event: <name>
+data: <json>
+```
 
-현재 일반 JSON API는 FastAPI `HTTPException` 기본 형태를 사용한다.
-실패 시 프론트엔드는 `frontend/src/lib/api.ts`의 `apiRequest()`에서 응답 JSON의 `detail` 값을 읽어 `ApiError(status, message)`로 변환한다.
-
-정리하면 현재 계약은 다음과 같다.
-
-- 성공
-  - `2xx` + JSON body 또는 `204 No Content`
-- 실패
-  - `4xx/5xx` + JSON body의 `detail` 필드
-- 프론트엔드 소비 방식
-  - `res.ok === false`이면 `detail` 또는 `statusText`를 메시지로 사용
-
-## SSE 계약 개요
-
-`POST /chats/stream`, `POST /chats/{session_id}/runs/{run_id}/resume`는 `text/event-stream` 응답을 반환한다.
-현재 router는 event 이름과 payload를 직접 문자열로 포맷한다.
-
-헤더:
+응답 헤더는 다음 값을 사용한다.
 
 - `Cache-Control: no-cache`
 - `Connection: keep-alive`
 - `X-Accel-Buffering: no`
+- `Content-Type: text/event-stream`
 
-주요 이벤트 이름:
+## 이벤트 순서 계약
 
-- `session`
-- `thought`
-- `chunk`
-- `approval_required`
-- `done`
-- `error`
+### 질문 시작 (`POST /chats/stream`)
 
-## SSE 이벤트별 계약
+정상 흐름의 기본 순서:
+
+1. `session`
+2. 0개 이상의 `thought`
+3. `chunk` 반복 **또는** `approval_required`
+4. 승인 없는 경우 최종 `done`
+
+### 승인 후 재개 (`POST /chats/{session_id}/runs/{run_id}/resume`)
+
+기본 순서:
+
+1. `session`
+2. 0개 이상의 `thought`
+3. `chunk` 반복 **또는** 다시 `approval_required`
+4. 최종 `done`
+
+## 이벤트별 payload
 
 ### `session`
 
-초기 세션/실행 식별자 전달용 이벤트다.
+```json
+{ "session_id": 123, "run_id": "<hex>" }
+```
 
-주요 필드:
-- `session_id`
-- `run_id`
+- `session_id`는 정수다.
+- `run_id`는 문자열이다.
+- 프론트엔드는 이 값을 이후 `pending-approval`, `resume`, `history` 복원 키로 사용한다.
 
 ### `thought`
 
-중간 진행 상태를 나타낸다.
+```json
+{ "phase": "analysis", "message": "...", "status": "completed|active" }
+```
 
-주요 필드:
-- `phase`
-- `message`
-- `status`
+- `phase`, `message`는 문자열이다.
+- 프론트엔드는 진행 로그와 단계 UI를 갱신한다.
 
 ### `chunk`
 
-최종 답변 텍스트를 부분 전송한다.
+```json
+{ "delta": "부분 응답" }
+```
 
-주요 필드:
-- `delta`
+- `delta`는 누적해서 최종 answer를 구성한다.
 
 ### `approval_required`
 
-실행이 사용자 승인 단계에서 멈췄음을 뜻한다.
-오류가 아니라 **정상적인 중단 상태**다.
+```json
+{
+  "session_id": 123,
+  "run_id": "<hex>",
+  "pending_approval": {
+    "stage": "preprocess|visualization|report",
+    "kind": "plan_review|draft_review",
+    "title": "...",
+    "summary": "...",
+    "source_id": "...",
+    "plan": {},
+    "draft": "",
+    "review": {}
+  },
+  "thought_steps": []
+}
+```
 
-주요 필드:
-- `session_id`
-- `run_id`
-- `pending_approval`
-- `thought_steps`
+현재 stage 의미:
+
+- `preprocess`: 전처리 계획 승인 대기
+- `visualization`: 시각화 계획 승인 대기
+- `report`: 리포트 초안 검토 대기
+
+프론트엔드 동작:
+
+- 상태를 `needs-user`로 전환
+- `pendingApproval`을 저장
+- `resumeRun(decision, stage, instruction)` 호출 전까지 스트림 종료로 간주
 
 ### `done`
 
-정상 종료 이벤트다.
+```json
+{
+  "answer": "최종 응답",
+  "session_id": 123,
+  "run_id": "<hex>",
+  "thought_steps": [],
+  "preprocess_result": {},
+  "visualization_result": {},
+  "output_type": "...",
+  "output": {}
+}
+```
 
-주요 필드:
-- `answer`
-- `session_id`
-- `run_id`
-- `thought_steps`
-- 선택 필드: `preprocess_result`, `visualization_result`, `output_type`, `output`
+- `answer`가 비어 있으면 backend가 `응답을 생성하지 못했습니다.`로 보정한다.
+- `visualization_result`는 status가 `generated`일 때만 포함될 수 있다.
+- `output`은 orchestration 최종 payload를 전달할 때만 포함된다.
 
 ### `error`
 
-router 수준 예외를 SSE 프레임으로 감싼 이벤트다.
-현재 payload는 단순하다.
+```json
+{ "message": "오류 메시지" }
+```
 
-주요 필드:
-- `message`
+현재 구현 특성:
 
-중요한 점:
-- 현재 `error` 이벤트는 구조화된 에러 코드가 없다.
-- HTTP status를 이미 보낸 뒤 스트림 내부에서 예외가 발생하면, 클라이언트는 status code 대신 SSE `error` 이벤트를 받는다.
-- 따라서 발표에서는 "스트림 실패 시 세분화된 에러 taxonomy가 완비돼 있다"고 말하면 안 된다.
+- 구조화된 `code`, `stage`, `retryable` 필드는 없다.
+- 예외가 발생하면 router가 `str(exc)`만 담아 `error` 이벤트를 보낸다.
+- 프론트엔드는 이 이벤트를 받으면 `Error`를 throw하고 `state="error"` 경로로 이동한다.
 
-## approval / resume 관련 오류 구분
+## HTTP 오류 계약
 
-### 1. `GET /chats/{session_id}/runs/{run_id}/pending-approval`
+### `GET /chats/{session_id}/runs/{run_id}/pending-approval`
 
-- 승인 대기 상태가 없으면 `404`
-- detail: `pending approval not found`
+- pending approval이 없으면 `404` + `detail="pending approval not found"`
 
-이 경우는 "실행 실패"가 아니라 "현재 재개할 승인 상태가 없음"에 가깝다.
+### `GET /chats/{session_id}/history`
 
-### 2. `POST /chats/{session_id}/runs/{run_id}/resume`
+- session이 없으면 `404` + `detail="세션을 찾을 수 없습니다."`
 
-- 세션이 없으면 스트림 내부에서 예외가 발생해 SSE `error` 이벤트로 전달될 수 있다.
-- router에서 별도 `HTTPException`으로 세분화하지 않는다.
+### `DELETE /chats/{session_id}`
 
-즉 현재 resume 경로는 일부 오류가 HTTP status가 아니라 SSE `error.message`로만 노출될 수 있다.
+- session이 없으면 `404` + `detail="세션을 찾을 수 없습니다."`
+- 존재하면 `204 No Content`
 
-## 주요 REST API 오류 패턴 요약
+## 프론트엔드 의존 포인트
 
-| 영역 | 대표 상태 코드 | 의미 |
-|---|---:|---|
-| `datasets` | `400`, `404`, `500` | 파일명 누락, 데이터셋 없음, 업로드 실패 |
-| `eda` | `400`, `404`, `422` | 잘못된 분포 요청, 데이터 없음, 지원 불가 요청 |
-| `analysis` | `400`, `404`, `500` | 잘못된 실행 입력, 소스 없음, 내부 실행 실패 |
-| `preprocess` | `400`, `404` | 잘못된 연산 또는 소스 없음 |
-| `vizualization` | `400`, `404`, `422`, `500` | 잘못된 컬럼, 데이터 없음, 내부 실패 |
-| `rag` | `204`, `404`, `500` | 결과 없음, 인덱스 없음, 임베딩/검색 실패 |
-| `guidelines` | `400`, `404`, `500` | PDF 검증 실패, 대상 없음, 업로드/임베딩 실패 |
-| `report` | `404`, `500` | 세션/리포트 없음, 생성 실패 |
-| `export` | `404` | 결과 없음 |
-| `chats` 일반 조회/삭제 | `404` | 세션 또는 pending approval 없음 |
+`frontend/src/app/hooks/useAnalysisPipeline.ts`는 다음 가정을 둔다.
 
-## 프론트엔드 해석 계약
+- `session` 이벤트가 먼저 와서 `session_id`, `run_id`를 세팅한다
+- `approval_required.pending_approval`은 parse 가능한 객체다
+- `done.answer` 또는 누적 `chunk`로 최종 답을 복원할 수 있다
+- `error.message`는 사용자에게 보여줄 수 있는 문자열이다
 
-`frontend/src/lib/api.ts` 기준으로 현재 프론트엔드의 해석 규칙은 다음과 같다.
+따라서 SSE 이름이나 핵심 필드명(`session_id`, `run_id`, `pending_approval`, `delta`, `answer`, `message`)을 바꾸면 프론트엔드와 문서를 함께 수정해야 한다.
 
-- JSON API 실패는 `ApiError.status`, `ApiError.message`로 소비한다.
-- `204`는 `undefined` 응답으로 처리한다.
-- SSE는 HTTP JSON 오류 래퍼가 아니라 event name 기반으로 처리한다.
-- 따라서 동일한 "실패"라도 일반 API와 스트림 API의 클라이언트 처리 방식이 다르다.
+## 검토 체크리스트
 
-## 팀 운영 가이드
+- [ ] 새 SSE event를 추가했다면 프론트엔드 parser를 함께 수정했는가
+- [ ] 오류 payload에 새 필드를 추가했다면 backward compatibility를 확인했는가
+- [ ] `approval_required` shape 변경 시 `pending-approval` GET 응답도 같은 shape를 유지하는가
+- [ ] 발표에서 “오류 분류 체계”를 말할 때 현재는 message 중심 계약임을 분명히 했는가
 
-### 문서/발표에서 안전하게 말할 수 있는 표현
+## 발표용 framing
 
-- "채팅 실행과 재개는 SSE 스트림으로 상태를 전달한다."
-- "승인 대기는 별도 `approval_required` 이벤트와 pending approval 조회 API로 관리한다."
-- "일반 REST API 오류는 HTTP status와 `detail` 메시지로 전달한다."
-- "스트림 내부 예외는 현재 `error` 이벤트의 메시지 중심으로 노출된다."
-
-### 과장하면 안 되는 표현
-
-- "모든 오류가 표준화된 코드 체계로 완전히 분류돼 있다"
-- "resume 경로는 모든 실패를 일관된 HTTP 상태 코드로 돌려준다"
-- "SSE 오류 payload가 typed contract로 완전히 고정돼 있다"
-
-## 갱신 기준
-
-- `chat/router.py`의 event 이름 또는 payload shape 변경
-- `chat/service.py`의 `done`, `approval_required` packaging 변경
-- `frontend/src/lib/api.ts`의 `ApiError` 처리 변경
-- public router의 status code 정책 변경
-
-## 빠른 점검 체크리스트
-
-- [ ] 새 SSE event 이름을 추가/변경했으면 `api-spec.md`와 이 문서를 함께 수정했다.
-- [ ] `detail` 대신 다른 오류 필드를 쓰기 시작했다면 프론트엔드 소비 경로를 함께 수정했다.
-- [ ] approval/resume 흐름 변경 시 404와 SSE `error` 경계가 여전히 설명 가능하다.
-- [ ] 발표 자료에서 오류 처리 설명이 현재 구현을 넘어서지 않는다.
+현재 시스템의 장점은 SSE로 **session → thought → approval/done** 흐름이 명확하다는 점이다.
+반면 오류 계약은 아직 단순 메시지 수준이므로, 발표에서는 “구조화된 error code는 향후 보강 항목”이라고 설명하는 것이 정확하다.
