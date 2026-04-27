@@ -110,7 +110,7 @@
 - 백엔드 분리를 보존한다. `modules/`는 기능 동작을, `orchestration/`은 기능 간 workflow 계약을 담당한다.
 - 백엔드는 `pyproject.toml`이 아니라 `requirements.txt`를 사용한다.
 - DB schema 변경은 `Base.metadata.create_all()`에 의존한다. migration tool은 없다.
-- 프론트엔드 실제 앱 코드는 `frontend/src/app`에 있다. 루트 `frontend/src/components`는 메인 앱 shell이 아니다.
+- 프론트엔드 실제 앱 코드는 `frontend/src/app`에 있다. `frontend/src/app/components`는 Workbench UI 컴포넌트를 담고, 메인 앱 shell은 `frontend/src/app`을 기준으로 확인한다.
 
 ## 금지 패턴 (이 프로젝트)
 - 명시적으로 요청받지 않았다면 `try/except`, `try/catch`, 넓은 fallback 로직, retry/backoff, 방어적 validation을 추가하지 않는다.
