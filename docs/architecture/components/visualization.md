@@ -55,6 +55,25 @@ visualization 컴포넌트는 시각화 계획을 만들고, 필요하면 approv
 - `visualization_executor`
 - `cancel`
 
+## 하네스 계약
+
+- node contract
+  - `visualization_planner`, `approval_gate`, `visualization_executor`, `cancel`
+- branch/status contract
+  - planner status: `analysis_generated`, `planned`
+  - approval decision: `approve`, `revise`, `cancel`
+  - result status: `generated`, `cancelled`
+- payload contract
+  - consume: `analysis_result`, `analysis_plan`, `source_id`, `dataset_profile`, `revision_request`, `model_id`, `user_input`
+  - produce: `visualization_plan`, `visualization_result`, `approved_plan`, `pending_approval`, `revision_request`, `output`
+  - `visualization_result` key: `status`, `source_id`, `summary`, `chart`, `artifact`, `renderer`, `vega_lite_spec`
+  - cancelled output: `output.type="cancelled"`
+- approval contract
+  - `pending_approval.stage="visualization"`
+  - `pending_approval.kind="plan_review"`
+  - `revision_request.stage="visualization"`
+  - `approve`는 `visualization_executor`, `revise`는 `visualization_planner`, `cancel`은 `cancel`로 이동한다.
+
 ## 노드 상세
 
 ### `visualization_planner`

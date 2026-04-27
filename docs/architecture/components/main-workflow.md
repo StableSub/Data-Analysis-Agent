@@ -9,7 +9,6 @@
 - [[architecture/README|아키텍처 문서 안내]]
 - [[architecture/request-lifecycle|질문 흐름]]
 - [[architecture/shared-state|공유 상태]]
-- [[architecture/components/planner|Planner 컴포넌트]]
 - [[architecture/components/preprocess|Preprocess 컴포넌트]]
 - [[architecture/components/analysis|Analysis 컴포넌트]]
 - [[architecture/components/rag|RAG 컴포넌트]]
@@ -30,6 +29,7 @@
 - 모든 사용자 질문은 메인 그래프에서 시작한다.
 - `source_id`가 비어 있으면 no-dataset handoff를 통해 일반 질문 또는 clarification 경로를 탄다.
 - `source_id`가 있으면 dataset 기반 경로를 탄다.
+- 별도 planner node는 없으며, planner 역할은 intake, handoff, 각 workflow 내부 계획 단계에 나뉘어 있다.
 
 ## 읽는 input state
 
@@ -59,6 +59,32 @@
 - `general_question_terminal`
 - `clarification_terminal`
 - `data_qa_terminal`
+
+## 하네스 계약
+
+- node contract
+  - `intake_flow`, `general_question_terminal`, `clarification_terminal`, `preprocess_flow`, `analysis_flow`, `rag_flow`, `guideline_flow`, `visualization_flow`, `merge_context`, `data_qa_terminal`, `report_flow`
+- branch/status contract
+  - `handoff.next_step`: `general_question`, `data_pipeline`
+  - preprocess 이후: `analysis`, `rag`, `cancelled`
+  - analysis 이후: `guideline`, `visualization`, `merge_context`, `clarification`, `fail`
+  - rag 이후: `guideline`, `visualization`, `merge_context`
+  - guideline 이후: `visualization`, `merge_context`
+  - visualization 이후: `merge_context`, `cancelled`
+  - merge_context 이후: `report`, `data_qa`
+- payload contract
+  - consume: `user_input`, `request_context`, `handoff`, `preprocess_result`, `rag_result`, `guideline_index_status`, `guideline_result`, `insight`, `analysis_plan`, `analysis_result`, `visualization_result`, `clarification_question`, `model_id`
+  - produce: `output`, `merged_context`
+  - terminal `output.type`: `general_question`, `clarification`, `data_qa`, `report_answer`, `cancelled`
+- merge_context applied-step contract
+  - `preprocess_result.status == "applied"`
+  - `rag_result.retrieved_count > 0`
+  - `guideline_result.retrieved_count > 0`
+  - `analysis_result.execution_status == "success"`
+  - `visualization_result.status == "generated"`
+- approval contract
+  - 메인 builder는 approval을 직접 만들지 않는다.
+  - `preprocess_flow`, `visualization_flow`, `report_flow`가 `pending_approval`과 resume 흐름을 소유한다.
 
 ## 노드 상세
 

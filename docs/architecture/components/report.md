@@ -55,6 +55,25 @@ report 컴포넌트는 선택 데이터셋의 정량 지표와 분석/시각화/
 - `finalize`
 - `cancel`
 
+## 하네스 계약
+
+- node contract
+  - `report_draft`, `approval_gate`, `finalize`, `cancel`
+- branch/status contract
+  - approval decision: `approve`, `revise`, `cancel`
+  - output type: `report_answer`, `cancelled`
+  - revision gate: `revision_request.stage="report"`
+- payload contract
+  - consume: `user_input`, `source_id`, `analysis_result`, `visualization_result`, `guideline_result`, `insight`, `merged_context`, `revision_request`, `report_draft`, `model_id`
+  - produce: `report_draft`, `report_result`, `pending_approval`, `revision_request`, `output`
+  - final output: `output.type="report_answer"`, `output.content`
+  - cancelled output: `output.type="cancelled"`
+- approval contract
+  - `pending_approval.stage="report"`
+  - `pending_approval.kind="draft_review"`
+  - `revision_request.stage="report"`
+  - `approve`는 `finalize`, `revise`는 `report_draft`, `cancel`은 `cancel`로 이동한다.
+
 ## 노드 상세
 
 ### `report_draft`

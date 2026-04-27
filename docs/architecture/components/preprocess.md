@@ -10,7 +10,6 @@ preprocess 컴포넌트는 selected-dataset 요청이 들어왔을 때 dataset p
 - [[architecture/request-lifecycle|질문 흐름]]
 - [[architecture/shared-state|공유 상태]]
 - [[architecture/components/main-workflow|메인 워크플로우 컴포넌트]]
-- [[architecture/components/planner|Planner 컴포넌트]]
 - [[architecture/components/analysis|Analysis 컴포넌트]]
 
 ## 메인 그래프에서의 위치
@@ -57,6 +56,25 @@ preprocess 컴포넌트는 selected-dataset 요청이 들어왔을 때 dataset p
 - `executor`
 - `skip`
 - `cancel`
+
+## 하네스 계약
+
+- node contract
+  - `ingestion_and_profile`, `preprocess_decision`, `planner`, `approval_gate`, `executor`, `skip`, `cancel`
+- branch/status contract
+  - decision route: `run_preprocess`, `skip_preprocess`
+  - approval decision: `approve`, `revise`, `cancel`
+  - result status: `skipped`, `applied`, `failed`, `cancelled`
+- payload contract
+  - consume: `source_id`, `dataset_profile`, `handoff`, `revision_request`, `user_input`, `model_id`
+  - produce: `dataset_profile`, `preprocess_decision`, `preprocess_plan`, `approved_plan`, `pending_approval`, `revision_request`, `preprocess_result`, `output`
+  - `preprocess_result` key: `status`, `applied_ops_count`, `input_source_id`, `output_source_id`, `output_filename`, `error`
+  - cancelled output: `output.type="cancelled"`
+- approval contract
+  - `pending_approval.stage="preprocess"`
+  - `pending_approval.kind="plan_review"`
+  - `revision_request.stage="preprocess"`
+  - `approve`는 `executor`, `revise`는 `planner`, `cancel`은 `cancel`로 이동한다.
 
 ## 노드 상세
 

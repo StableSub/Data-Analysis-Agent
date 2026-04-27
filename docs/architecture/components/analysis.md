@@ -10,7 +10,6 @@ analysis 컴포넌트는 질문 해석 이후의 planning, 실행 전략 선택,
 - [[architecture/request-lifecycle|질문 흐름]]
 - [[architecture/shared-state|공유 상태]]
 - [[architecture/components/main-workflow|메인 워크플로우 컴포넌트]]
-- [[architecture/components/planner|Planner 컴포넌트]]
 - [[architecture/components/preprocess|Preprocess 컴포넌트]]
 - [[architecture/components/visualization|Visualization 컴포넌트]]
 - [[architecture/components/report|Report 컴포넌트]]
@@ -62,6 +61,21 @@ analysis 컴포넌트는 질문 해석 이후의 planning, 실행 전략 선택,
 - `analysis_execution`
 - `analysis_validation`
 - `analysis_persist_result`
+
+## 하네스 계약
+
+- node contract
+  - `analysis_planning`, `analysis_clarification`, `analysis_execution`, `analysis_validation`, `analysis_persist_result`
+- branch/status contract
+  - `final_status`: `planning`, `needs_clarification`, `executing`, `success`, `fail`
+  - routing checks: `needs_clarification`, `fail`, `success`
+  - `analysis_result.execution_status`: `success`
+- payload contract
+  - consume: `user_input`, `source_id`, `model_id`, `analysis_plan`, `session_id`
+  - produce: `dataset_meta`, `question_understanding`, `column_grounding`, `analysis_plan_draft`, `analysis_plan`, `generated_code`, `validated_code`, `sandbox_result`, `analysis_result`, `analysis_error`, `retry_count`, `final_status`, `clarification_question`, `analysis_result_id`, `output`
+  - failed output: `output.type="analysis_failed"`
+- approval contract
+  - analysis 컴포넌트는 `pending_approval`을 만들지 않는다.
 
 ## 노드 상세
 

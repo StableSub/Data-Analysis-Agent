@@ -9,7 +9,6 @@ guideline 컴포넌트는 활성 guideline이 있을 때 관련 근거를 검색
 - [[architecture/README|아키텍처 문서 안내]]
 - [[architecture/request-lifecycle|질문 흐름]]
 - [[architecture/shared-state|공유 상태]]
-- [[architecture/components/planner|Planner 컴포넌트]]
 - [[architecture/components/rag|RAG 컴포넌트]]
 - [[architecture/components/report|Report 컴포넌트]]
 
@@ -45,6 +44,21 @@ guideline 컴포넌트는 활성 guideline이 있을 때 관련 근거를 검색
 - `ensure_guideline_index`
 - `retrieve_guideline_context`
 - `summarize_guideline_evidence`
+
+## 하네스 계약
+
+- node contract
+  - `ensure_guideline_index`, `retrieve_guideline_context`, `summarize_guideline_evidence`
+- branch/status contract
+  - index status: `no_active_guideline`, `existing`, `created`, `missing`
+  - result status: `retrieved`, `no_evidence`
+  - 검색 진행 조건: `existing`, `created`
+- payload contract
+  - consume: `user_input`, `model_id`, `active_guideline_source_id`, `guideline_index_status`
+  - produce: `active_guideline_source_id`, `guideline_index_status`, `guideline_result`, `guideline_data_exists`
+  - `guideline_result` key: `query`, `source_id`, `guideline_id`, `filename`, `retrieved_chunks`, `context`, `retrieved_count`, `evidence_summary`, `status`
+- approval contract
+  - guideline 컴포넌트는 `pending_approval`을 만들지 않는다.
 
 ## 노드 상세
 

@@ -46,6 +46,21 @@ rag 컴포넌트는 retrieval QA 경로에서 dataset 인덱스를 준비하고,
 - `retrieve_context`
 - `insight_synthesis`
 
+## 하네스 계약
+
+- node contract
+  - `ensure_rag_index`, `retrieve_context`, `insight_synthesis`
+- branch/status contract
+  - index status는 `rag_service.ensure_index_for_source(...)` 결과를 따른다.
+  - 문서화된 대표 status: `existing`, `created`, `dataset_missing`, `unsupported_format`
+  - 검색 진행 조건: `existing`, `created`
+- payload contract
+  - consume: `user_input`, `source_id`, `model_id`, `rag_index_status`
+  - produce: `rag_index_status`, `rag_result`, `rag_data_exists`, `insight`
+  - `rag_result` key: `query`, `source_id`, `retrieved_chunks`, `context`, `retrieved_count`, `evidence_summary`
+- approval contract
+  - rag 컴포넌트는 `pending_approval`을 만들지 않는다.
+
 ## 노드 상세
 
 ### `ensure_rag_index`
