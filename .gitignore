@@ -36,6 +36,8 @@ coverage/
 tests/
 !backend/tests/
 !backend/tests/**
+backend/tests/**/__pycache__/
+backend/tests/**/*.py[cod]
 
 # Uploaded / generated data
 storage/

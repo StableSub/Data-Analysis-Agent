@@ -16,7 +16,7 @@
 |---|---|---|
 | 프론트엔드 진입 shell | `App.tsx`, `pages/Workbench.tsx` | `/`와 `/chat` 모두 여기로 들어온다 |
 | 메인 pipeline runtime | `hooks/useAnalysisPipeline.ts` | SSE, approval, dataset activation, run/session 상태 |
-| Session persistence | `hooks/useWorkbenchSessionStore.ts`, `lib/pipelineSessionContext.ts` | 복원된 session normalization |
+| Session persistence | `hooks/useWorkbenchSessionStore.ts` | Workbench session 저장/복원 |
 | API 계약 | `../lib/api.ts` | 백엔드 request/response 타입 |
 | GenUI Workbench | `components/genui/` | custom Workbench surface와 panel |
 | 공유 app primitive | `components/ui/` | 영향 범위가 큰 wrapper/primitive |
