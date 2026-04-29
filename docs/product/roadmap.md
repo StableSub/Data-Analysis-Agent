@@ -74,7 +74,7 @@
 ## 문서 갱신 순서
 
 1. workflow/state/API가 바뀌면 architecture 문서를 같은 변경에서 갱신한다.
-2. 검증 명령이 바뀌면 `docs/development/local-environment.md`와 루트 `AGENTS.md`를 갱신한다.
+2. 검증 명령이 바뀌면 루트 `AGENTS.md`와 `README.md`를 갱신한다.
 3. 제품 범위나 우선순위가 바뀌면 `docs/product/prd.md`와 이 문서를 갱신한다.
 4. code file 변경 후 가능한 경우 graphify 로컬 그래프를 갱신한다.
 

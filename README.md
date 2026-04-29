@@ -30,4 +30,4 @@
 bash dev.sh
 ```
 
-자세한 실행과 검증 기준은 [로컬 실행 환경](./docs/development/local-environment.md)을 확인한다.
+자세한 실행과 검증 기준은 루트 `AGENTS.md`와 [문서 진입점](./docs/README.md)을 확인한다.

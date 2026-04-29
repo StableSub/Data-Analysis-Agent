@@ -25,7 +25,7 @@
 ## 갱신 기준
 - workflow node/edge/terminal 변경은 `request-lifecycle.md`와 `backend-workflow.md`와 `orchestration/workflows.md`에 반영한다.
 - state key, payload shape, approval/output contract 변경은 `shared-state.md`에 반영한다.
-- public route, backend/frontend entrypoint, 검증 명령 변경은 `docs/system/*.md` 또는 `docs/development/*.md`의 소유 문서에 반영한다.
+- public route, backend/frontend entrypoint 변경은 `docs/system/*.md`에 반영하고, 검증 명령 변경은 루트 `AGENTS.md`와 `README.md`에 반영한다.
 
 ## 금지 패턴
 - workflow/state 변경 뒤 문서가 drift되도록 두지 않는다.

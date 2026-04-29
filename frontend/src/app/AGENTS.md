@@ -31,7 +31,7 @@
 ## 갱신 기준
 - `useAnalysisPipeline.ts`, `../lib/api.ts`, SSE event handling, approval/resume UI가 바뀌면 `docs/system/frontend-structure.md`를 같은 변경에서 갱신한다.
 - backend output/event shape가 바뀌면 GenUI result renderer와 API type을 함께 확인한다.
-- 수동 실행 포트나 package script가 바뀌면 `docs/development/local-environment.md`를 갱신한다.
+- 수동 실행 포트나 package script가 바뀌면 루트 `AGENTS.md`, `README.md`, 관련 `docs/system/*.md`를 갱신한다.
 
 ## 금지 패턴
 - `WorkbenchApp.tsx`가 있다고 가정하지 않는다. 실제 root는 `App.tsx` → `pages/Workbench.tsx`다.

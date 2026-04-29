@@ -21,7 +21,7 @@
 ## 문서 계층 원칙
 - 루트 `AGENTS.md`는 항상 읽히는 최상위 컨텍스트이므로 공통 작업 순서, 핵심 진입점, 검증 명령만 유지한다.
 - 영역별 세부 규칙은 child `AGENTS.md`에 둔다. 작업 영역에 child 문서가 있으면 루트보다 구체적인 규칙으로 적용한다.
-- 제품 판단은 `docs/product/*`, 런타임 상세는 `docs/architecture/*`, 실행·검증 명령은 `docs/development/*`가 소유한다.
+- 제품 판단은 `docs/product/*`, 런타임 상세는 `docs/architecture/*`와 `docs/system/*`, 실행·검증 명령은 루트 `AGENTS.md`와 `README.md`가 소유한다.
 - 문서와 코드가 다르면 코드를 기준으로 문서를 갱신하고, drift 방지는 `backend/tests/test_architecture_docs.py`와 `backend/tests/test_docs_harness.py`로 검증한다.
 
 ## 공통 AI 개발 프로토콜
