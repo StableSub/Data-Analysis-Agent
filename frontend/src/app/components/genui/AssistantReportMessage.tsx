@@ -151,7 +151,7 @@ function SkeletonLines() {
 export function AssistantReportMessage({
   variant = "final",
   defaultCollapsed = false,
-  title = "Analysis Report",
+  title = "Analysis",
   subtitle,
   timestamp,
   sections,
@@ -209,11 +209,11 @@ export function AssistantReportMessage({
             <div className="flex items-center justify-between mb-1">
               <span className="text-sm font-semibold text-[var(--genui-text)]">{title}</span>
               <span className="text-[10px] px-1.5 py-0.5 rounded border border-[var(--genui-error)]/30 bg-[var(--genui-error)]/8 text-[var(--genui-error)] font-semibold uppercase tracking-wider">
-                Needs Resolution
+                Failed
               </span>
             </div>
             <div className="mb-3 text-xs text-[var(--genui-muted)]">
-              <ReportTextContent content={sections[0]?.content ?? "An error occurred while generating the report."} />
+              <ReportTextContent content={sections[0]?.content ?? "An error occurred while generating the analysis."} />
             </div>
             {/* Nav-only link — SSOT: no retry CTA in center column */}
             {onReviewDetails && (
@@ -299,7 +299,7 @@ export function AssistantReportMessage({
             </span>
           ) : (
             <span className="text-[10px] font-semibold text-[var(--genui-success)] bg-[var(--genui-success)]/10 px-2 py-0.5 rounded-full border border-[var(--genui-success)]/20">
-              Final
+              Complete
             </span>
           )}
 

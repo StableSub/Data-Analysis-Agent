@@ -95,7 +95,7 @@ export function WorkbenchCommandBar({
   };
 
   return (
-    <div className={cn("w-full max-w-3xl mx-auto relative", className)}>
+    <div className={cn("w-full max-w-none mx-auto relative", className)}>
       
       {/* --- Model Selection Popover --- */}
       {isModelMenuOpen && (
