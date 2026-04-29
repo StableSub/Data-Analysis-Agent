@@ -41,7 +41,7 @@ SSE/approval 흐름에 영향이 있으면 관련 코드 경로를 함께 검토
 
 ```text
 변경 범위: <backend paths>
-API 또는 SSE 계약이 바뀌면 docs/architecture/system 문서도 함께 갱신하세요.
+API 또는 SSE 계약이 바뀌면 docs/system 문서도 함께 갱신하세요.
 작업 후 관련 pytest와 문서 테스트를 실행하세요.
 최종 보고에는 변경 파일, 계약 변경점, 프론트 영향도를 포함하세요.
 ```
@@ -67,7 +67,7 @@ API 또는 SSE 계약이 바뀌면 docs/architecture/system 문서도 함께 갱
 ### 예시 1: SSE 문서 보강
 
 ```text
-`docs/architecture/system/api-sse-error-contract.md`만 작성하세요.
+`docs/system/api-sse-error-contract.md`만 작성하세요.
 기준 코드는 `backend/app/modules/chat/router.py`, `backend/app/modules/chat/service.py`, `frontend/src/app/hooks/useAnalysisPipeline.ts`입니다.
 오류 payload는 현재 구현 기준으로만 설명하고, 구조화된 error code가 있다고 쓰지 마세요.
 작업 후 문서 테스트 결과를 보고하세요.

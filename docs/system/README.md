@@ -1,7 +1,7 @@
 # 시스템
 
 이 디렉터리는 시스템 전체의 구조/API 진입점을 설명하는 문서를 모아둔다.
-질문의 시간 순서와 workflow state 계약은 각각 [질문 흐름](../request-lifecycle.md), [공유 상태](../shared-state.md)를 기준으로 보고, 여기서는 backend/frontend 구조와 public API 계약을 중심으로 다룬다.
+질문의 시간 순서와 workflow state 계약은 각각 [질문 흐름](../architecture/request-lifecycle.md), [공유 상태](../architecture/shared-state.md)를 기준으로 보고, 여기서는 backend/frontend 구조와 public API 계약을 중심으로 다룬다.
 
 ## 포함 문서
 
@@ -14,7 +14,7 @@
 
 ## 읽는 순서
 
-1. 전체 요청 흐름은 [질문 흐름](../request-lifecycle.md)을 먼저 읽는다.
+1. 전체 요청 흐름은 [질문 흐름](../architecture/request-lifecycle.md)을 먼저 읽는다.
 2. backend module 책임은 [백엔드 구조](./backend-structure.md)를 읽는다.
 3. frontend Workbench 진입점과 상태 관리는 [프론트엔드 구조](./frontend-structure.md)를 읽는다.
 4. public route와 SSE 계약은 [API 개요 및 명세](./api-spec.md), [API / SSE 오류 계약](./api-sse-error-contract.md)을 함께 확인한다.

@@ -11,14 +11,14 @@
 
 ## 읽는 순서
 
-1. AI Agent의 일반 실행 흐름은 [질문 흐름](../request-lifecycle.md)을 기준으로 본다.
+1. AI Agent의 일반 실행 흐름은 [질문 흐름](../architecture/request-lifecycle.md)을 기준으로 본다.
 2. 실행 이력, 승인 대기, 오류 추적 방식을 확인할 때 [Trace 및 로깅 구조](./trace-and-logging.md)를 읽는다.
-3. state key와 SSE-facing output은 [공유 상태](../shared-state.md)를 함께 확인한다.
+3. state key와 SSE-facing output은 [공유 상태](../architecture/shared-state.md)를 함께 확인한다.
 
 ## 유지 기준
 
 - trace/logging identifier나 저장 위치가 바뀌면 [Trace 및 로깅 구조](./trace-and-logging.md)를 갱신한다.
-- workflow node/edge 변경은 이 디렉터리보다 [질문 흐름](../request-lifecycle.md)과 [컴포넌트 문서](../components/README.md)를 우선 갱신한다.
+- workflow node/edge 변경은 이 디렉터리보다 [질문 흐름](../architecture/request-lifecycle.md)과 [workflow wrapper 문서](../architecture/orchestration/workflows.md)를 우선 갱신한다.
 - 검증은 architecture docs harness를 기준으로 한다.
 
 ```bash

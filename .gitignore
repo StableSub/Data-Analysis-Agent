@@ -77,3 +77,4 @@ CLAUDE.md
 # Codex local workspace
 .codex/
 .agents/
+findings/

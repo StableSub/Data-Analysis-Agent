@@ -7,7 +7,7 @@ from backend.app.main import app
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DOCS_DIR = REPO_ROOT / "docs"
 ARCHITECTURE_DIR = DOCS_DIR / "architecture"
-API_SPEC = ARCHITECTURE_DIR / "system" / "api-spec.md"
+API_SPEC = DOCS_DIR / "system" / "api-spec.md"
 ACTIVE_CONTEXT_FILES = (
     REPO_ROOT / "AGENTS.md",
     REPO_ROOT / "README.md",

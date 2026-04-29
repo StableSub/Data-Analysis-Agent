@@ -304,6 +304,6 @@
 ## 이 문서를 읽는 방법
 
 이 문서는 실제 public API를 빠르게 찾고 drift를 잡기 위한 문서다.
-실행 흐름은 `../request-lifecycle.md`, 상태 계약은 `../shared-state.md`, 구조는 `backend-structure.md`와 `frontend-structure.md`를 함께 본다.
+실행 흐름은 `../architecture/request-lifecycle.md`, 상태 계약은 `../architecture/shared-state.md`, 구조는 `backend-structure.md`와 `frontend-structure.md`를 함께 본다.
 
 새 router를 추가한 뒤 이 문서에 route를 누락하면 docs harness가 실패해야 한다. 반대로 route 이름을 보기 좋게 정리하지 말고 실제 prefix와 path를 그대로 기록한다.

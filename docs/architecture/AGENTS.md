@@ -14,8 +14,8 @@
 |---|---|---|
 | End-to-end request flow | `request-lifecycle.md` | orchestration 분기를 반영한다 |
 | 공유 workflow state | `shared-state.md` | `backend/app/orchestration/state.py`를 반영한다 |
-| 메인 workflow component 문서 | `components/main-workflow.md` | builder/client 교차 참조 |
-| 기능 문서 | `components/*.md` | guideline/preprocess/analysis/rag/visualization/report |
+| 메인 workflow component 문서 | `backend-workflow.md`와 `orchestration/workflows.md` | builder/client 교차 참조 |
+| 기능 문서 | `modules/*.md`와 `orchestration/workflows.md` | guideline/preprocess/analysis/rag/visualization/report |
 
 ## 규칙
 - 이 문서들은 runtime code의 설명용 동반 문서다. orchestration/state 계약이 움직이면 함께 갱신한다.
@@ -23,9 +23,9 @@
 - 현재 node name, route name, payload key, terminal output type을 정확히 반영한다.
 
 ## 갱신 기준
-- workflow node/edge/terminal 변경은 `request-lifecycle.md`와 `components/main-workflow.md`에 반영한다.
+- workflow node/edge/terminal 변경은 `request-lifecycle.md`와 `backend-workflow.md`와 `orchestration/workflows.md`에 반영한다.
 - state key, payload shape, approval/output contract 변경은 `shared-state.md`에 반영한다.
-- public route, backend/frontend entrypoint, 검증 명령 변경은 `system/*.md` 또는 `docs/development/*.md`의 소유 문서에 반영한다.
+- public route, backend/frontend entrypoint, 검증 명령 변경은 `docs/system/*.md` 또는 `docs/development/*.md`의 소유 문서에 반영한다.
 
 ## 금지 패턴
 - workflow/state 변경 뒤 문서가 drift되도록 두지 않는다.
@@ -34,7 +34,7 @@
 
 ## 고유 스타일
 - `request-lifecycle.md`와 `shared-state.md`가 문서 진입점이다.
-- `components/`는 frontend UI component가 아니라 runtime component family를 반영한다.
+- `modules/`와 `orchestration/`는 frontend UI component가 아니라 runtime component family를 반영한다.
 
 ## 참고
 - `backend/tests/test_architecture_docs.py`가 이 영역 일부를 검증한다. 이 문서들은 테스트에 민감하다.

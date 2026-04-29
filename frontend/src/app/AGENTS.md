@@ -29,7 +29,7 @@
 - frontend 계약은 `/vizualization` 같은 기존 특이점까지 포함해 backend output name을 가깝게 따른다.
 
 ## 갱신 기준
-- `useAnalysisPipeline.ts`, `../lib/api.ts`, SSE event handling, approval/resume UI가 바뀌면 `docs/architecture/system/frontend-structure.md`를 같은 변경에서 갱신한다.
+- `useAnalysisPipeline.ts`, `../lib/api.ts`, SSE event handling, approval/resume UI가 바뀌면 `docs/system/frontend-structure.md`를 같은 변경에서 갱신한다.
 - backend output/event shape가 바뀌면 GenUI result renderer와 API type을 함께 확인한다.
 - 수동 실행 포트나 package script가 바뀌면 `docs/development/local-environment.md`를 갱신한다.
 

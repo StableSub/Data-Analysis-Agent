@@ -12,10 +12,10 @@
 
 - [[architecture/README|아키텍처 문서 안내]]
 - [[architecture/request-lifecycle|질문 흐름]]
-- [[architecture/components/main-workflow|메인 워크플로우 컴포넌트]]
-- [[architecture/components/analysis|Analysis 컴포넌트]]
-- [[architecture/components/visualization|Visualization 컴포넌트]]
-- [[architecture/components/report|Report 컴포넌트]]
+- [[architecture/backend-workflow|Backend end-to-end workflow]]
+- [[architecture/modules/analysis|Analysis module]]
+- [[architecture/modules/preprocess-and-visualization|Preprocess and visualization modules]]
+- [[architecture/modules/chat-report-export|Chat, report, export, results modules]]
 
 ## 상태 계약의 역할
 

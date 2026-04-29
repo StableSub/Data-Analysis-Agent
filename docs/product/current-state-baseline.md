@@ -27,10 +27,10 @@
 
 - `docs/architecture/request-lifecycle.md`: dataset 선택 여부에 따른 workflow 분기
 - `docs/architecture/shared-state.md`: workflow state 계약과 SSE-facing output
-- `docs/architecture/components/*.md`: preprocess, analysis, RAG, guideline, visualization, report 상세
-- `docs/architecture/system/api-spec.md`: 현재 FastAPI public route 목록
-- `docs/architecture/system/backend-structure.md`: 백엔드 module/orchestration 구조
-- `docs/architecture/system/frontend-structure.md`: Workbench 프론트엔드 구조
+- `docs/architecture/orchestration/workflows.md`와 `docs/architecture/modules/*.md`: preprocess, analysis, RAG, guideline, visualization, report 상세
+- `docs/system/api-spec.md`: 현재 FastAPI public route 목록
+- `docs/system/backend-structure.md`: 백엔드 module/orchestration 구조
+- `docs/system/frontend-structure.md`: Workbench 프론트엔드 구조
 
 ## 재사용 가능한 기반
 

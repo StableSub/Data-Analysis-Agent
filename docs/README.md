@@ -57,7 +57,7 @@ AI 개발 기본 문서는 아래 순서로 읽는다.
 3. [제품 요구사항](./product/prd.md)과 [현재 구현 기준선](./product/current-state-baseline.md)
 4. [질문 흐름](./architecture/request-lifecycle.md)
 5. [공유 상태](./architecture/shared-state.md)
-6. 필요한 경우 `architecture/components/` 상세 문서
+6. 필요한 경우 `architecture/orchestration/`과 `architecture/modules/` 상세 문서
 
 `reference/`는 기본 컨텍스트가 아니라 발표, 제안서, 외부 입력을 확인할 때 읽는다.
 `team/`은 팀 운영 방식과 AI 협업 규칙을 확인할 때 읽고, `testing/`은 품질 기준이나 벤치마크 기준을 확인할 때 읽는다.

@@ -12,11 +12,11 @@
 
 - [[architecture/README|아키텍처 문서 안내]]
 - [[architecture/shared-state|공유 상태]]
-- [[architecture/components/main-workflow|메인 워크플로우 컴포넌트]]
-- [[architecture/components/analysis|Analysis 컴포넌트]]
-- [[architecture/components/rag|RAG 컴포넌트]]
-- [[architecture/components/visualization|Visualization 컴포넌트]]
-- [[architecture/components/report|Report 컴포넌트]]
+- [[architecture/backend-workflow|Backend end-to-end workflow]]
+- [[architecture/modules/analysis|Analysis module]]
+- [[architecture/modules/rag-and-guidelines|RAG and guidelines modules]]
+- [[architecture/modules/preprocess-and-visualization|Preprocess and visualization modules]]
+- [[architecture/modules/chat-report-export|Chat, report, export, results modules]]
 
 ## 상위 흐름
 
@@ -78,7 +78,7 @@ flowchart TD
 - 분석 실행 계획 확정: `backend/app/orchestration/workflows/analysis.py`
 - 전처리/시각화/리포트 승인 계획: 각 workflow 내부 planner 또는 draft 단계
 
-따라서 architecture 문서에서 우선 확인할 계약은 planner 문서가 아니라 `request-lifecycle.md`, `shared-state.md`, `components/main-workflow.md`다.
+따라서 architecture 문서에서 우선 확인할 계약은 planner 문서가 아니라 `request-lifecycle.md`, `shared-state.md`, `backend-workflow.md`와 `orchestration/workflows.md`다.
 
 이 섹션은 독립적인 planner 문서가 아니라 현재 코드의 분산된 planning 책임을 설명한다. `intake_router.py`, analysis workflow planning 단계, preprocess/visualization/report approval planning이 바뀌면 이 용어 정리를 함께 갱신한다.
 

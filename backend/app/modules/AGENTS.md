@@ -7,10 +7,10 @@
 - [[AGENTS|프로젝트 지식 베이스]]
 - [[backend/app/orchestration/AGENTS|Orchestration 지식 베이스]]
 - [[docs/architecture/README|아키텍처 문서 안내]]
-- [[docs/architecture/components/analysis|Analysis 컴포넌트]]
-- [[docs/architecture/components/rag|RAG 컴포넌트]]
-- [[docs/architecture/components/visualization|Visualization 컴포넌트]]
-- [[docs/architecture/components/report|Report 컴포넌트]]
+- [[docs/architecture/modules/analysis|Analysis module]]
+- [[docs/architecture/modules/rag-and-guidelines|RAG and guidelines modules]]
+- [[docs/architecture/modules/preprocess-and-visualization|Preprocess and visualization modules]]
+- [[docs/architecture/modules/chat-report-export|Chat/report/export modules]]
 
 ## 확인 위치
 | 작업 | 위치 | 참고 |
@@ -32,8 +32,8 @@
 - 별도 parallel contract를 만들기보다 `backend/app/core/`의 공유 infra와 `backend/app/orchestration/`의 공유 workflow state를 재사용한다.
 
 ## 갱신 기준
-- public router, prefix, request/response schema가 바뀌면 `docs/architecture/system/api-spec.md`를 같은 변경에서 갱신한다.
-- module 책임이나 내부 디렉터리 패턴이 바뀌면 `docs/architecture/system/backend-structure.md`를 갱신한다.
+- public router, prefix, request/response schema가 바뀌면 `docs/system/api-spec.md`를 같은 변경에서 갱신한다.
+- module 책임이나 내부 디렉터리 패턴이 바뀌면 `docs/system/backend-structure.md`를 갱신한다.
 - workflow state에 실리는 payload 형태가 바뀌면 `backend/app/orchestration/AGENTS.md`와 `docs/architecture/shared-state.md`를 함께 확인한다.
 
 ## 금지 패턴

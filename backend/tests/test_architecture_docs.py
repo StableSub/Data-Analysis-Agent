@@ -5,10 +5,13 @@ import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+DOCS_DIR = REPO_ROOT / "docs"
 ARCHITECTURE_DIR = REPO_ROOT / "docs" / "architecture"
-COMPONENTS_DIR = ARCHITECTURE_DIR / "components"
+BACKEND_WORKFLOW_DOC = ARCHITECTURE_DIR / "backend-workflow.md"
+ORCHESTRATION_DOC = ARCHITECTURE_DIR / "orchestration" / "README.md"
+WORKFLOW_WRAPPERS_DOC = ARCHITECTURE_DIR / "orchestration" / "workflows.md"
 ORCHESTRATION_DIR = REPO_ROOT / "backend" / "app" / "orchestration"
-FRONTEND_STRUCTURE = ARCHITECTURE_DIR / "system" / "frontend-structure.md"
+FRONTEND_STRUCTURE = DOCS_DIR / "system" / "frontend-structure.md"
 WORKFLOWS_DIR = ORCHESTRATION_DIR / "workflows"
 
 COMPONENT_IMPLEMENTATION_FILES = {
@@ -212,21 +215,31 @@ def _read_text(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def _workflow_contract_content() -> str:
+    return "\n".join(
+        _read_text(path)
+        for path in (
+            BACKEND_WORKFLOW_DOC,
+            ORCHESTRATION_DOC,
+            WORKFLOW_WRAPPERS_DOC,
+            ARCHITECTURE_DIR / "shared-state.md",
+        )
+    )
+
+
 def test_architecture_docs_exist() -> None:
     assert (ARCHITECTURE_DIR / "README.md").exists()
+    assert BACKEND_WORKFLOW_DOC.exists()
     assert (ARCHITECTURE_DIR / "request-lifecycle.md").exists()
     assert (ARCHITECTURE_DIR / "shared-state.md").exists()
-
-    for filename in (
-        "main-workflow.md",
-        "guideline.md",
-        "preprocess.md",
-        "analysis.md",
-        "rag.md",
-        "visualization.md",
-        "report.md",
-    ):
-        assert (COMPONENTS_DIR / filename).exists()
+    assert (ARCHITECTURE_DIR / "core" / "README.md").exists()
+    assert (ARCHITECTURE_DIR / "modules" / "README.md").exists()
+    assert ORCHESTRATION_DOC.exists()
+    assert WORKFLOW_WRAPPERS_DOC.exists()
+    assert (DOCS_DIR / "system" / "api-spec.md").exists()
+    assert (DOCS_DIR / "system" / "backend-structure.md").exists()
+    assert FRONTEND_STRUCTURE.exists()
+    assert (DOCS_DIR / "ai-agent" / "trace-and-logging.md").exists()
 
 
 def test_readme_links_top_level_and_component_docs() -> None:
@@ -234,16 +247,14 @@ def test_readme_links_top_level_and_component_docs() -> None:
 
     assert "./request-lifecycle.md" in content
     assert "./shared-state.md" in content
-    assert "./system/api-spec.md" in content
-    assert "./system/backend-structure.md" in content
-    assert "./system/frontend-structure.md" in content
-    assert "./components/main-workflow.md" in content
-    assert "./components/guideline.md" in content
-    assert "./components/preprocess.md" in content
-    assert "./components/analysis.md" in content
-    assert "./components/rag.md" in content
-    assert "./components/visualization.md" in content
-    assert "./components/report.md" in content
+    assert "./backend-workflow.md" in content
+    assert "./core/README.md" in content
+    assert "./modules/README.md" in content
+    assert "./orchestration/README.md" in content
+    assert "./orchestration/workflows.md" in content
+    assert "../system/api-spec.md" in content
+    assert "../system/backend-structure.md" in content
+    assert "../system/frontend-structure.md" in content
 
 
 def test_request_lifecycle_references_runtime_entrypoint() -> None:
@@ -389,7 +400,7 @@ def test_component_docs_reference_implementation_and_core_nodes(
     implementation_refs: tuple[str, ...],
     required_terms: tuple[str, ...],
 ) -> None:
-    content = _read_text(COMPONENTS_DIR / filename)
+    content = _workflow_contract_content()
 
     for implementation_ref in implementation_refs:
         assert implementation_ref in content
@@ -401,7 +412,7 @@ def test_component_docs_reference_implementation_and_core_nodes(
 def test_component_docs_mention_current_workflow_nodes(filename: str) -> None:
     implementation = COMPONENT_IMPLEMENTATION_FILES[filename]
     implementation_content = _read_text(implementation)
-    doc_content = _read_text(COMPONENTS_DIR / filename)
+    doc_content = _workflow_contract_content()
 
     node_names = sorted(set(re.findall(r'graph\.add_node\("([^"]+)"', implementation_content)))
 
@@ -415,7 +426,7 @@ def test_component_docs_capture_branch_and_status_contracts(
     filename: str,
     status_terms: tuple[str, ...],
 ) -> None:
-    content = _read_text(COMPONENTS_DIR / filename)
+    content = _workflow_contract_content()
 
     assert "## 하네스 계약" in content
     missing = [term for term in status_terms if term not in content]
@@ -427,7 +438,7 @@ def test_component_docs_capture_payload_contracts(
     filename: str,
     payload_terms: tuple[str, ...],
 ) -> None:
-    content = _read_text(COMPONENTS_DIR / filename)
+    content = _workflow_contract_content()
 
     assert "payload contract" in content
     missing = [term for term in payload_terms if term not in content]
@@ -439,7 +450,7 @@ def test_approval_component_docs_capture_resume_contracts(
     filename: str,
     approval_terms: tuple[str, ...],
 ) -> None:
-    content = _read_text(COMPONENTS_DIR / filename)
+    content = _workflow_contract_content()
 
     assert "approval contract" in content
     for approval_term in approval_terms:

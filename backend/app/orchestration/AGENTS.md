@@ -8,7 +8,7 @@
 - [[docs/architecture/README|아키텍처 문서 안내]]
 - [[docs/architecture/request-lifecycle|질문 흐름]]
 - [[docs/architecture/shared-state|공유 상태]]
-- [[docs/architecture/components/main-workflow|메인 워크플로우 컴포넌트]]
+- [[docs/architecture/backend-workflow|Backend workflow]]
 
 ## 확인 위치
 | 작업 | 위치 | 참고 |
@@ -27,9 +27,9 @@
 - `workflows/`는 flat wrapper 계층이다. workflow-specific 동작은 해당 파일에 두고, workflow 간 공유 helper는 상위 파일에 둔다.
 
 ## 갱신 기준
-- `builder.py`의 node, edge, terminal output type이 바뀌면 `docs/architecture/request-lifecycle.md`와 `components/main-workflow.md`를 같은 변경에서 갱신한다.
+- `builder.py`의 node, edge, terminal output type이 바뀌면 `docs/architecture/request-lifecycle.md`와 `docs/architecture/backend-workflow.md`와 `docs/architecture/orchestration/workflows.md`를 같은 변경에서 갱신한다.
 - `state.py`의 key나 approval/output payload가 바뀌면 `docs/architecture/shared-state.md`, `client.py`, 프론트엔드 pipeline 계약을 함께 확인한다.
-- SSE event shape, resume payload, final output packaging이 바뀌면 `docs/architecture/system/api-spec.md`와 `frontend/src/app/hooks/useAnalysisPipeline.ts`를 함께 확인한다.
+- SSE event shape, resume payload, final output packaging이 바뀌면 `docs/system/api-spec.md`와 `frontend/src/app/hooks/useAnalysisPipeline.ts`를 함께 확인한다.
 
 ## 금지 패턴
 - 모든 consumer를 갱신하지 않고 `planning_result`, `handoff`, `output`, approval payload key, final result key를 함부로 rename하지 않는다.

@@ -204,6 +204,6 @@ planner와 분석 단계의 입력 준비를 지원한다.
 ## 이 문서를 읽는 방법
 
 이 문서는 백엔드 전체 구조를 알고 싶을 때 읽는 문서다.
-질문의 시간 순서 흐름은 `../request-lifecycle.md`, 공유 state 계약은 `../shared-state.md`, 요청 단위 설명은 `api-spec.md` 문서로 이어서 보면 된다.
+질문의 시간 순서 흐름은 `../architecture/request-lifecycle.md`, 공유 state 계약은 `../architecture/shared-state.md`, 요청 단위 설명은 `api-spec.md` 문서로 이어서 보면 된다.
 
 더 깊은 실행 로직은 `../components/` 문서와 `../ai-agent/trace-and-logging.md`에서 보는 것이 적합하다.
