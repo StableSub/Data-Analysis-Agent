@@ -35,7 +35,6 @@ import type {
   RunStatusData,
   PipelineStep,
 } from "../components/genui/CopilotPanel";
-import type { DecisionChip, ChipValue } from "../components/genui/DecisionChips";
 import type { EvidenceFooterProps } from "../components/genui/EvidenceFooter";
 import type { RawLogEntry } from "../components/genui/MCPPanel";
 import type { TimelineItemStatus } from "../components/genui/TimelineItem";
@@ -148,7 +147,6 @@ export interface UseAnalysisPipelineReturn {
   toolCalls: ToolCallEntry[];
   runStatus: RunStatusData | undefined;
   pipelineSteps: PipelineStep[] | undefined;
-  decisionChips: DecisionChip[];
   evidence: EvidenceFooterProps;
   thoughtSteps: ThoughtStep[];
   chatHistory: ChatHistoryMessage[];
@@ -2520,52 +2518,6 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
     });
   })();
 
-  const derivedDecisionChips: DecisionChip[] = (() => {
-    if (!sourceId) return [];
-    if (state === "empty" || state === "uploading" || state === "ready") return [];
-
-    const CHIP_STAGES = ["Preprocess", "RAG", "Viz", "Report", "Mode"] as const;
-    const completed = completedStagesRef.current;
-    const stageKeyMap: Record<string, string> = {
-      Preprocess: "preprocess",
-      RAG: "rag",
-      Viz: "viz",
-      Report: "report",
-    };
-
-    return CHIP_STAGES.map((stage): DecisionChip => {
-      if (stage === "Mode") return { stage, value: "Full" as ChipValue };
-
-      const key = stageKeyMap[stage] ?? "";
-      const currentKey = subPhaseToStageKey(runningSubPhase);
-      const currentIdx = STAGES.indexOf(currentKey as (typeof STAGES)[number]);
-      const stageIdx = STAGES.indexOf(key as (typeof STAGES)[number]);
-
-      let value: ChipValue = "ON";
-      if (state === "error" && stageIdx === currentIdx) {
-        value = "FAILED";
-      } else if (
-        state === "needs-user"
-        && pendingApproval
-        && key === (
-          pendingApproval.stage === "visualization"
-            ? "viz"
-            : pendingApproval.stage === "report"
-              ? "report"
-              : "preprocess"
-        )
-      ) {
-        value = "BLOCKED";
-      } else if (state === "running" && stageIdx === currentIdx) {
-        value = "RUNNING";
-      } else if (completed.has(key) || (state === "success" && stageIdx <= currentIdx)) {
-        value = "DONE";
-      }
-
-      return { stage, value };
-    });
-  })();
-
   const derivedEvidence: EvidenceFooterProps = (() => {
     const selectedDataset = uploadedDatasets.find((item) => item.sourceId === sourceId);
     const ragUsed = thoughtSteps.some(
@@ -2590,7 +2542,6 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
     toolCalls,
     runStatus: derivedRunStatus,
     pipelineSteps: derivedPipelineSteps,
-    decisionChips: derivedDecisionChips,
     evidence: derivedEvidence,
     thoughtSteps,
     chatHistory,

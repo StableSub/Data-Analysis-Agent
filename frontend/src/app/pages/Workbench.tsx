@@ -9,7 +9,6 @@ import { AssistantReportMessage } from "../components/genui/AssistantReportMessa
 import { RightPanelTabs, type RightTabId } from "../components/genui/RightPanelTabs";
 import { CopilotPanel } from "../components/genui/CopilotPanel";
 import { MCPPanel } from "../components/genui/MCPPanel";
-import { DecisionChips } from "../components/genui/DecisionChips";
 import { ApprovalCard } from "../components/genui/ApprovalCard";
 import { CardShell, CardHeader, CardBody } from "../components/genui/CardShell";
 import { PreEdaBoard } from "../components/genui/PreEdaBoard";
@@ -17,11 +16,13 @@ import { VisualizationResultView } from "../components/visualization/Visualizati
 import {
   AlertTriangle,
   CheckCircle2,
+  ChevronDown,
   FileText,
   MessageSquare,
   Plus,
   RefreshCw,
   Trash2,
+  XCircle,
 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { PipelineBar, type PipelineBarVariant } from "../components/genui/PipelineBar";
@@ -160,7 +161,6 @@ export default function Workbench() {
     runStatus,
     pipelineSteps,
     thoughtSteps,
-    decisionChips,
     evidence,
     pendingApproval,
     rawLogs,
@@ -787,43 +787,44 @@ export default function Workbench() {
       : state === "empty"
         ? "새 세션"
         : "Gen-UI Workbench");
-
-  const derivedRouteChips = hasUploadedDatasets
+  const hasCompletedEda = Boolean(hasDatasetContext && selectedPreEdaProfile);
+  const hasCompletedAnalysis = chatHistory.some(
+    (message) =>
+      message.role === "assistant"
+      && message.content.trim().length > 0
+      && message.content.trim() !== "응답을 생성하지 못했습니다.",
+  );
+  const effectiveCurrentView: Exclude<CanvasView, "current"> | null =
+    state === "empty" || state === "uploading" || state === "running"
+      ? null
+      : hasCompletedAnalysis
+        ? "deep-eda"
+        : hasCompletedEda
+          ? "pre-eda"
+          : null;
+  const displayedCanvasView: Exclude<CanvasView, "current"> | null =
+    canvasView === "current" ? effectiveCurrentView : canvasView;
+  const statusSteps = hasUploadedDatasets
     ? [
         {
-          stage: "Pre-EDA",
-          value: "DONE" as const,
-          tooltip: "업로드 직후 데이터 미리보기와 구조/품질 요약을 먼저 확인합니다.",
+          key: "eda" as const,
+          label: "EDA",
+          completed: hasCompletedEda,
+          onNavigate: hasCompletedEda
+            ? () => {
+              setCanvasView("pre-eda");
+            }
+            : undefined,
         },
         {
-          stage: "Deep EDA",
-          value:
-            state === "ready"
-              ? "QUEUED" as const
-              : state === "running"
-                ? runningSubPhase === "report"
-                  ? "DONE" as const
-                  : "RUNNING" as const
-                : state === "needs-user"
-                  ? "BLOCKED" as const
-                  : state === "error"
-                    ? "FAILED" as const
-                    : state === "success"
-                      ? "DONE" as const
-                      : "QUEUED" as const,
-          tooltip: "사용자 질문 이후 분포, 상관관계, 이상치 탐지로 확장됩니다.",
-        },
-        {
-          stage: "Report",
-          value:
-            state === "success"
-              ? "DONE" as const
-              : state === "running" && runningSubPhase === "report"
-                ? "RUNNING" as const
-                : state === "error" && runningSubPhase === "report"
-                  ? "FAILED" as const
-                  : "QUEUED" as const,
-          tooltip: "Deep EDA가 끝나면 최종 요약과 후속 리포트 흐름을 남깁니다.",
+          key: "analysis" as const,
+          label: "Analysis",
+          completed: hasCompletedAnalysis,
+          onNavigate: hasCompletedAnalysis
+            ? () => {
+              setCanvasView("deep-eda");
+            }
+            : undefined,
         },
       ]
     : [];
@@ -881,25 +882,6 @@ export default function Workbench() {
       </CardBody>
     </CardShell>
   ) : null;
-
-  const headerSubtitle =
-    state === "empty"
-      ? "데이터 업로드 또는 일반 질문으로 새 세션을 시작할 수 있습니다."
-      : state === "uploading"
-        ? `${fileName || "dataset"} 업로드와 검증이 진행 중입니다.`
-        : state === "ready"
-          ? hasDatasetContext
-            ? `${currentDatasetLabel} 기준 Pre-EDA 레이아웃이 준비되었습니다.`
-            : "업로드는 완료됐지만 아직 source가 선택되지 않았습니다."
-          : state === "running"
-            ? `${currentDatasetLabel} 질문을 바탕으로 Deep EDA를 진행 중입니다.`
-            : state === "needs-user"
-              ? "전처리 필요성이 감지되어 HITL 승인 대기 상태입니다."
-              : state === "error"
-                ? "실패 원인과 복구 맥락을 우측 패널과 중앙 카드에서 함께 확인합니다."
-                : hasDatasetContext
-                  ? `${currentDatasetLabel} 기준 Deep EDA 결과와 report가 누적되고 있습니다.`
-                  : "일반 질문 결과가 준비되었습니다.";
 
   /* ── LEFT PANEL — Session only ── */
   const LeftPanel = (
@@ -974,78 +956,84 @@ export default function Workbench() {
           )}
         </div>
       </div>
-      <div className="border-t border-[var(--genui-border)] px-3 py-3 bg-[var(--genui-surface)]">
-        <p className="text-[10px] leading-relaxed text-[var(--genui-muted)]">
-          세션 전환과 삭제는 여기서만 처리하고, 실제 분석 흐름과 승인 결정은 중앙 캔버스에서 진행합니다.
-        </p>
-      </div>
     </>
   );
 
   /* ── CENTER: Decision chips → centerSubHeader ── */
   const CenterSubHeader = (
-    <div className="grid w-full min-w-0 items-center gap-3 xl:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
-      {hasUploadedDatasets ? (
-        <div className="flex min-w-0 items-center gap-2 overflow-hidden">
-          <span className="text-[11px] font-medium text-[var(--genui-muted)] whitespace-nowrap">데이터 소스</span>
-          <select
-            value={selectedSourceId ?? ""}
-            onChange={(e) => selectUploadedDataset(e.target.value || null)}
-            disabled={isDatasetSelectorLocked}
-            className="h-7 w-[220px] max-w-full flex-shrink-0 rounded-md border border-[var(--genui-border)] bg-[var(--genui-surface)] px-2 text-xs text-[var(--genui-text)] focus:outline-none focus:ring-1 focus:ring-[var(--genui-focus-ring)] truncate disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <option value="">선택 안 함 (일반 질문)</option>
-            {uploadedDatasets.map((dataset) => (
-              <option key={dataset.sourceId} value={dataset.sourceId}>
-                {dataset.fileName}
-              </option>
-            ))}
-          </select>
-          <button
-            type="button"
-            onClick={handleDeleteSelectedDataset}
-            disabled={!selectedSourceId || isPreEdaApplying}
-            className="h-7 px-2 rounded-md border border-[var(--genui-border)] bg-[var(--genui-panel)] text-xs text-[var(--genui-text)] inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[var(--genui-surface)] whitespace-nowrap flex-shrink-0"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-            삭제
-          </button>
+    <div className="flex w-full min-w-0 items-center gap-3">
+      <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
+        {hasUploadedDatasets ? (
+          <>
+            <span className="text-[11px] font-medium text-[var(--genui-muted)] whitespace-nowrap">데이터 소스</span>
+            <div className="relative min-w-0 w-full max-w-[210px]">
+              <select
+                value={selectedSourceId ?? ""}
+                onChange={(e) => selectUploadedDataset(e.target.value || null)}
+                disabled={isDatasetSelectorLocked}
+                className="h-7 w-full min-w-0 appearance-none rounded-md border border-[var(--genui-border)] bg-[var(--genui-surface)] pl-2 pr-8 text-xs text-[var(--genui-text)] focus:outline-none focus:ring-1 focus:ring-[var(--genui-focus-ring)] disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <option value="">선택 안 함 (일반 질문)</option>
+                {uploadedDatasets.map((dataset) => (
+                  <option key={dataset.sourceId} value={dataset.sourceId}>
+                    {dataset.fileName}
+                  </option>
+                ))}
+              </select>
+              <span className="pointer-events-none absolute inset-y-0 right-2 inline-flex items-center text-[var(--genui-muted)]">
+                <ChevronDown className="w-3.5 h-3.5" />
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={handleDeleteSelectedDataset}
+              disabled={!selectedSourceId || isPreEdaApplying}
+              className="h-7 px-2 rounded-md border border-[var(--genui-border)] bg-[var(--genui-panel)] text-xs text-[var(--genui-text)] inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[var(--genui-surface)] whitespace-nowrap flex-shrink-0"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              삭제
+            </button>
+          </>
+        ) : (
+          <span className="text-xs text-[var(--genui-muted)] whitespace-nowrap">
+            업로드가 완료되면 선택된 데이터 소스와 분석 상태가 여기에 표시됩니다.
+          </span>
+        )}
+      </div>
+
+      {statusSteps.length > 0 ? (
+        <div className="ml-auto flex flex-shrink-0 items-center gap-2">
+          {statusSteps.map((step) => (
+            <button
+              key={step.key}
+              type="button"
+              onClick={step.onNavigate}
+              disabled={!step.onNavigate}
+              className={cn(
+                "inline-flex h-9 w-[148px] items-center justify-center gap-2 rounded-md border px-3 text-[11px] font-semibold uppercase tracking-[0.16em] transition-colors",
+                step.completed
+                  ? "border-[var(--genui-success)]/25 bg-[var(--genui-success)]/10 text-[var(--genui-success)]"
+                  : "border-[var(--genui-error)]/25 bg-[var(--genui-error)]/10 text-[var(--genui-error)]",
+                step.onNavigate
+                  ? "cursor-pointer hover:opacity-85"
+                  : "cursor-default",
+              )}
+              title={
+                step.completed
+                  ? `${step.label} 결과 보기`
+                  : `${step.label}가 아직 완료되지 않았습니다.`
+              }
+            >
+              {step.completed ? (
+                <CheckCircle2 className="h-4 w-4 flex-shrink-0" />
+              ) : (
+                <XCircle className="h-4 w-4 flex-shrink-0" />
+              )}
+              <span>{step.label}</span>
+            </button>
+          ))}
         </div>
-      ) : (
-        <span className="text-xs text-[var(--genui-muted)] whitespace-nowrap">
-          업로드가 완료되면 선택된 source와 route 상태가 여기에 표시됩니다.
-        </span>
-      )}
-
-      {derivedRouteChips.length > 0 ? (
-        <div className="justify-self-start xl:justify-self-center">
-          <DecisionChips
-            className="flex-wrap"
-            chips={derivedRouteChips.map((c) => {
-              const viewKey: CanvasView =
-                c.stage === "Pre-EDA" ? "pre-eda"
-                : c.stage === "Deep EDA" ? "deep-eda"
-                : c.stage === "Report" ? "report"
-                : "current";
-
-              // QUEUED 상태면 아직 데이터가 없으므로 클릭 불가
-              if (c.value === "QUEUED") return { ...c, onNavigate: undefined };
-
-              return {
-                ...c,
-                onNavigate: () => {
-                  // 토글: 같은 칩 다시 누르면 current로 복귀
-                  setCanvasView((prev) => prev === viewKey ? "current" : viewKey);
-                },
-              };
-            })}
-          />
-        </div>
-      ) : (
-        <div />
-      )}
-
-      <div className="hidden xl:block" />
+      ) : null}
     </div>
   );
 
@@ -1093,8 +1081,8 @@ export default function Workbench() {
         </div>
       )}
 
-      {/* ── CHAT HISTORY (Past Turns) — 스냅샷 뷰에서는 숨김 ── */}
-      {canvasView === "current" && chatHistory.length > 0 && (
+      {/* ── CHAT HISTORY (Past Turns) — analysis current view only ── */}
+      {canvasView === "current" && displayedCanvasView === "deep-eda" && chatHistory.length > 0 && (
         <div className="space-y-5 mb-8 w-full max-w-3xl mx-auto animate-in fade-in duration-500">
           {chatHistory.map((msg) => {
             if (msg.role === "user") {
@@ -1135,20 +1123,22 @@ export default function Workbench() {
         </div>
       )}
 
-      {/* ── CANVAS VIEW: Route 칩 스냅샷 뷰 ── */}
-      {canvasView !== "current" && (
+      {/* ── CANVAS VIEW: explicit snapshot or effective current snapshot ── */}
+      {displayedCanvasView !== null && (
         <div className="animate-in fade-in duration-300">
           {/* 뒤로가기 바 */}
-          <button
-            type="button"
-            onClick={() => setCanvasView("current")}
-            className="mb-4 inline-flex items-center gap-1.5 rounded-lg border border-[var(--genui-border)] bg-[var(--genui-panel)] px-3 py-1.5 text-xs font-medium text-[var(--genui-muted)] hover:text-[var(--genui-text)] hover:bg-[var(--genui-surface)] transition-colors"
-          >
-            <span className="text-sm">←</span>
-            현재 상태로 돌아가기
-          </button>
+          {canvasView !== "current" && (
+            <button
+              type="button"
+              onClick={() => setCanvasView("current")}
+              className="mb-4 inline-flex items-center gap-1.5 rounded-lg border border-[var(--genui-border)] bg-[var(--genui-panel)] px-3 py-1.5 text-xs font-medium text-[var(--genui-muted)] hover:text-[var(--genui-text)] hover:bg-[var(--genui-surface)] transition-colors"
+            >
+              <span className="text-sm">←</span>
+              현재 상태로 돌아가기
+            </button>
+          )}
 
-          {canvasView === "pre-eda" && (
+          {displayedCanvasView === "pre-eda" && (
             <div className="space-y-6">
               <div className="flex items-center gap-2 mb-2">
                 <StatusBadge status="success" />
@@ -1180,7 +1170,7 @@ export default function Workbench() {
             </div>
           )}
 
-          {canvasView === "deep-eda" && (
+          {displayedCanvasView === "deep-eda" && (
             <div className="space-y-6">
               <div className="flex items-center gap-2 mb-2">
                 <StatusBadge
@@ -1216,7 +1206,7 @@ export default function Workbench() {
             </div>
           )}
 
-          {canvasView === "report" && (
+          {displayedCanvasView === "report" && (
             <div className="space-y-6">
               <div className="flex items-center gap-2 mb-2">
                 <StatusBadge
@@ -1247,7 +1237,7 @@ export default function Workbench() {
       )}
 
       {/* ── CURRENT VIEW: 기존 상태 기반 렌더링 ── */}
-      {canvasView === "current" && (
+      {canvasView === "current" && displayedCanvasView === null && (
         <>
           {state === "ready" && (
             <div className="space-y-6 animate-in fade-in zoom-in-95 duration-300">
@@ -1756,15 +1746,7 @@ export default function Workbench() {
           </span>
           <StatusBadge status={state} className="shrink-0" />
         </div>
-        <p className="mt-0.5 truncate text-[11px] text-[var(--genui-muted)]">
-          {headerSubtitle}
-        </p>
       </div>
-      {hasDatasetContext && (
-        <div className="hidden xl:flex items-center gap-2 rounded-full border border-[var(--genui-border)] bg-[var(--genui-surface)] px-3 py-1.5 text-[11px] text-[var(--genui-muted)]">
-          <span className="font-medium text-[var(--genui-text)] truncate max-w-[220px]">{currentDatasetLabel}</span>
-        </div>
-      )}
     </div>
   );
 
