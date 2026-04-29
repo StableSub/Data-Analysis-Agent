@@ -1,42 +1,33 @@
 # 데이터 분석 AI 에이전트
 
 ## 개요
-이 캡스톤 프로젝트는 학계와 산업계가 협업해 개발한 인터랙티브 AI 에이전트로, 데이터 업로드부터 시각화 추천까지의 분석 과정을 간소화합니다. 안전한 업로드, 지속형 세션, 데이터셋 탐색, 자동 시각화 제안을 제공하여 연구자가 원시 데이터에서 인사이트까지 빠르게 도달하도록 돕습니다.
 
-## 주요 기능
-- **데이터 업로드**: CSV, Excel 등 다양한 표 형식을 지원하며 용량 검증, 오류 처리, 암호화 저장으로 안전하게 관리합니다.
-- **세션 관리**: 데이터 선택과 환경 설정을 포함한 분석 세션 전체를 저장·복원해 작업 연속성을 보장합니다.
-- **데이터 소스 목록**: 업로드된 데이터셋을 메타데이터(업로드 시각, 크기 등)와 함께 보여주고 검색·필터 기능을 제공합니다.
-- **데이터 미리보기**: 샘플 뷰를 생성해 결측치나 이상치를 강조하며 빠른 품질 검증이 가능하도록 합니다.
-- **데이터 삭제**: 확인 절차와 소프트 복구 경로를 제공해 실수로 인한 데이터 손실을 예방합니다.
-- **자동 시각화**: AI 기반 휴리스틱으로 적절한 차트를 추천하고, 내보내기 전 미리보기와 커스터마이징을 지원합니다.
+이 프로젝트는 사용자가 데이터셋을 업로드하고 자연어로 질문하면, AI 에이전트가 데이터 전처리, 분석, RAG 기반 근거 검색, 시각화, 리포트 생성을 조합해 답변하는 웹 기반 데이터 분석 플랫폼이다.
 
-## 사용법
-1. UI 또는 API 엔드포인트로 하나 이상의 데이터셋을 업로드합니다.
-2. 미리보기 패널에서 포맷 문제나 데이터 품질 이슈를 확인합니다.
-3. 현재 세션을 저장해 작업을 일시 중단하거나 협업자와 공유합니다.
-4. 시각화 추천을 실행하고 제안된 차트를 요구사항에 맞게 조정합니다.
-5. 프로젝트 진행 상황에 맞춰 데이터셋을 관리하거나 삭제합니다.
+백엔드는 FastAPI와 LangGraph 기반 workflow로 실행 흐름을 구성하고, 프론트엔드는 React/Vite Workbench에서 SSE 스트림을 받아 진행 상태, 승인 요청, 분석 결과를 표시한다.
 
+## 제품 문서
 
----
+- [제품 요구사항](./docs/product/prd.md): 데이터 분석 AI 에이전트의 목표, 핵심 흐름, 기능 범위
+- [현재 구현 기준선](./docs/product/current-state-baseline.md): 현재 코드 기준 제공 기능과 제약
+- [구현 로드맵](./docs/product/roadmap.md): 개선 우선순위와 하네스/검증 계획
 
-# Data Analysis AI Agent
+## 핵심 기능
 
-## Overview
-This capstone project delivers an interactive AI agent, co-developed by academia and industry, that streamlines the entire analytics flow from data upload to visualization recommendations. It offers secure ingestion, persistent sessions, dataset exploration, and automated chart suggestions so researchers can move quickly from raw data to insights.
+- CSV 데이터셋 업로드, 목록/상세/샘플 조회
+- 데이터셋 프로파일링과 EDA 기반 품질 확인
+- 전처리 제안, approval, 적용, resume 흐름
+- 자연어 질문 기반 분석 계획 수립과 SQL/Python 실행
+- RAG/guideline 기반 문서 검색과 근거 요약
+- 분석 결과 기반 시각화 생성
+- 리포트 초안 생성, approval, revision, finalize
+- SSE 기반 실행 상태 스트리밍과 세션 히스토리
+- trace/logging 기반 실행 이력 추적
 
-## Features
-- **Data Upload**: Supports CSV, Excel, and other tabular formats with size validation, error handling, and encrypted storage.
-- **Session Management**: Saves and restores full analysis sessions, including dataset selections and configuration state.
-- **Data Source Listing**: Displays uploaded datasets with metadata (timestamp, size) plus search and filtering tools.
-- **Data Preview**: Generates sample views that highlight missing values and anomalies for rapid QA.
-- **Data Deletion**: Adds guarded delete flows with confirmations and soft-recovery paths to avoid accidental loss.
-- **Automated Visualization**: Uses AI heuristics to recommend chart types and provides customizable previews before export.
+## 로컬 실행
 
-## Usage
-1. Upload one or more datasets through the UI or API endpoint.
-2. Review the preview pane to catch formatting issues or data-quality gaps.
-3. Save the current session to pause work or share with collaborators.
-4. Trigger visualization recommendations and tailor the suggested charts to your needs.
-5. Manage or delete datasets as project requirements evolve.
+```bash
+bash dev.sh
+```
+
+자세한 실행과 검증 기준은 루트 `AGENTS.md`와 [문서 진입점](./docs/README.md)을 확인한다.
