@@ -304,7 +304,7 @@ function PreprocessRecommendationCard({
         <CardShell status="success" className="xl:col-span-12">
           <CardHeader
             title="전처리 추천"
-            meta="Preprocess Recomendation"
+            meta="Preprocess Recommendation"
             statusLabel="Clean"
             statusVariant="success"
             className="px-3.5 py-2.5"
@@ -808,7 +808,7 @@ export function PreEdaBoard({
         <CardShell className="min-h-[360px] xl:col-span-7">
           <CardHeader
             title="기본 통계"
-            meta="Basic Statics"
+            meta="Basic Statistics"
             statusLabel={profile.numericColumnStats.length > 0 ? "Table" : "No Numeric"}
             statusVariant="neutral"
             className="px-3.5 py-2.5"
@@ -867,7 +867,7 @@ export function PreEdaBoard({
           <CardShell>
             <CardHeader
               title="상관관계 TOP 3 분석"
-              meta="Corellation"
+              meta="Correlation"
               statusLabel={profile.correlationTopPairs.length > 0 ? "Top 3" : "Insufficient"}
               statusVariant="neutral"
               className="px-3.5 py-2.5"

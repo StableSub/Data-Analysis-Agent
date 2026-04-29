@@ -285,21 +285,6 @@ export default function Workbench() {
     return `${m}:${sec}`;
   };
 
-  function getCurrentSession(items: WorkbenchSessionItem[]): WorkbenchSessionItem | null {
-    const sessionsWithActivity = items.filter((item) => Boolean(item.activityAt));
-    if (sessionsWithActivity.length === 0) {
-      return activeSession ?? items[0] ?? null;
-    }
-    return sessionsWithActivity.reduce((latest, item) => {
-      if (!latest) {
-        return item;
-      }
-      return (item.activityAt ?? "") > (latest.activityAt ?? "") ? item : latest;
-    }, sessionsWithActivity[0]);
-  }
-
-  const currentSession = getCurrentSession(sessions);
-
   const saveSessionSnapshot = useCallback(
     (targetSessionId: string | null) => {
       if (!targetSessionId) {
@@ -787,7 +772,7 @@ export default function Workbench() {
     latestAssistantContent === ANALYSIS_FAILURE_MESSAGE
     || (chatHistory.length === 0 && state === "error");
   const effectiveCurrentView: Exclude<CanvasView, "current"> | null =
-    state === "empty" || state === "uploading" || state === "running"
+    state === "empty" || state === "uploading" || state === "running" || state === "needs-user" || state === "error"
       ? null
       : hasCompletedAnalysis
         ? "deep-eda"
@@ -891,7 +876,7 @@ export default function Workbench() {
             Current
           </p>
           <p className="mt-1 text-[12px] font-medium text-[var(--genui-text)] truncate">
-            {currentSession?.title || "새 채팅"}
+            {activeSession?.title || "새 채팅"}
           </p>
         </div>
         <button
