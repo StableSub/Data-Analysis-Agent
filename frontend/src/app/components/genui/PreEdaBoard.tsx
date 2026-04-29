@@ -945,7 +945,7 @@ export function PreEdaBoard({
                 분포를 표시할 컬럼이 없습니다.
               </div>
             ) : showDistributionLoading ? (
-              <div className="flex min-h-[220px] items-center justify-center rounded-xl border border-[var(--genui-border)] bg-[var(--genui-surface)] px-4 py-4 text-sm text-[var(--genui-text)]">
+              <div className="flex min-h-[360px] items-center justify-center rounded-xl border border-[var(--genui-border)] bg-[var(--genui-surface)] px-4 py-4 text-sm text-[var(--genui-text)]">
                 <div className="flex items-center gap-2">
                   <LoaderCircle className="h-4 w-4 animate-spin" />
                   <span>분포를 불러오는 중입니다.</span>
@@ -989,7 +989,7 @@ export function PreEdaBoard({
                   <ChartContainer
                     config={chartConfig}
                     className={cn(
-                      "h-[220px] aspect-auto rounded-lg border border-[var(--genui-border)] bg-[var(--genui-surface)] px-2 py-2 [&_.recharts-tooltip-cursor]:opacity-0 [&_.recharts-rectangle.recharts-tooltip-cursor]:fill-transparent [&_.recharts-rectangle.recharts-tooltip-cursor]:stroke-transparent",
+                      "h-[360px] aspect-auto rounded-lg border border-[var(--genui-border)] bg-[var(--genui-surface)] px-2 py-2 [&_.recharts-tooltip-cursor]:opacity-0 [&_.recharts-rectangle.recharts-tooltip-cursor]:fill-transparent [&_.recharts-rectangle.recharts-tooltip-cursor]:stroke-transparent",
                       isDistributionScrollable ? "w-auto min-w-full" : "w-full",
                     )}
                     style={{
