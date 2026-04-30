@@ -256,7 +256,7 @@ export function DetailsPanel({ state, selectedItem, onAction, className }: Detai
           <div className="flex-1 rounded-2xl border border-[var(--genui-needs-user)]/30 bg-[var(--genui-surface)] p-4 shadow-sm overflow-y-auto">
             <div className="space-y-2 pb-3 border-b border-[var(--genui-border)]">
               <p className="text-xs font-bold uppercase tracking-widest text-[var(--genui-needs-user)]">
-                Report Draft
+                Analysis Draft
               </p>
               <h3 className="text-sm font-semibold text-[var(--genui-text)]">
                 {pendingApproval.title}
@@ -266,7 +266,7 @@ export function DetailsPanel({ state, selectedItem, onAction, className }: Detai
               </p>
             </div>
             <div className="mt-4 whitespace-pre-wrap text-sm leading-6 text-[var(--genui-text)]">
-              {pendingApproval.draft.trim() || "리포트 초안을 불러오지 못했습니다."}
+              {pendingApproval.draft.trim() || "분석 결과 초안을 불러오지 못했습니다."}
             </div>
           </div>
         </div>

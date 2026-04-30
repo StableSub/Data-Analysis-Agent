@@ -35,7 +35,6 @@ import type {
   RunStatusData,
   PipelineStep,
 } from "../components/genui/CopilotPanel";
-import type { DecisionChip, ChipValue } from "../components/genui/DecisionChips";
 import type { EvidenceFooterProps } from "../components/genui/EvidenceFooter";
 import type { RawLogEntry } from "../components/genui/MCPPanel";
 import type { TimelineItemStatus } from "../components/genui/TimelineItem";
@@ -148,7 +147,6 @@ export interface UseAnalysisPipelineReturn {
   toolCalls: ToolCallEntry[];
   runStatus: RunStatusData | undefined;
   pipelineSteps: PipelineStep[] | undefined;
-  decisionChips: DecisionChip[];
   evidence: EvidenceFooterProps;
   thoughtSteps: ThoughtStep[];
   chatHistory: ChatHistoryMessage[];
@@ -208,7 +206,7 @@ const STAGE_LABELS: Record<string, string> = {
   rag: "참고 정보 확인",
   viz: "시각화",
   merge: "결과 정리",
-  report: "리포트",
+  report: "Analysis",
 };
 
 /** Map RunningSubPhase to STAGES index key */
@@ -626,11 +624,11 @@ function parsePendingApproval(payload: unknown): PendingApprovalPayload | null {
       title:
         typeof data.title === "string" && data.title.trim()
           ? data.title
-          : "Report draft review",
+          : "Analysis draft review",
       summary:
         typeof data.summary === "string" && data.summary.trim()
           ? data.summary
-          : "리포트 초안을 검토한 뒤 승인 여부를 결정해 주세요.",
+          : "분석 결과 초안을 검토한 뒤 승인 여부를 결정해 주세요.",
       source_id: typeof data.source_id === "string" ? data.source_id : "",
       draft: typeof data.draft === "string" ? data.draft : "",
       review: data.review && typeof data.review === "object"
@@ -754,21 +752,21 @@ function approvalStageLabel(stage: PendingApprovalPayload["stage"]): string {
     return "Visualization";
   }
   if (stage === "report") {
-    return "Report";
+    return "Analysis";
   }
   return "Preprocess";
 }
 
 function approvalStageNeedsUserTitle(stage: PendingApprovalPayload["stage"]): string {
   if (stage === "report") {
-    return "Report draft ready";
+    return "Analysis draft ready";
   }
   return "Approval required";
 }
 
 function approvalStageRevisionTitle(stage: PendingApprovalPayload["stage"]): string {
   if (stage === "report") {
-    return "Report revision requested";
+    return "Analysis revision requested";
   }
   if (stage === "visualization") {
     return "Visualization revision requested";
@@ -778,7 +776,7 @@ function approvalStageRevisionTitle(stage: PendingApprovalPayload["stage"]): str
 
 function approvalStageCancelTitle(stage: PendingApprovalPayload["stage"]): string {
   if (stage === "report") {
-    return "Report cancelled";
+    return "Analysis cancelled";
   }
   return "Run cancelled";
 }
@@ -1383,7 +1381,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
           setPendingApproval(null);
           if (isReportFailure) {
             terminalErrorStep = "report";
-            terminalErrorMessage = answer.trim() || "리포트 생성에 실패했습니다.";
+            terminalErrorMessage = answer.trim() || "분석 결과 생성에 실패했습니다.";
           }
 
           const nextSession = record.session_id;
@@ -2304,7 +2302,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
           content: preEdaUnavailable
             ? (selected?.preEdaWarning ?? "Pre-EDA 정보를 아직 불러오지 못했습니다. Retry EDA로 다시 시도할 수 있습니다.")
             : selectedPreEdaProfile?.qualitySummary
-            ?? "업로드가 완료되었습니다. 파일을 선택한 뒤 질문하면 해당 데이터셋 기준으로 Deep EDA와 리포트가 이어집니다.",
+            ?? "업로드가 완료되었습니다. 파일을 선택한 뒤 질문하면 해당 데이터셋 기준으로 Analysis가 이어집니다.",
         },
         ...(preEdaUnavailable
           ? [{
@@ -2353,10 +2351,10 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
           .filter(Boolean);
         return [
           { type: "paragraph" as const, content: pendingApproval.summary },
-          { type: "heading" as const, content: "Report Draft" },
+          { type: "heading" as const, content: "Analysis Draft" },
           ...(paragraphs.length > 0
             ? paragraphs.map((item) => ({ type: "paragraph" as const, content: item }))
-            : [{ type: "paragraph" as const, content: "리포트 초안을 불러오지 못했습니다." }]),
+            : [{ type: "paragraph" as const, content: "분석 결과 초안을 불러오지 못했습니다." }]),
         ];
       }
 
@@ -2457,7 +2455,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
       preprocessing: "데이터 준비",
       rag: "참고 정보 확인",
       visualization: "시각화",
-      report: "리포트 생성",
+      report: "분석 결과 생성",
     };
 
     return {
@@ -2520,52 +2518,6 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
     });
   })();
 
-  const derivedDecisionChips: DecisionChip[] = (() => {
-    if (!sourceId) return [];
-    if (state === "empty" || state === "uploading" || state === "ready") return [];
-
-    const CHIP_STAGES = ["Preprocess", "RAG", "Viz", "Report", "Mode"] as const;
-    const completed = completedStagesRef.current;
-    const stageKeyMap: Record<string, string> = {
-      Preprocess: "preprocess",
-      RAG: "rag",
-      Viz: "viz",
-      Report: "report",
-    };
-
-    return CHIP_STAGES.map((stage): DecisionChip => {
-      if (stage === "Mode") return { stage, value: "Full" as ChipValue };
-
-      const key = stageKeyMap[stage] ?? "";
-      const currentKey = subPhaseToStageKey(runningSubPhase);
-      const currentIdx = STAGES.indexOf(currentKey as (typeof STAGES)[number]);
-      const stageIdx = STAGES.indexOf(key as (typeof STAGES)[number]);
-
-      let value: ChipValue = "ON";
-      if (state === "error" && stageIdx === currentIdx) {
-        value = "FAILED";
-      } else if (
-        state === "needs-user"
-        && pendingApproval
-        && key === (
-          pendingApproval.stage === "visualization"
-            ? "viz"
-            : pendingApproval.stage === "report"
-              ? "report"
-              : "preprocess"
-        )
-      ) {
-        value = "BLOCKED";
-      } else if (state === "running" && stageIdx === currentIdx) {
-        value = "RUNNING";
-      } else if (completed.has(key) || (state === "success" && stageIdx <= currentIdx)) {
-        value = "DONE";
-      }
-
-      return { stage, value };
-    });
-  })();
-
   const derivedEvidence: EvidenceFooterProps = (() => {
     const selectedDataset = uploadedDatasets.find((item) => item.sourceId === sourceId);
     const ragUsed = thoughtSteps.some(
@@ -2590,7 +2542,6 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
     toolCalls,
     runStatus: derivedRunStatus,
     pipelineSteps: derivedPipelineSteps,
-    decisionChips: derivedDecisionChips,
     evidence: derivedEvidence,
     thoughtSteps,
     chatHistory,

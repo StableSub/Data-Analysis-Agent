@@ -462,7 +462,7 @@ function createFallbackProfile(file: File, uploadedAt: string): PreEdaProfile {
       "현재 브라우저에서는 CSV/JSON 기반 Pre-EDA만 즉시 계산합니다. 이 파일은 업로드 후 질문 흐름에 사용할 수 있습니다.",
     summaryBullets: [
       "CSV/JSON이 아닌 형식이라 브라우저 내 즉시 프로파일링은 생략했습니다.",
-      "업로드 후 질문과 후속 리포트 흐름은 그대로 진행할 수 있습니다.",
+      "업로드 후 질문과 후속 Analysis 흐름은 그대로 진행할 수 있습니다.",
     ],
     serverRecommendation: null,
   };
@@ -856,7 +856,7 @@ export async function buildPreEdaProfile(file: File): Promise<PreEdaProfile | nu
     `numeric ${numericColumns.length}개, categorical ${categoricalColumns.length}개, boolean ${booleanColumns.length}개, datetime ${datetimeColumns.length}개, group key ${groupKeyColumns.length}개로 분류했습니다.`,
     recommendation
       ? `${recommendation.column} 컬럼 결측 ${recommendation.missingCount.toLocaleString()}건(${recommendation.missingPercent}%)이 있어 질문 전 전처리 검토가 필요합니다.`
-      : "치명적인 결측 이슈는 크지 않아 바로 질문 기반 Deep EDA로 이어갈 수 있습니다.",
+      : "치명적인 결측 이슈는 크지 않아 바로 질문 기반 Analysis로 이어갈 수 있습니다.",
     topCorrelation
       ? `${topCorrelation.left}와 ${topCorrelation.right}의 Pearson 상관계수는 ${topCorrelation.value}입니다.`
       : "numeric 컬럼 간 상관관계는 아직 뚜렷한 TOP pair가 없습니다.",
@@ -865,8 +865,8 @@ export async function buildPreEdaProfile(file: File): Promise<PreEdaProfile | nu
   const summaryBullets = [
     `전체 ${rows.length.toLocaleString()} rows / ${columns.length.toLocaleString()} columns이며, group key는 ${groupKeyColumns.length > 0 ? groupKeyColumns.slice(0, 2).join(", ") : "미탐지"} 상태입니다.`,
     recommendation
-      ? `${recommendation.column} 결측을 ${recommendation.strategy}로 보정하면 이후 Deep EDA 해석이 더 안정적입니다.`
-      : "결측률이 큰 컬럼이 없어 Deep EDA를 바로 진행해도 되는 상태입니다.",
+      ? `${recommendation.column} 결측을 ${recommendation.strategy}로 보정하면 이후 Analysis 해석이 더 안정적입니다.`
+      : "결측률이 큰 컬럼이 없어 Analysis를 바로 진행해도 되는 상태입니다.",
     topCorrelation
       ? `상관관계 TOP 1은 ${topCorrelation.left} ↔ ${topCorrelation.right} (${topCorrelation.value})입니다.`
       : "상관관계 TOP 분석은 numeric 컬럼이 더 필요하거나 변동성이 더 커야 의미가 생깁니다.",

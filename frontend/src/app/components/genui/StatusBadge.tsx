@@ -12,10 +12,11 @@ export type StatusType =
 
 interface StatusBadgeProps {
   status: StatusType;
+  labelOverride?: string;
   className?: string;
 }
 
-export function StatusBadge({ status, className }: StatusBadgeProps) {
+export function StatusBadge({ status, labelOverride, className }: StatusBadgeProps) {
   const config = {
     empty: { label: "No Dataset", color: "bg-[var(--genui-muted)]/20 text-[var(--genui-muted)] border-[var(--genui-border)]" },
     uploading: { label: "Uploading...", color: "bg-[var(--genui-running)]/10 text-[var(--genui-running)] border-[var(--genui-running)]/20" },
@@ -27,6 +28,7 @@ export function StatusBadge({ status, className }: StatusBadgeProps) {
   };
 
   const { label, color } = config[status] || config.empty;
+  const resolvedLabel = labelOverride ?? label;
 
   return (
     <span className={cn(
@@ -35,7 +37,7 @@ export function StatusBadge({ status, className }: StatusBadgeProps) {
       className
     )}>
       {status === "running" && <span className="w-1.5 h-1.5 bg-white rounded-full mr-1.5 animate-pulse" />}
-      {label}
+      {resolvedLabel}
     </span>
   );
 }
