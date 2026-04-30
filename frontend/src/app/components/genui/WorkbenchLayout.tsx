@@ -2,16 +2,9 @@ import React, { useState } from "react";
 import { cn } from "../../../lib/utils";
 import { SidebarClose, SidebarOpen } from "lucide-react";
 
-/* ─────────────────────────────────────────────
-   Sub-header height token — shared across all 3 columns
-   to guarantee horizontal baseline alignment.
-───────────────────────────────────────────── */
-const SUB_H = "h-10"; // 40px: Left History / Center Route / Right Tabs
-
 interface LayoutProps {
   leftPanel: React.ReactNode;
   mainContent: React.ReactNode;
-  rightPanel: React.ReactNode;
   contentScrollRef?: React.Ref<HTMLDivElement>;
 
   /** Session title row content (h-12 global header) */
@@ -21,8 +14,7 @@ interface LayoutProps {
    * Center column sub-header content.
    * Rendered in a fixed h-10 row aligned with:
    *   - Left History label bar (h-10)
-   *   - Right RightPanelTabs tab bar (h-10)
-   * When null/undefined, the row is still rendered (keeps grid stable).
+   * When null/undefined, the row is still rendered (keeps layout stable).
    */
   centerSubHeader?: React.ReactNode;
 
@@ -39,7 +31,6 @@ interface LayoutProps {
 export function WorkbenchLayout({
   leftPanel,
   mainContent,
-  rightPanel,
   contentScrollRef,
   header,
   centerSubHeader,
@@ -77,7 +68,7 @@ export function WorkbenchLayout({
         {pipelineBar}
       </header>
 
-      {/* ── Row 2+: 3-column body ── */}
+      {/* ── Row 2+: 2-column body ── */}
       <div className="flex-1 flex overflow-hidden relative">
 
         {/* ── Left: History panel (collapsible) ── */}
@@ -99,7 +90,6 @@ export function WorkbenchLayout({
             Center sub-header (h-10) — always rendered for grid stability.
             Aligns horizontally with:
               • Left aside's inner History h-10 label row
-              • Right aside's RightPanelTabs h-10 tab row
           */}
           <div
             className={cn(
@@ -127,18 +117,13 @@ export function WorkbenchLayout({
             )}
             {bottomBar && (
               <div className="w-full pointer-events-auto bg-[var(--genui-surface)]/80 backdrop-blur-md border-t border-transparent shadow-[0_-4px_24px_rgba(0,0,0,0.04)] dark:shadow-[0_-4px_24px_rgba(0,0,0,0.2)]">
-                <div className="max-w-3xl mx-auto px-4 py-4">
+                <div className="max-w-[1480px] 2xl:max-w-[1620px] mx-auto px-4 py-4">
                   {bottomBar}
                 </div>
               </div>
             )}
           </div>
         </main>
-
-        {/* ── Right: Details / Agent panel (fixed) ── */}
-        <aside className="w-[360px] 2xl:w-[380px] min-h-0 flex-shrink-0 overflow-hidden border-l border-[var(--genui-border)] bg-[var(--genui-panel)] flex flex-col z-10 relative shadow-sm hidden lg:flex">
-          {rightPanel}
-        </aside>
       </div>
     </div>
   );
