@@ -10,7 +10,7 @@
 ## API 설계 원칙
 
 주 실행 경로는 `chats` API다.
-나머지 `datasets`, `eda`, `analysis`, `preprocess`, `vizualization`, `rag`, `export`, `guidelines`, `report`는 기능별 공개 API로 동작한다.
+나머지 `datasets`, `eda`, `analysis`, `preprocess`, `vizualization`, `rag`, `guidelines`는 기능별 공개 API로 동작한다.
 
 `/vizualization`은 오타처럼 보이지만 현재 backend/frontend 계약의 실제 prefix이므로 문서에서도 그대로 사용한다.
 
@@ -31,9 +31,7 @@
 | `preprocess` | 전처리 실행 | 승인된 전처리를 적용할 때 | 새 `output_source_id` 생성 |
 | `vizualization` | 시각화 생성 | 차트 생성이 필요할 때 | 실제 경로가 `/vizualization` |
 | `rag` | 검색 기반 답변과 인덱스 삭제 | 설명형 질의응답 또는 RAG 관리 시 | `204`, `404` 특이 status 사용 |
-| `export` | 분석 결과 CSV export | 결과 테이블 다운로드 시 | CSV 응답 |
 | `guidelines` | 지침서 업로드/활성화/삭제 | 도메인 지식 관리 시 | 활성화 API 존재 |
-| `report` | 리포트 생성/조회 | 리포트 결과를 만들거나 다시 볼 때 | 공개 router 존재 |
 
 ## 채팅 API
 
@@ -72,7 +70,7 @@
   - `stage` 값은 `preprocess`, `visualization`, `report`
   - 응답은 `stream`과 동일하게 SSE 스트림으로 반환된다
 
-### `GET /chats/{session_id}/runs/{run_id}/pending-approval`
+### `GET /chats/runs/{run_id}/pending-approval`
 
 - 역할: 현재 승인 대기 상태 조회
 - 언제 쓰는가: 실행이 중단된 상태에서 어떤 승인 요청이 남아 있는지 확인할 때
@@ -208,6 +206,15 @@
   - `summary_before`
   - `summary_after`
 
+
+### `POST /preprocess/apply-recommendation`
+
+- 역할: EDA/AI 추천 기반 전처리 실행
+- 언제 쓰는가: 추천된 전처리 operation 묶음을 사용자가 승인해 적용할 때
+- 핵심 요청 필드:
+  - `source_id`
+  - `recommendation`
+
 ## 시각화 API
 
 ### `POST /vizualization/manual`
@@ -245,13 +252,6 @@
 - 핵심 응답 형태:
   - `204 No Content`
 
-## Export API
-
-### `POST /export/csv`
-
-- 역할: 분석 결과를 CSV로 export
-- 언제 쓰는가: 분석 결과 테이블을 다운로드 가능한 CSV로 만들 때
-
 ## 지침서 API
 
 ### `POST /guidelines/upload`
@@ -275,23 +275,6 @@
 - 언제 쓰는가: 특정 지침서를 제거할 때
 - 핵심 응답 형태:
   - `204 No Content`
-
-## Report API
-
-### `POST /report/`
-
-- 역할: 리포트 생성
-- 언제 쓰는가: 분석/시각화 결과를 바탕으로 리포트를 만들 때
-
-### `GET /report/`
-
-- 역할: 리포트 목록 조회
-- 언제 쓰는가: 저장된 리포트 목록을 볼 때
-
-### `GET /report/{report_id}`
-
-- 역할: 리포트 상세 조회
-- 언제 쓰는가: 특정 리포트 결과를 다시 확인할 때
 
 ## 공통 응답 및 오류 패턴
 

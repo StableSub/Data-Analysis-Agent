@@ -7,7 +7,6 @@
 | 파일 | 역할 |
 |---|---|
 | `backend/app/core/__init__.py` | core package marker다. 현재 export 로직은 없다. |
-| `backend/app/core/config.py` | 현재 내용이 없는 config 예약 파일이다. runtime 설정 로딩은 `backend/app/main.py`의 `load_dotenv()`와 각 모듈 내부 상수에 흩어져 있다. |
 | `backend/app/core/db.py` | SQLite `engine`, `SessionLocal`, declarative `Base`, FastAPI dependency `get_db()`를 정의한다. |
 | `backend/app/core/ai/__init__.py` | `LLMGateway`, `PromptRegistry`를 core AI package public surface로 export한다. |
 | `backend/app/core/ai/llm_gateway.py` | LangChain `init_chat_model` 기반 LLM wrapper다. 일반 invoke, stream, structured output 호출을 한 지점으로 모은다. |
@@ -51,7 +50,7 @@
 
 ## 발견한 문제점 / 확인 필요 사항
 
-- 관찰: `backend/app/core/config.py`는 현재 비어 있다. 따라서 실제 설정 기준은 core config 파일이 아니라 `backend/app/main.py`, 환경 변수 로딩, 각 module 상수에 분산되어 있다.
+- 관찰: 현재 core config 파일은 없다. 실제 설정 기준은 `backend/app/main.py`, 환경 변수 로딩, 각 module 상수에 분산되어 있다.
 - 관찰: `backend/app/core/db.py`는 `sqlite:///./app.db`를 기본 DB로 직접 둔다. 배포/데모 환경에서 다른 DB를 쓰는 경우 실제 설정 경로를 별도로 확인해야 한다.
 - 리스크: migration layer가 없고 `Base.metadata.create_all()`에 의존하므로, model field 변경이 누적될 때 문서만으로 schema 변경 절차를 판단하면 안 된다.
 - 리스크: `LLMGateway`는 호출 provider/model 세부 동작을 숨기므로, model별 structured output 제약이나 prompt version 차이는 호출 module 문맥까지 같이 확인해야 한다.

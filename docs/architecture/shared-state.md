@@ -95,10 +95,52 @@
   - `analysis_result`
   - `visualization_result`
 
+### `evidence_package` / `answer_quality`
+
+- 의미
+  - `merged_context`를 유지하면서 최종 답변 직전에 만드는 구조화된 evidence/quality contract
+- 주 생성 위치
+  - `merge_context` node
+  - `analysis_fail_terminal`
+- 주 소비 위치
+  - `data_qa_terminal`
+  - `answer_data_question(...)`
+  - workflow 종료 `output`
+- 구현 위치
+  - `backend/app/orchestration/evidence.py`
+- `evidence_package` 주요 내용
+  - `source_id`
+  - `filename`
+  - `used_columns`
+  - `analysis_status`
+  - `analysis_summary`
+  - `analysis_metrics`
+  - `analysis_table`
+  - `rag_retrieved_count`
+  - `rag_evidence_summary`
+  - `guideline_status`
+  - `guideline_retrieved_count`
+  - `guideline_evidence_summary`
+  - `preprocess_status`
+  - `applied_steps`
+  - `warnings`
+- `answer_quality` 주요 내용
+  - `answerable`
+  - `status` (`answerable`, `limited`, `unanswerable`)
+  - `abstain_reason`
+  - `warnings`
+- warning code
+  - `analysis_failed`
+  - `analysis_missing`
+  - `rag_no_evidence`
+  - `no_evidence`
+  - `no_active_guideline`
+  - `preprocess_not_applied`
+
 ### `output`
 
 - 의미
-  - 최종 사용자 응답 타입과 메시지
+  - 최종 사용자 응답 타입과 메시지, optional evidence metadata
 - 주 생성 위치
   - general question terminal
   - clarification terminal
@@ -117,6 +159,9 @@
   - `analysis_failed`
   - `report_failed`
   - `cancelled`
+- optional metadata
+  - `evidence_package`
+  - `answer_quality`
 
 ### `pending_approval`
 
@@ -180,6 +225,7 @@
 - `rag_result`, `guideline_result`, `insight`
   - 참고 근거 사용 여부 표현
 - `visualization_result`, `report_result`, `data_qa_result`, `output`
+- `evidence_package`, `answer_quality`
   - 최종 응답 구성 단계 표현
   - 시각화 결과는 `renderer`, `vega_lite_spec`, legacy `chart/chart_data`, `artifact`를 함께 가질 수 있다
 
@@ -187,6 +233,7 @@
 
 - [ ] `state.py`의 `AgentState`, `MainWorkflowState`, subgraph state key와 이 문서의 핵심 필드가 어긋나지 않는다.
 - [ ] `builder.py`의 `merge_context` 입력이 `merged_context` 설명에 반영되어 있다.
+- [ ] `evidence_package`와 `answer_quality` 변경이 `OutputPayload`, `MainWorkflowState`, final answer 문서에 반영되어 있다.
 - [ ] `client.py`가 읽는 approval/output payload와 이 문서의 사용자-facing 상태 설명이 맞다.
 - [ ] 새 terminal `output.type`이 추가되면 종료 상태와 API/SSE 문서를 함께 갱신했다.
 

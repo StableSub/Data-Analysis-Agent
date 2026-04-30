@@ -1,6 +1,6 @@
-# Chat, report, export, results modules
+# Chat, report, results modules
 
-이 문서는 backend runtime 진입점인 chat module과, 최종 산출물 저장·조회·내보내기를 담당하는 report/export/results module을 정리한다. 사용자 질문의 end-to-end 흐름은 `backend/app/modules/chat/service.py`에서 `backend/app/orchestration/client.py`로 넘어간 뒤 다시 SSE `done` event로 돌아온다.
+이 문서는 backend runtime 진입점인 chat module과, 최종 산출물 저장·조회·내보내기를 담당하는 report/results module을 정리한다. 사용자 질문의 end-to-end 흐름은 `backend/app/modules/chat/service.py`에서 `backend/app/orchestration/client.py`로 넘어간 뒤 다시 SSE `done` event로 돌아온다.
 
 ## `chat/` 파일 카탈로그
 
@@ -23,25 +23,12 @@
 | `backend/app/modules/reports/dependencies.py` | `ReportRepository`, `ReportService` dependency builder/getter를 제공한다. |
 | `backend/app/modules/reports/models.py` | `Report` SQLAlchemy model을 정의한다. |
 | `backend/app/modules/reports/repository.py` | report create/get/list persistence를 담당한다. |
-| `backend/app/modules/reports/router.py` | `APIRouter(prefix="/report")`로 report create/list/get route를 제공한다. |
-| `backend/app/modules/reports/schemas.py` | report create/list/base response schema를 정의한다. |
 | `backend/app/modules/reports/service.py` | report draft 생성, dataset metrics 구성, summary 생성, 저장 use case를 담당한다. |
-
-## `export/` 파일 카탈로그
-
-| 파일 | 역할 |
-|---|---|
-| `backend/app/modules/export/__init__.py` | export package marker다. |
-| `backend/app/modules/export/dependencies.py` | `ResultsRepository`, `ExportService` dependency를 만든다. |
-| `backend/app/modules/export/router.py` | `APIRouter(prefix="/export")`로 `POST /export/csv`를 제공한다. |
-| `backend/app/modules/export/schemas.py` | CSV export request parameter schema를 정의한다. |
-| `backend/app/modules/export/service.py` | stored analysis result를 CSV bytes/filename/media type으로 변환한다. |
 
 ## `results/` 파일 카탈로그
 
 | 파일 | 역할 |
 |---|---|
-| `backend/app/modules/results/__init__.py` | results package marker다. |
 | `backend/app/modules/results/models.py` | `AnalysisResult`, `ChartResult`, `ViewSnapshot` SQLAlchemy model을 정의한다. |
 | `backend/app/modules/results/repository.py` | analysis result 저장/조회, chart data update, model dump/result JSON build를 담당한다. |
 
@@ -56,15 +43,6 @@
 - `GET /chats/{session_id}/history`: session history를 조회한다.
 - `DELETE /chats/{session_id}`: session을 삭제한다.
 
-### `backend/app/modules/reports/router.py`
-
-- `POST /report/`: report 생성.
-- `GET /report/`: session/source 기준 report list.
-- `GET /report/{report_id}`: report detail.
-
-### `backend/app/modules/export/router.py`
-
-- `POST /export/csv`: 저장된 analysis result를 CSV로 다운로드한다.
 
 ## Hotspot: `backend/app/modules/chat/router.py`
 
@@ -128,13 +106,12 @@ FastAPI route와 SSE formatting을 담당한다. `ask_chat_stream()`과 `resume_
 ### 연결 관계
 
 - `backend/app/orchestration/workflows/report.py`에서 report draft approval/finalize 흐름에 사용된다.
-- `backend/app/modules/reports/router.py` public API에서도 직접 사용된다.
 
 ## Hotspot: `backend/app/modules/results/repository.py`
 
 ### 역할
 
-analysis result persistence와 downstream export/visualization 조회의 기준 repository다.
+analysis result persistence와 downstream visualization 조회의 기준 repository다.
 
 ### 주요 책임
 
@@ -147,13 +124,11 @@ analysis result persistence와 downstream export/visualization 조회의 기준 
 ### 연결 관계
 
 - `backend/app/modules/analysis/service.py`가 성공 result 저장 시 사용한다.
-- `backend/app/modules/export/service.py`가 CSV export source로 사용한다.
 - `backend/app/modules/visualization/service.py`가 from-analysis chart 생성에서 저장 결과를 읽는다.
 
 ## 발견한 문제점 / 확인 필요 사항
 
 - 관찰: chat module은 단순 CRUD가 아니라 orchestration runtime 진입점이다. `backend/app/modules/chat/service.py`를 보지 않고 backend workflow를 이해하면 SSE/resume/approval 흐름이 빠진다.
 - 관찰: `backend/app/modules/chat/router.py`의 stream error event는 `message`만 포함한다. stage별 error context가 필요한 디버깅에서는 server log와 workflow state를 같이 확인해야 한다.
-- 관찰: report public prefix는 실제 코드상 `/report` 단수형이다.
 - 리스크: `done` event payload는 `AgentClient` output과 `ChatService` relay가 결합해 만들어진다. 두 파일 중 하나만 보고 frontend contract를 판단하면 누락이 생길 수 있다.
-- 리스크: `results/`는 public router가 없지만 analysis/export/visualization이 공유하는 persistence seam이다. result JSON shape 변경은 여러 module에 파급된다.
+- 리스크: `results/`는 public router가 없지만 analysis/visualization이 공유하는 persistence seam이다. result JSON shape 변경은 여러 module에 파급된다.

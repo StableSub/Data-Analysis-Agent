@@ -20,8 +20,15 @@
 
 ### Main workflow
 
-- route/status: `general_question`, `data_pipeline`, `analysis`, `rag`, `guideline`, `visualization`, `merge_context`, `clarification`, `fail`, `cancelled`, `report`, `data_qa`, `report_answer`, `applied`, `generated`.
-- payload contract: `user_input`, `request_context`, `handoff`, `preprocess_result`, `rag_result`, `guideline_index_status`, `guideline_result`, `insight`, `analysis_plan`, `analysis_result`, `visualization_result`, `clarification_question`, `model_id`, `output`, `merged_context`.
+- route/status: `general_question`, `data_pipeline`, `analysis`, `rag`, `guideline`, `visualization`, `merge_context`, `clarification`, `fail`, `cancelled`, `report`, `data_qa`, `report_answer`, `analysis_fail_terminal`, `applied`, `generated`.
+- payload contract: `user_input`, `request_context`, `handoff`, `preprocess_result`, `rag_result`, `guideline_index_status`, `guideline_result`, `insight`, `analysis_plan`, `analysis_result`, `visualization_result`, `clarification_question`, `model_id`, `output`, `merged_context`, `evidence_package`, `answer_quality`.
+
+### Evidence contract
+
+- builder node: `merge_context` calls `build_evidence_contract()` after `build_merged_context()` and returns `merged_context`, `evidence_package`, `answer_quality` together.
+- failure terminal: `analysis_fail_terminal` builds the same contract for `final_status="fail"`, sets `output.type="fail"`, and returns an abstain `content`.
+- data answer terminal: `data_qa_terminal` skips the LLM when `answer_quality.answerable is False`; otherwise it passes `evidence_package`, `answer_quality`, and `merged_context` to `answer_data_question()`.
+- output payload: `output.evidence_package` and `output.answer_quality` are optional additive fields; `output.type` and `output.content` remain stable.
 
 ### Analysis workflow
 

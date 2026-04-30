@@ -20,10 +20,8 @@
 | `backend/app/modules/analysis/router.py` | `/analysis` | direct analysis run/result lookup |
 | `backend/app/modules/visualization/router.py` | `/vizualization` | manual/from-analysis visualization |
 | `backend/app/modules/rag/router.py` | `/rag` | RAG query/source delete |
-| `backend/app/modules/export/router.py` | `/export` | CSV export |
 | `backend/app/modules/guidelines/router.py` | `/guidelines` | guideline upload/list/activate/delete |
 | `backend/app/modules/preprocess/router.py` | `/preprocess` | direct preprocess apply |
-| `backend/app/modules/reports/router.py` | `/report` | report create/list/get |
 
 ## 2. Chat request entry
 
@@ -108,18 +106,22 @@
 START
   -> intake_flow
      -> general_question_terminal -> END
-     -> preprocess_flow
-        -> analysis_flow | rag_flow | END(cancelled)
-           -> guideline_flow | visualization_flow | merge_context | clarification_terminal | END(fail)
-        -> rag_flow
-           -> guideline_flow | visualization_flow | merge_context
+     -> dataset_context
         -> guideline_flow
+        -> planner
+           -> general_question_terminal | rag_flow | preprocess_flow | analysis_flow | clarification_terminal | END(fail)
+        -> preprocess_flow
+           -> analysis_flow | END(cancelled/failed)
+        -> analysis_flow
+           -> visualization_flow | merge_context | clarification_terminal | analysis_fail_terminal
+        -> rag_flow
            -> visualization_flow | merge_context
         -> visualization_flow
            -> merge_context | END(cancelled)
         -> merge_context
            -> report_flow -> END
            -> data_qa_terminal -> END
+        -> analysis_fail_terminal -> END
 ```
 
 ### Terminal output type
@@ -129,6 +131,7 @@ START
 | general question | `general_question` | `general_question_terminal` |
 | analysis clarification | `clarification` | `clarification_terminal` |
 | preprocess/visualization/report cancel | `cancelled` | 해당 workflow approval cancel path |
+| analysis failure abstain | `fail` | `analysis_fail_terminal` |
 | data answer | `data_qa` | `data_qa_terminal` |
 | report answer | `report_answer` | report workflow finalize node |
 
@@ -203,7 +206,9 @@ START
 - `analysis_result`
 - `visualization_result`
 
-`data_qa_terminal()`은 `answer_data_question()`을 호출해 `merged_context`만 근거로 final answer를 생성한다. report 요청이면 `merge_context` 이후 `report_flow`가 draft approval/finalize를 담당한다.
+같은 node에서 `backend/app/orchestration/evidence.py`의 `build_evidence_contract()`를 호출해 최종 답변용 `evidence_package`와 `answer_quality`를 만든다. 이 contract는 `merged_context`를 제거하지 않는 additive state이며, 분석/검색/guideline/preprocess 근거와 warning, `answerable`/`abstain_reason`을 구조화한다.
+
+`data_qa_terminal()`은 `answer_quality.answerable is False`이면 LLM 호출 없이 `abstain_reason`을 `output.content`로 반환한다. 답변 가능한 경우 `answer_data_question()`에 `evidence_package`, `answer_quality`, `merged_context`를 함께 넘긴다. report 요청이면 `merge_context` 이후 `report_flow`가 draft approval/finalize를 담당한다. analysis 실패 경로는 `analysis_fail_terminal`에서 동일한 evidence contract를 만들고 `output.type="fail"`로 abstain payload를 남긴다.
 
 ## 9. Stream output and done event
 

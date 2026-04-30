@@ -110,6 +110,8 @@ COMPONENT_PAYLOAD_TERMS = {
         "model_id",
         "output",
         "merged_context",
+        "evidence_package",
+        "answer_quality",
     ),
     "guideline.md": (
         "user_input",
@@ -292,6 +294,8 @@ def test_shared_state_mentions_core_main_workflow_state_keys() -> None:
         "analysis_result",
         "visualization_result",
         "merged_context",
+        "evidence_package",
+        "answer_quality",
         "report_result",
         "output",
         "pending_approval",
