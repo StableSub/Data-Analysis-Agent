@@ -6,6 +6,7 @@ from langgraph.graph import END, START, StateGraph
 
 from ..core.trace_logging import set_trace_stage
 from .ai import answer_data_question, answer_general_question
+from .evidence import build_evidence_contract
 from .intake_router import build_intake_router_workflow
 from ..modules.planner.service import build_handoff_from_planning_result
 from .state import MainWorkflowState
@@ -159,7 +160,16 @@ def build_main_workflow(
 
     def merge_context_node(state: MainWorkflowState) -> Dict[str, Any]:
         set_trace_stage("merge_context")
-        return {"merged_context": build_merged_context(state)}
+        merged_context = build_merged_context(state)
+        evidence_package, answer_quality = build_evidence_contract(
+            state=state,
+            merged_context=merged_context,
+        )
+        return {
+            "merged_context": merged_context,
+            "evidence_package": evidence_package,
+            "answer_quality": answer_quality,
+        }
 
     def dataset_context_node(state: MainWorkflowState) -> Dict[str, Any]:
         set_trace_stage("dataset_context")
@@ -195,6 +205,28 @@ def build_main_workflow(
 
     def data_qa_terminal(state: MainWorkflowState) -> Dict[str, Any]:
         set_trace_stage("data_qa")
+        evidence_package = state.get("evidence_package")
+        if not isinstance(evidence_package, dict):
+            evidence_package = {}
+        answer_quality = state.get("answer_quality")
+        if not isinstance(answer_quality, dict):
+            answer_quality = {}
+
+        if answer_quality.get("answerable") is False:
+            answer_text = str(
+                answer_quality.get("abstain_reason")
+                or "최종 답변을 만들 수 있는 분석 결과나 검색 근거가 충분하지 않습니다."
+            ).strip()
+            return {
+                "data_qa_result": {"content": answer_text},
+                "output": {
+                    "type": "data_qa",
+                    "content": answer_text,
+                    "evidence_package": evidence_package,
+                    "answer_quality": answer_quality,
+                },
+            }
+
         handoff = state.get("handoff") or {}
         visualization_result = state.get("visualization_result")
         analysis_result = state.get("analysis_result")
@@ -217,6 +249,8 @@ def build_main_workflow(
                     "output": {
                         "type": "data_qa",
                         "content": answer_text,
+                        "evidence_package": evidence_package,
+                        "answer_quality": answer_quality,
                     },
                 }
 
@@ -224,6 +258,8 @@ def build_main_workflow(
         answer = answer_data_question(
             user_input=str(state.get("user_input", "")),
             merged_context=merged_context if isinstance(merged_context, dict) else {},
+            evidence_package=evidence_package,
+            answer_quality=answer_quality,
             model_id=state.get("model_id"),
             default_model=default_model,
         )
@@ -233,6 +269,31 @@ def build_main_workflow(
             "output": {
                 "type": "data_qa",
                 "content": answer_text,
+                "evidence_package": evidence_package,
+                "answer_quality": answer_quality,
+            },
+        }
+
+    def analysis_fail_terminal(state: MainWorkflowState) -> Dict[str, Any]:
+        set_trace_stage("analysis_failed")
+        merged_context = build_merged_context(state)
+        evidence_package, answer_quality = build_evidence_contract(
+            state=state,
+            merged_context=merged_context,
+        )
+        abstain_reason = str(
+            answer_quality.get("abstain_reason")
+            or "최종 답변을 만들 수 있는 분석 결과가 충분하지 않습니다."
+        ).strip()
+        return {
+            "merged_context": merged_context,
+            "evidence_package": evidence_package,
+            "answer_quality": answer_quality,
+            "output": {
+                "type": "fail",
+                "content": abstain_reason,
+                "evidence_package": evidence_package,
+                "answer_quality": answer_quality,
             },
         }
 
@@ -249,6 +310,7 @@ def build_main_workflow(
     graph.add_node("visualization_flow", visualization_graph)
     graph.add_node("merge_context", merge_context_node)
     graph.add_node("data_qa_terminal", data_qa_terminal)
+    graph.add_node("analysis_fail_terminal", analysis_fail_terminal)
     graph.add_node("report_flow", report_graph)
 
     graph.add_edge(START, "intake_flow")
@@ -290,7 +352,7 @@ def build_main_workflow(
             "visualization": "visualization_flow",
             "merge_context": "merge_context",
             "clarification": "clarification_terminal",
-            "fail": END,
+            "fail": "analysis_fail_terminal",
         },
     )
     graph.add_conditional_edges(
@@ -319,6 +381,7 @@ def build_main_workflow(
     )
     graph.add_edge("report_flow", END)
     graph.add_edge("data_qa_terminal", END)
+    graph.add_edge("analysis_fail_terminal", END)
     graph.add_edge("general_question_terminal", END)
     graph.add_edge("clarification_terminal", END)
 
