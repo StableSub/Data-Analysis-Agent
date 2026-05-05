@@ -290,6 +290,15 @@ class AnalysisProcessor:
                 return result.model_copy(update={"quality_status": "complete"})
             return result
 
+        if plan.empty_result_policy == "fail_on_empty":
+            return AnalysisExecutionResult(
+                execution_status="fail",
+                error_stage="result_validation",
+                error_message="analysis returned no rows",
+                quality_status="invalid",
+                quality_reason="analysis returned no rows",
+            )
+
         if result.raw_metrics:
             warning = self._build_warning(
                 code="empty_table",
@@ -303,14 +312,6 @@ class AnalysisProcessor:
                 }
             )
 
-        if plan.empty_result_policy == "fail_on_empty":
-            return AnalysisExecutionResult(
-                execution_status="fail",
-                error_stage="result_validation",
-                error_message="analysis returned no rows",
-                quality_status="invalid",
-                quality_reason="analysis returned no rows",
-            )
         if plan.empty_result_policy == "success_with_empty_summary":
             summary = (
                 result.summary or "조건에 맞는 데이터가 없어 빈 결과를 반환했습니다."
