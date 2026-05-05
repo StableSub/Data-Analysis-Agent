@@ -113,19 +113,22 @@ class AnalysisService:
             model_id=model_id,
         )
 
-        visualization_output = self._build_visualization_output(
-            source_id=source_id,
-            analysis_plan=analysis_plan,
-            execution_result=execution_bundle["analysis_result"],
-        )
-        result_id = self._persist_result(
-            question=question,
-            source_id=source_id,
-            session_id=session_id,
-            analysis_plan=analysis_plan,
-            generated_code=execution_bundle.get("generated_code"),
-            execution_result=execution_bundle["analysis_result"],
-        )
+        visualization_output = None
+        result_id = None
+        if execution_bundle["final_status"] == "success":
+            visualization_output = self._build_visualization_output(
+                source_id=source_id,
+                analysis_plan=analysis_plan,
+                execution_result=execution_bundle["analysis_result"],
+            )
+            result_id = self._persist_result(
+                question=question,
+                source_id=source_id,
+                session_id=session_id,
+                analysis_plan=analysis_plan,
+                generated_code=execution_bundle.get("generated_code"),
+                execution_result=execution_bundle["analysis_result"],
+            )
 
         return {
             "planning_result": planning_result,
@@ -200,12 +203,16 @@ class AnalysisService:
                         "analysis_result": execution_result,
                         "analysis_error": None,
                         "final_status": "success",
+                        "retry_count": attempt,
                     }
 
                 analysis_error = self.processor.build_error(
                     execution_result.error_stage or "result_validation",
                     execution_result.error_message or "analysis execution failed",
-                    detail={"attempt": attempt + 1},
+                    detail=self._build_analysis_error_detail(
+                        attempt=attempt + 1,
+                        execution_result=execution_result,
+                    ),
                 )
             except Exception as exc:
                 stage = "code_generation" if not generated_code else "code_validation"
@@ -221,6 +228,8 @@ class AnalysisService:
                     execution_status="fail",
                     error_stage=analysis_error.stage,
                     error_message=analysis_error.message,
+                    quality_status="invalid",
+                    quality_reason=analysis_error.message,
                 )
 
         return {
@@ -230,7 +239,25 @@ class AnalysisService:
             "analysis_result": execution_result,
             "analysis_error": analysis_error,
             "final_status": "fail",
+            "retry_count": self.max_retries,
         }
+
+    @staticmethod
+    def _build_analysis_error_detail(
+        *,
+        attempt: int,
+        execution_result: AnalysisExecutionResult,
+    ) -> dict[str, Any]:
+        detail: dict[str, Any] = {"attempt": attempt}
+        if execution_result.quality_status:
+            detail["quality_status"] = execution_result.quality_status
+        if execution_result.quality_reason:
+            detail["quality_reason"] = execution_result.quality_reason
+        if execution_result.warnings:
+            detail["warnings"] = [
+                warning.model_dump() for warning in execution_result.warnings
+            ]
+        return detail
 
     # 질문이나 plan 초안이 모호할 때 needs_clarification 응답 payload를 만든다.
     def _build_clarification_response(
