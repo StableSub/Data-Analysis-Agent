@@ -362,11 +362,16 @@ class AnalysisProcessor:
             ]
             if empty_columns:
                 return "used_columns contains empty column name"
-            approved_columns = set(plan.used_columns) | set(
-                plan.metadata_snapshot.columns
+            plan_columns = set(plan.used_columns)
+            unknown_plan_columns = sorted(
+                plan_columns - set(plan.metadata_snapshot.columns)
             )
+            if unknown_plan_columns:
+                return "analysis plan references unknown columns: " + ", ".join(
+                    unknown_plan_columns
+                )
             unexpected_columns = sorted(
-                set(payload.used_columns) - approved_columns
+                set(payload.used_columns) - plan_columns
             )
             if unexpected_columns:
                 return f"used_columns contains non-approved columns: {', '.join(unexpected_columns)}"
