@@ -190,6 +190,9 @@
   - `execution_status`
   - `error_stage`
   - `error_message`
+  - `quality_status`
+  - `quality_reason`
+  - `warnings`
 
 ## 전처리 API
 

@@ -132,6 +132,8 @@ class ResultsRepository:
     def _model_dump(self, value: Any) -> Any:
         if value is None:
             return None
+        if isinstance(value, list):
+            return [self._model_dump(item) for item in value]
         dump_method = getattr(value, "model_dump", None)
         if callable(dump_method):
             return dump_method()
@@ -149,6 +151,9 @@ class ResultsRepository:
             return None
         summary = self._extract_attr(execution_result, "summary")
         raw_metrics = self._extract_attr(execution_result, "raw_metrics", default={})
+        quality_status = self._extract_attr(execution_result, "quality_status")
+        quality_reason = self._extract_attr(execution_result, "quality_reason")
+        warnings = self._extract_attr(execution_result, "warnings", default=[])
         meta = {
             "question": question,
             "source_id": source_id,
@@ -159,5 +164,8 @@ class ResultsRepository:
         return {
             "summary": summary,
             "raw_metrics": raw_metrics or {},
+            "quality_status": quality_status,
+            "quality_reason": quality_reason,
+            "warnings": self._model_dump(warnings) or [],
             "meta": meta,
         }

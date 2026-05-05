@@ -44,6 +44,7 @@ def get_analysis_result(
             detail="analysis result not found",
         )
 
+    result_json = result.result_json if isinstance(result.result_json, dict) else {}
     return {
         "analysis_result_id": result.id,
         "source_id": results_repository.resolve_analysis_result_source_id(result) or "",
@@ -58,5 +59,8 @@ def get_analysis_result(
         "execution_status": result.execution_status,
         "error_stage": result.error_stage,
         "error_message": result.error_message,
+        "quality_status": result_json.get("quality_status"),
+        "quality_reason": result_json.get("quality_reason"),
+        "warnings": result_json.get("warnings", []),
         "created_at": result.created_at,
     }

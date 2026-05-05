@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 from backend.app.orchestration import ai, builder
+from backend.app.orchestration.workflows import analysis
 from backend.app.orchestration.evidence import build_evidence_contract
 
 
@@ -96,6 +97,42 @@ def test_evidence_contract_keeps_retrieval_answerable_but_limited_when_analysis_
     assert answer_quality["status"] == "limited"
 
 
+def test_evidence_contract_merges_analysis_quality_warnings() -> None:
+    evidence_package, answer_quality = build_evidence_contract(
+        state={
+            "source_id": "source-1",
+            "handoff": {"ask_analysis": True},
+            "analysis_result": {
+                "execution_status": "success",
+                "summary": "매출 합계는 10입니다.",
+                "raw_metrics": {"total_sales": 10},
+                "table": [],
+                "used_columns": ["sales"],
+                "quality_status": "partial",
+                "quality_reason": "analysis returned no table rows but raw metrics are available",
+                "warnings": [
+                    {
+                        "code": "empty_table",
+                        "message": "analysis returned no table rows but raw metrics are available",
+                        "severity": "warning",
+                    }
+                ],
+            },
+        },
+        merged_context={"applied_steps": ["analysis"]},
+    )
+
+    assert evidence_package["analysis_status"] == "success"
+    assert evidence_package["analysis_quality_status"] == "partial"
+    assert evidence_package["analysis_quality_reason"] == (
+        "analysis returned no table rows but raw metrics are available"
+    )
+    assert evidence_package["analysis_metrics"] == {"total_sales": 10}
+    assert _warning_codes(evidence_package) == {"empty_table"}
+    assert answer_quality["answerable"] is True
+    assert answer_quality["status"] == "limited"
+
+
 def test_answer_data_question_serializes_evidence_contract(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
@@ -139,3 +176,10 @@ def test_builder_wires_evidence_contract_into_merge_data_qa_and_analysis_fail_pa
     assert "answer_quality.get(\"answerable\") is False" in source
     assert "analysis_fail_terminal" in source
     assert '"fail": "analysis_fail_terminal"' in source
+
+
+def test_analysis_workflow_marks_internal_failures_invalid_quality() -> None:
+    source = inspect.getsource(analysis.build_analysis_workflow)
+
+    assert 'quality_status="invalid"' in source
+    assert 'quality_reason=analysis_error.message' in source
