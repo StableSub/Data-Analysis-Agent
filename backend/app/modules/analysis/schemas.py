@@ -250,6 +250,12 @@ class AnalysisError(StrictModel):
     detail: dict[str, Any] = Field(default_factory=dict)
 
 
+class AnalysisWarning(StrictModel):
+    code: str
+    message: str
+    severity: Literal["info", "warning", "error"] = "warning"
+
+
 class AnalysisExecutionResult(StrictModel):
     execution_status: Literal["success", "fail"]
     summary: str | None = None
@@ -258,6 +264,9 @@ class AnalysisExecutionResult(StrictModel):
     used_columns: list[str] = Field(default_factory=list)
     error_stage: ErrorStage | None = None
     error_message: str | None = None
+    quality_status: Literal["complete", "empty", "partial", "invalid"] | None = None
+    quality_reason: str | None = None
+    warnings: list[AnalysisWarning] = Field(default_factory=list)
 
 
 FinalStatus = Literal[
