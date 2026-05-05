@@ -89,6 +89,16 @@ def build_evidence_contract(
         evidence_package["used_columns"] = used_columns
 
     if analysis_result is not None:
+        analysis_quality_status = _as_non_empty_str(
+            analysis_result.get("quality_status")
+        )
+        if analysis_quality_status:
+            evidence_package["analysis_quality_status"] = analysis_quality_status
+        analysis_quality_reason = _as_non_empty_str(
+            analysis_result.get("quality_reason")
+        )
+        if analysis_quality_reason:
+            evidence_package["analysis_quality_reason"] = analysis_quality_reason
         analysis_summary = _as_non_empty_str(analysis_result.get("summary"))
         if analysis_summary:
             evidence_package["analysis_summary"] = analysis_summary
@@ -107,6 +117,10 @@ def build_evidence_contract(
                 or _as_non_empty_str(analysis_result.get("summary"))
                 or "분석 실행이 실패했습니다.",
             )
+        _append_analysis_warnings(
+            warnings,
+            analysis_result.get("warnings"),
+        )
 
     if bool(handoff.get("ask_analysis", False)) and not _analysis_has_evidence(
         analysis_result
@@ -196,6 +210,28 @@ def _append_warning(
     message: str,
 ) -> None:
     warnings.append({"stage": stage, "code": code, "message": message})
+
+
+def _append_analysis_warnings(
+    warnings: list[EvidenceWarningPayload],
+    value: Any,
+) -> None:
+    if not isinstance(value, list):
+        return
+    for item in value:
+        warning = _as_dict(item)
+        if warning is None:
+            continue
+        code = _as_non_empty_str(warning.get("code"))
+        message = _as_non_empty_str(warning.get("message"))
+        if not code or not message:
+            continue
+        _append_warning(
+            warnings,
+            stage="analysis",
+            code=code,
+            message=message,
+        )
 
 
 def _resolve_source_id(
