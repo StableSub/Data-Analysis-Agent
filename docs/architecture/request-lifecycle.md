@@ -20,38 +20,40 @@
 
 ## 상위 흐름
 
-메인 워크플로우는 질문을 받은 뒤 dataset 선택 여부를 확인한다. dataset이 없으면 intake 단계에서 `general_question` 또는 `clarification`으로 분기한다. dataset이 있으면 별도의 `planner` node 없이 intake의 coarse intent 결과를 `handoff`로 저장한 뒤, `preprocess -> analysis 또는 rag -> guideline/visualization(optional) -> merge_context -> data_qa 또는 report` 순서로 진행한다.
+메인 워크플로우는 질문을 받은 뒤 dataset 선택 여부를 확인한다. dataset이 없으면 intake 단계에서 `general_question`으로 분기한다. dataset이 있으면 `dataset_context`와 `guideline_flow`를 거쳐 `planner`가 route를 확정하고, 필요에 따라 `preprocess_flow`, `analysis_flow`, `rag_flow`, `visualization_flow`, `merge_context`, `data_qa_terminal`, `report_flow` 또는 `analysis_fail_terminal`로 진행한다.
 
 ```mermaid
 flowchart TD
     A["START"] --> B["intake_flow"]
     B -->|general_question| C["general_question_terminal"]
-    B -->|clarification| G["clarification_terminal"]
-    B -->|data_pipeline| I["preprocess_flow"]
-    I -->|ask_analysis=true| J["analysis_flow"]
-    I -->|ask_analysis=false| H["rag_flow"]
-    I -->|취소| K["END(cancelled)"]
+    B -->|dataset_selected| D["dataset_context"]
+    D --> E["guideline_flow"]
+    E --> F["planner"]
+    F -->|general_question| C
+    F -->|fallback_rag| H["rag_flow"]
+    F -->|preprocess_required| I["preprocess_flow"]
+    F -->|analysis| J["analysis_flow"]
+    F -->|clarification| G["clarification_terminal"]
+    F -->|fail| Z["END(fail)"]
+    I -->|analysis| J
+    I -->|cancelled/failed| K["END"]
     J -->|needs_clarification| G
-    J -->|fail| L
-    J -->|ask_guideline| E["guideline_flow"]
+    J -->|fail| L["analysis_fail_terminal"]
     J -->|ask_visualization| M["visualization_flow"]
     J -->|바로 응답| N["merge_context"]
-    H -->|ask_guideline| E
     H -->|ask_visualization| M
     H -->|바로 응답| N
-    E -->|ask_visualization| M
-    E -->|바로 응답| N
-    M -->|취소| K
+    M -->|cancelled| K
     M -->|완료| N
     N -->|ask_report| O["report_flow"]
     N -->|바로 응답| P["data_qa_terminal"]
-    O -->|cancelled| K
-    O -->|failed| L
-    O -->|generated| Q["END(report_answer)"]
+    O --> Q["END(report_answer)"]
     C --> R["END"]
     G --> R
+    L --> R
     P --> R
 ```
+
 
 ## 단계별 설명
 
@@ -70,17 +72,18 @@ flowchart TD
 
 ## Planner 용어 정리
 
-현재 런타임에는 독립적인 `planner` node나 별도 planner 컴포넌트가 없다.
-문서에서 planner라고 부르는 판단은 실제 코드에서는 아래 위치에 나뉘어 있다.
+현재 런타임에는 main graph의 `planner` node가 있다. 이 node는 `backend/app/modules/planner/service.py`가 만든 planning result를 `build_handoff_from_planning_result()`로 `handoff`에 반영하고, route를 `general_question`, `fallback_rag`, `preprocess`, `analysis`, `clarification`, `fail` 중 하나로 좁힌다.
 
-- 최상위 route 판단: `backend/app/orchestration/intake_router.py`
-- workflow 분기 계약: `handoff` 필드
+planner 주변 판단은 아래 위치에 나뉘어 있다.
+
+- dataset 여부와 coarse handoff: `backend/app/orchestration/intake_router.py`
+- dataset/profile context: `dataset_context` node
+- active guideline prefetch: `guideline_flow`
+- main route 판단: `builder.py`의 `planner` node와 `route_after_planner()`
 - 분석 실행 계획 확정: `backend/app/orchestration/workflows/analysis.py`
 - 전처리/시각화/리포트 승인 계획: 각 workflow 내부 planner 또는 draft 단계
 
-따라서 architecture 문서에서 우선 확인할 계약은 planner 문서가 아니라 `request-lifecycle.md`, `shared-state.md`, `backend-workflow.md`와 `orchestration/workflows.md`다.
-
-이 섹션은 독립적인 planner 문서가 아니라 현재 코드의 분산된 planning 책임을 설명한다. `intake_router.py`, analysis workflow planning 단계, preprocess/visualization/report approval planning이 바뀌면 이 용어 정리를 함께 갱신한다.
+`planner`, `route_after_planner()`, analysis workflow planning 단계, preprocess/visualization/report approval planning이 바뀌면 이 용어 정리를 함께 갱신한다.
 
 ### 3. preprocess 선행 경로
 
@@ -121,7 +124,9 @@ visualization 서브그래프는 차트 planning, approval, 결과 생성/finali
 ### 8. merge_context와 최종 응답
 
 - `merge_context`는 `handoff`, `preprocess_result`, `rag_result`, `guideline_result`, `insight`, `analysis_plan`, `analysis_result`, `visualization_result`를 누적한다.
-- 현재 브랜치의 `data_qa_terminal`은 별도 `answer_context`를 만들지 않고 `merged_context`를 그대로 `answer_data_question(...)`에 넘긴다.
+- `merge_context`는 `backend/app/orchestration/evidence.py`를 통해 `evidence_package`와 `answer_quality`도 만든다.
+- `answer_quality.answerable is False`이면 `data_qa_terminal`은 LLM 호출 없이 `abstain_reason`을 반환한다.
+- 답변 가능한 경우 `data_qa_terminal`은 `evidence_package`, `answer_quality`, `merged_context`를 함께 `answer_data_question(...)`에 넘긴다.
 - `ask_report=true`면 report 서브그래프로 이동한다.
 - 그렇지 않으면 `data_qa_terminal`이 최종 데이터 응답을 만든다.
 
@@ -144,7 +149,7 @@ report 서브그래프는 report context 준비, draft 생성, approval/revision
 - `report_answer`
   - 리포트 응답이 생성된 상태
 - `fail`
-  - planning, preprocess, analysis, report 등에서 실패한 상태
+  - planning, preprocess, analysis, report 등에서 실패한 상태. analysis 실패는 `analysis_fail_terminal`이 `evidence_package`/`answer_quality`와 abstain output을 만든다.
 - `cancelled`
   - approval 단계에서 사용자가 취소한 상태
 
@@ -155,6 +160,8 @@ report 서브그래프는 report context 준비, draft 생성, approval/revision
 - `clarification_terminal`
   - clarification 질문 반환
 - `data_qa_terminal`
-  - `merged_context` 기반 최종 데이터 응답 생성
+  - `evidence_package`, `answer_quality`, `merged_context` 기반 최종 데이터 응답 생성
+- `analysis_fail_terminal`
+  - analysis 실패 시 evidence contract와 abstain output 생성
 - `report_flow`
   - `report_answer` 생성 후 종료

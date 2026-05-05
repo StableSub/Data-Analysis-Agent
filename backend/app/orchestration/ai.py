@@ -23,7 +23,9 @@ PROMPTS = PromptRegistry(
         ),
         "general.system": "사용자 질문에 간결하고 정확하게 답하라.",
         "data_qa.system": (
-            "주어진 merged_context만 근거로 사용자 데이터 질문에 답하라. "
+            "주어진 evidence_package, answer_quality, merged_context만 근거로 사용자 데이터 질문에 답하라. "
+            "answer_quality.answerable이 false이면 abstain_reason을 중심으로 답하고, 근거 밖의 숫자/컬럼/결론을 만들지 마라. "
+            "evidence_package.analysis_metrics, analysis_table, used_columns를 우선 근거로 사용하라. "
             "이미 제공된 analysis_result, rag_result, guideline_result, visualization_result 안에서만 답하라. "
             "실제 결과와 해석을 먼저 직접적으로 제시하라. 방법 설명이나 일반론은 필요할 때만 최소한으로 덧붙여라."
         ),
@@ -81,6 +83,8 @@ def answer_data_question(
     *,
     user_input: str,
     merged_context: dict,
+    evidence_package: dict,
+    answer_quality: dict,
     model_id: str | None,
     default_model: str,
 ) -> str:
@@ -92,6 +96,8 @@ def answer_data_question(
             HumanMessage(
                 content=(
                     f"question:\n{user_input}\n\n"
+                    f"evidence_package:\n{json.dumps(evidence_package, ensure_ascii=False)}\n\n"
+                    f"answer_quality:\n{json.dumps(answer_quality, ensure_ascii=False)}\n\n"
                     f"merged_context:\n{json.dumps(merged_context, ensure_ascii=False)}"
                 )
             ),

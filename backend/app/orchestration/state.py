@@ -99,9 +99,42 @@ class ReportResultPayload(TypedDict, total=False):
     revision_count: int
 
 
+class EvidenceWarningPayload(TypedDict, total=False):
+    stage: str
+    code: str
+    message: str
+
+
+class EvidencePackagePayload(TypedDict, total=False):
+    source_id: str
+    filename: str
+    used_columns: list[str]
+    analysis_status: str
+    analysis_summary: str
+    analysis_metrics: Dict[str, Any]
+    analysis_table: list[Dict[str, Any]]
+    rag_retrieved_count: int
+    rag_evidence_summary: str
+    guideline_status: str
+    guideline_retrieved_count: int
+    guideline_evidence_summary: str
+    preprocess_status: str
+    applied_steps: list[str]
+    warnings: list[EvidenceWarningPayload]
+
+
+class AnswerQualityPayload(TypedDict, total=False):
+    answerable: bool
+    status: Literal["answerable", "limited", "unanswerable"]
+    abstain_reason: str
+    warnings: list[EvidenceWarningPayload]
+
+
 class OutputPayload(TypedDict, total=False):
     type: str
     content: str
+    evidence_package: EvidencePackagePayload
+    answer_quality: AnswerQualityPayload
 
 
 class PlanningResultPayload(TypedDict, total=False):
@@ -187,7 +220,6 @@ class GuidelineGraphState(AgentState, total=False):
     handoff: HandoffPayload
     guideline_index_status: Dict[str, Any]
     guideline_data_exists: bool
-    guideline_context: GuidelineContextPayload
     guideline_result: GuidelineResultPayload
 
 
@@ -249,6 +281,8 @@ class MainWorkflowState(AgentState, total=False):
     visualization_result: VisualizationResultPayload
     visualization_output: VisualizationOutput
     merged_context: Dict[str, Any]
+    evidence_package: EvidencePackagePayload
+    answer_quality: AnswerQualityPayload
     report_draft: Dict[str, Any]
     report_result: ReportResultPayload
     data_qa_result: Dict[str, Any]

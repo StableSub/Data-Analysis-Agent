@@ -11,11 +11,11 @@
 | `backend/app/orchestration/builder.py` | main LangGraph를 조립하고 subgraph 간 conditional edge와 terminal node를 정의한다. |
 | `backend/app/orchestration/client.py` | workflow 실행 stream을 `thought`, `approval_required`, `chunk`, `done` event로 변환한다. |
 | `backend/app/orchestration/dependencies.py` | workflow checkpointer, module service bundle, `AgentClient` dependency를 조립한다. |
+| `backend/app/orchestration/evidence.py` | `merged_context`와 state에서 final answer용 `evidence_package`/`answer_quality` contract를 만든다. |
 | `backend/app/orchestration/intake_router.py` | dataset 선택 여부와 intent를 기준으로 `general_question` 또는 `data_pipeline` handoff를 만든다. |
 | `backend/app/orchestration/state.py` | main/subgraph TypedDict state와 payload key 계약을 정의한다. |
 | `backend/app/orchestration/utils.py` | `resolve_target_source_id()`로 원본 source와 preprocess output source 선택을 통일한다. |
 | `backend/app/orchestration/tools/__init__.py` | orchestration tools package marker다. |
-| `backend/app/orchestration/tools/general.py` | 임시 general search tool과 `TOOLS` list를 정의한다. |
 | `backend/app/orchestration/workflows/__init__.py` | workflow wrappers package marker다. |
 | `backend/app/orchestration/workflows/analysis.py` | analysis subgraph를 조립한다. |
 | `backend/app/orchestration/workflows/guideline.py` | active guideline indexing/retrieval/summarization subgraph를 조립한다. |
@@ -37,7 +37,10 @@ workflow 전체가 공유하는 state key와 subgraph별 payload contract를 정
 - `RagResultPayload`: retrieved chunks, context, retrieved count, evidence summary.
 - `GuidelineResultPayload`: active guideline id/filename, retrieved chunks, evidence summary, status.
 - `VisualizationResultPayload`: chart generation status, source id, summary, chart/artifact.
-- `OutputPayload`: terminal `type`, `content`.
+- `EvidenceWarningPayload`: evidence contract warning의 `stage`, `code`, `message`.
+- `EvidencePackagePayload`: analysis/RAG/guideline/preprocess/visualization 근거와 warning을 최종 답변 직전에 구조화한다.
+- `AnswerQualityPayload`: `answerable`, `status`, optional `abstain_reason`, warning 목록으로 답변 가능성을 표현한다.
+- `OutputPayload`: terminal `type`, `content`, optional `evidence_package`, `answer_quality`.
 - `PendingApprovalPayload`: approval `stage`, `kind`, title/summary/source/plan/draft/review.
 - `RevisionRequestPayload`: revise target `stage`와 instruction.
 
@@ -62,12 +65,12 @@ workflow 레벨 AI 판단과 최종 answer 생성을 담당한다.
 
 - `analyze_intent(...)`: dataset이 선택된 상태에서 `IntentDecision`을 structured output으로 받아 `data_pipeline` flag를 만든다.
 - `answer_general_question(...)`: dataset 없이 일반 질문에 답한다.
-- `answer_data_question(...)`: `merged_context`만 근거로 data QA answer를 만든다.
+- `answer_data_question(...)`: `evidence_package`, `answer_quality`, `merged_context`만 근거로 data QA answer를 만든다.
 
 ### 주의점
 
 - intent prompt는 평균/합계/그룹화/추세/상관/시각화를 analysis로 보고, 결측/형변환/정규화/인코딩/컬럼명 변경 같은 데이터 변경을 preprocess로 본다.
-- `answer_data_question()`은 `merged_context` 밖의 정보를 근거로 쓰지 말라는 system prompt를 사용한다.
+- `answer_data_question()`은 `evidence_package`, `answer_quality`, `merged_context` 밖의 정보를 근거로 쓰지 말라는 system prompt를 사용한다.
 
 ## Hotspot: `backend/app/orchestration/builder.py`
 
@@ -85,8 +88,9 @@ main graph의 node, edge, terminal, context merge를 정의한다.
 - `rag_flow`: dataset RAG subgraph.
 - `guideline_flow`: guideline subgraph.
 - `visualization_flow`: visualization subgraph.
-- `merge_context`: downstream answer/report에 넘길 `merged_context`를 만든다.
-- `data_qa_terminal`: 최종 data answer를 만든다.
+- `merge_context`: downstream answer/report에 넘길 `merged_context`, `evidence_package`, `answer_quality`를 만든다.
+- `data_qa_terminal`: 최종 data answer를 만들고 output에 evidence metadata를 포함한다.
+- `analysis_fail_terminal`: analysis 실패 시 evidence metadata와 abstain output을 만든다.
 - `report_flow`: report subgraph.
 
 ### Route summary
@@ -94,15 +98,16 @@ main graph의 node, edge, terminal, context merge를 정의한다.
 - `START` → `intake_flow`.
 - intake 결과 `general_question` → `general_question_terminal`, `data_pipeline` → `preprocess_flow`.
 - preprocess 결과 `analysis` → `analysis_flow`, `rag` → `rag_flow`, `cancelled` → `END`.
-- analysis 결과 `guideline`/`visualization`/`merge_context`/`clarification`/`fail`로 분기한다.
+- analysis 결과 `visualization`/`merge_context`/`clarification`/`analysis_fail_terminal`로 분기한다.
 - rag 결과 `guideline`/`visualization`/`merge_context`로 분기한다.
 - guideline 결과 `visualization` 또는 `merge_context`로 분기한다.
 - visualization 결과 `merge_context` 또는 `cancelled`로 분기한다.
 - merge context 이후 `report` → `report_flow`, 그 외 `data_qa` → `data_qa_terminal`.
+- analysis failure는 `analysis_fail_terminal` → `END`로 끝난다.
 
 ### `merge_context` payload
 
-`merge_context_node()`는 `applied_steps`, `request_context`, `request_flags`, `preprocess_result`, `rag_result`, `guideline_index_status`, `guideline_result`, `guideline_context`, `insight`, `analysis_plan`, `analysis_result`, `visualization_result`를 가능한 경우 모아 `merged_context`를 만든다.
+`merge_context_node()`는 `applied_steps`, `request_context`, `request_flags`, `preprocess_result`, `rag_result`, `guideline_index_status`, `guideline_result`, `guideline_context`, `insight`, `analysis_plan`, `analysis_result`, `visualization_result`를 가능한 경우 모아 `merged_context`를 만든다. 이어 `build_evidence_contract()`로 `evidence_package`와 `answer_quality`를 함께 반환한다.
 
 ## Hotspot: `backend/app/orchestration/client.py`
 
