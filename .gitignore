@@ -36,6 +36,10 @@ coverage/
 tests/
 !backend/tests/
 !backend/tests/**
+backend/tests/*.py
+!backend/tests/test_architecture_docs.py
+!backend/tests/test_docs_harness.py
+!backend/tests/test_orchestration_evidence_contract.py
 backend/tests/**/__pycache__/
 backend/tests/**/*.py[cod]
 
