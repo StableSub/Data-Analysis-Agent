@@ -110,6 +110,8 @@ class EvidencePackagePayload(TypedDict, total=False):
     filename: str
     used_columns: list[str]
     analysis_status: str
+    analysis_quality_status: str
+    analysis_quality_reason: str
     analysis_summary: str
     analysis_metrics: Dict[str, Any]
     analysis_table: list[Dict[str, Any]]

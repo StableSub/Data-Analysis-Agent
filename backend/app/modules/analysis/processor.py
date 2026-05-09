@@ -10,6 +10,7 @@ from .schemas import (
     AnalysisExecutionResult,
     AnalysisPlan,
     AnalysisPlanDraft,
+    AnalysisWarning,
     ColumnGroundingResult,
     DerivedColumnSpec,
     ErrorStage,
@@ -239,12 +240,15 @@ class AnalysisProcessor:
 
         # 실행 자체가 실패했거나 JSON 출력이 없으면 즉시 실패 처리한다.
         if not result.ok or result.stdout_json is None:
+            error_message = (
+                result.message or result.error_type or "analysis execution failed"
+            )
             return AnalysisExecutionResult(
                 execution_status="fail",
                 error_stage="sandbox_execution",
-                error_message=result.message
-                or result.error_type
-                or "analysis execution failed",
+                error_message=error_message,
+                quality_status="invalid",
+                quality_reason=error_message,
             )
 
         # 출력 payload가 AnalysisPlan의 결과 계약을 만족하는지 검사한다.
@@ -255,6 +259,8 @@ class AnalysisProcessor:
                 execution_status="fail",
                 error_stage="result_validation",
                 error_message=error,
+                quality_status="invalid",
+                quality_reason=error,
             )
 
         execution_result = AnalysisExecutionResult(
@@ -263,6 +269,7 @@ class AnalysisProcessor:
             table=payload.table,
             raw_metrics=payload.raw_metrics,
             used_columns=payload.used_columns,
+            quality_status="complete",
         )
         return self.normalize_empty_result(execution_result, plan)
 
@@ -279,6 +286,8 @@ class AnalysisProcessor:
             return result
 
         if result.table:
+            if result.quality_status is None:
+                return result.model_copy(update={"quality_status": "complete"})
             return result
 
         if plan.empty_result_policy == "fail_on_empty":
@@ -286,13 +295,47 @@ class AnalysisProcessor:
                 execution_status="fail",
                 error_stage="result_validation",
                 error_message="analysis returned no rows",
+                quality_status="invalid",
+                quality_reason="analysis returned no rows",
             )
+
+        if result.raw_metrics:
+            warning = self._build_warning(
+                code="empty_table",
+                message="analysis returned no table rows but raw metrics are available",
+            )
+            return result.model_copy(
+                update={
+                    "quality_status": "partial",
+                    "quality_reason": warning.message,
+                    "warnings": [*result.warnings, warning],
+                }
+            )
+
         if plan.empty_result_policy == "success_with_empty_summary":
             summary = (
                 result.summary or "조건에 맞는 데이터가 없어 빈 결과를 반환했습니다."
             )
-            return result.model_copy(update={"summary": summary})
-        return result.model_copy(update={"summary": result.summary or ""})
+            warning = self._build_warning(
+                code="empty_result",
+                message="analysis returned no rows or raw metrics",
+                severity="info",
+            )
+            return result.model_copy(
+                update={
+                    "summary": summary,
+                    "quality_status": "empty",
+                    "quality_reason": warning.message,
+                    "warnings": [*result.warnings, warning],
+                }
+            )
+        return result.model_copy(
+            update={
+                "summary": result.summary or "",
+                "quality_status": "empty",
+                "quality_reason": "analysis returned no table rows",
+            }
+        )
 
     # 표준 AnalysisError를 만드는 헬퍼
     def build_error(
@@ -304,10 +347,32 @@ class AnalysisProcessor:
     ) -> AnalysisError:
         return AnalysisError(stage=stage, message=message, detail=detail or {})
 
+    def _build_warning(
+        self,
+        *,
+        code: str,
+        message: str,
+        severity: str = "warning",
+    ) -> AnalysisWarning:
+        return AnalysisWarning(code=code, message=message, severity=severity)
+
     def _validate_output_payload(self, payload: Any, plan: AnalysisPlan) -> str | None:
         if payload.used_columns:
+            empty_columns = [
+                column for column in payload.used_columns if not column.strip()
+            ]
+            if empty_columns:
+                return "used_columns contains empty column name"
+            plan_columns = set(plan.used_columns)
+            unknown_plan_columns = sorted(
+                plan_columns - set(plan.metadata_snapshot.columns)
+            )
+            if unknown_plan_columns:
+                return "analysis plan references unknown columns: " + ", ".join(
+                    unknown_plan_columns
+                )
             unexpected_columns = sorted(
-                set(payload.used_columns) - set(plan.used_columns)
+                set(payload.used_columns) - plan_columns
             )
             if unexpected_columns:
                 return f"used_columns contains non-approved columns: {', '.join(unexpected_columns)}"
@@ -323,6 +388,12 @@ class AnalysisProcessor:
             return "raw_metrics is required"
 
         table = payload.table or []
+        if (
+            not table
+            and not payload.raw_metrics
+            and plan.empty_result_policy != "success_with_empty_summary"
+        ):
+            return "analysis result requires table rows or raw_metrics"
         if len(table) < plan.expected_output.minimum_rows and not (
             plan.expected_output.allow_empty_table and len(table) == 0
         ):
