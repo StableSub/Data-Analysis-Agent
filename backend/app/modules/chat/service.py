@@ -72,6 +72,7 @@ class ChatService:
                             "error_code": "invalid_source_id",
                             "retryable": False,
                             "answer": "요청한 데이터셋을 찾을 수 없습니다.",
+                            "message": "요청한 데이터셋을 찾을 수 없습니다.",
                             "thought_steps": [],
                         },
                     }
@@ -408,10 +409,12 @@ class ChatService:
                     "trace_id": trace_id,
                     "thought_steps": thought_steps,
                     "answer": final_answer,
+                    "message": final_answer,
                     # ── optional metadata ──
                     "stage": event.get("stage") or "unknown",
                     "error_code": event.get("error_code") or "unknown_error",
                     "retryable": bool(event.get("retryable", False)),
+                    "output_type": event.get("output_type") or "",
                 }
                 if isinstance(output_payload, dict):
                     error_data["output"] = output_payload
