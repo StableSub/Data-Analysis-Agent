@@ -111,6 +111,33 @@ class AgentClient:
                 event="workflow_final_state",
                 payload=self._summarize_snapshot(final_state),
             )
+
+            # 실패 분기: error event 전송 후 종료 
+            if self._is_failed_state(final_state):
+                summary = self._summarize_snapshot(final_state)
+                error_event: Dict[str, Any] = {
+                    "type": "error",
+                    "stage": summary.get("error_stage") or "unknown",
+                    "error_code": self._resolve_error_code(final_state, summary),
+                    "retryable": self._resolve_retryable(final_state, summary),
+                    
+                    "answer": self._extract_answer(final_state),
+                    "thought_steps": thought_steps,
+                    "output_type": self._extract_output_type(final_state),
+                }
+                output = final_state.get("output")
+                if isinstance(output, dict):
+                    error_event["output"] = output
+                evidence_package = final_state.get("evidence_package")
+                if isinstance(evidence_package, dict):
+                    error_event["evidence_package"] = evidence_package
+                answer_quality = final_state.get("answer_quality")
+                if isinstance(answer_quality, dict):
+                    error_event["answer_quality"] = answer_quality
+                yield error_event
+                return
+            
+            # 정상 완료 분기 : done event 전송
             answer = self._extract_answer(final_state)
             for index in range(0, len(answer), 24):
                 delta = answer[index:index + 24]
@@ -125,6 +152,17 @@ class AgentClient:
             output = final_state.get("output")
             if isinstance(output, dict):
                 done_event["output"] = output
+
+            # optional metadata
+            evidence_package = final_state.get("evidence_package")
+            if isinstance(evidence_package, dict):
+                done_event["evidence_package"] = evidence_package
+ 
+            # answer_quality: answerable / status / abstain_reason / warnings
+            answer_quality = final_state.get("answer_quality")
+            if isinstance(answer_quality, dict):
+                done_event["answer_quality"] = answer_quality
+
             preprocess_result = final_state.get("preprocess_result")
             if isinstance(preprocess_result, dict):
                 done_event["preprocess_result"] = preprocess_result
@@ -234,6 +272,68 @@ class AgentClient:
 
         return "응답을 생성하지 못했습니다."
 
+    @staticmethod
+    def _is_failed_state(state: Dict[str, Any]) -> bool:
+        """workflow 최종 상태가 실패인지 판단한다."""
+        if state.get("final_status") == "fail":
+            return True
+        output = state.get("output")
+        if isinstance(output, dict):
+            output_type = output.get("type", "")
+            # preprocess_failed, planning_failed, cancelled 등 실패 계열 type
+            if isinstance(output_type, str) and output_type.endswith("failed"):
+                return True
+        analysis_result = state.get("analysis_result")
+        if isinstance(analysis_result, dict):
+            if analysis_result.get("execution_status") == "fail":
+                return True
+            if analysis_result.get("quality_status") in ("empty", "invalid"):
+                return True
+        report_result = state.get("report_result")
+        if isinstance(report_result, dict) and report_result.get("status") == "failed":
+            return True
+        return False
+ 
+    @staticmethod
+    def _resolve_error_code(state: Dict[str, Any], summary: Dict[str, Any]) -> str:
+        """실패 원인을 machine-readable error_code 로 변환한다."""
+        output = state.get("output") or {}
+        output_type = str(output.get("type") or "")
+ 
+        if output_type == "planning_failed":
+            return "planning_failed"
+        if output_type == "preprocess_failed":
+            return "preprocess_failed"
+ 
+        analysis_result = state.get("analysis_result") or {}
+        if analysis_result.get("execution_status") == "fail":
+            error_stage = summary.get("error_stage") or ""
+            if error_stage in ("code_validation", "result_validation"):
+                return "analysis_validation_failed"
+            return "analysis_execution_failed"
+
+        quality_status = analysis_result.get("quality_status")
+        if quality_status == "empty":
+            return "analysis_empty_result"   # 재시도 가능
+        if quality_status == "invalid":
+            return "analysis_validation_failed"  # 재시도 불가
+    
+        report_result = state.get("report_result") or {}
+        if report_result.get("status") == "failed":
+            return "report_failed"
+ 
+        answer_quality = state.get("answer_quality") or {}
+        if answer_quality.get("answerable") is False:
+            return "answer_unanswerable"
+ 
+        return "unknown_error"
+    
+    @staticmethod
+    def _resolve_retryable(state: Dict[str, Any], summary: Dict[str, Any]) -> bool:
+        """해당 오류가 클라이언트 재시도로 복구 가능한지 판단한다."""
+        error_code = AgentClient._resolve_error_code(state, summary)
+        return error_code in ("planning_failed", "analysis_execution_failed", "analysis_empty_result", "unknown_error",)
+ 
     @staticmethod
     def _summarize_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
         handoff = snapshot.get("handoff")

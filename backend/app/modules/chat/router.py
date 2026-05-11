@@ -37,6 +37,9 @@ def _stream_response(events: AsyncIterator[Dict[str, Any]]) -> StreamingResponse
             yield _format_sse(
                 "error",
                 {
+                    "stage": "server_error",
+                    "error_code": "server_error",
+                    "retryable": True,
                     "message": str(exc),
                     "trace_id": get_trace_context().get("trace_id"),
                 },
@@ -54,11 +57,6 @@ async def ask_chat_stream(
     chat_service: ChatService = Depends(get_chat_service),
 ):
     normalized_source_id = (request.source_id or "").strip() or None
-    if normalized_source_id and not chat_service.has_dataset_source(normalized_source_id):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="데이터셋을 찾을 수 없습니다.",
-        )
 
     return _stream_response(
         chat_service.ask_stream(

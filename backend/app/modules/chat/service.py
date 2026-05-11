@@ -34,7 +34,51 @@ class ChatService:
     ) -> AsyncIterator[Dict[str, Any]]:
         source_id = (source_id or "").strip() or None
         session = self._get_or_create_session(session_id=session_id, title=question)
-        dataset = self.dataset_repository.get_by_source_id(source_id) if source_id else None
+        # invaild source_id 처리
+        if source_id is not None:
+            dataset = self.dataset_repository.get_by_source_id(source_id)
+            if dataset is None:
+                # source_id 가 잘못됐거나 존재하지 않음 → error event 로 알림
+                run_id = uuid.uuid4().hex
+                active_trace_id = (trace_id or "").strip() or uuid.uuid4().hex
+                with trace_context(
+                    trace_id=active_trace_id, session_id=session.id, run_id=run_id
+                ):
+                    log_trace(
+                        layer="chat",
+                        event="invalid_source_id",
+                        payload={
+                            "trace_id": active_trace_id,
+                            "session_id": session.id,
+                            "run_id": run_id,
+                            "source_id": source_id,
+                        },
+                    )
+                    yield {
+                        "event": "session",
+                        "data": {
+                            "session_id": session.id,
+                            "run_id": run_id,
+                            "trace_id": active_trace_id,
+                        },
+                    }
+                    yield {
+                        "event": "error",
+                        "data": {
+                            "session_id": session.id,
+                            "run_id": run_id,
+                            "trace_id": active_trace_id,
+                            "stage": "dataset_resolution",
+                            "error_code": "invalid_source_id",
+                            "retryable": False,
+                            "answer": "요청한 데이터셋을 찾을 수 없습니다.",
+                            "message": "요청한 데이터셋을 찾을 수 없습니다.",
+                            "thought_steps": [],
+                        },
+                    }
+                return
+        else:
+            dataset = None
 
         run_id = uuid.uuid4().hex
         active_trace_id = (trace_id or "").strip() or uuid.uuid4().hex
@@ -238,6 +282,9 @@ class ChatService:
         output_type: str | None = None
         output_payload: Dict[str, Any] | None = None
         chunk_count = 0
+        evidence_package: Dict[str, Any] | None = None
+        answer_quality: Dict[str, Any] | None = None
+        chunk_count = 0
 
         async for event in agent_stream:
             event_type = event.get("type")
@@ -321,6 +368,62 @@ class ChatService:
                 event_output = event.get("output")
                 if isinstance(event_output, dict):
                     output_payload = event_output
+                event_evidence = event.get("evidence_package")
+                if isinstance(event_evidence, dict):
+                    evidence_package = event_evidence
+                event_quality = event.get("answer_quality")
+                if isinstance(event_quality, dict):
+                    answer_quality = event_quality
+
+            elif event_type == "error":
+                final_answer = event.get("answer") or "응답을 생성하지 못했습니다."
+                final_steps = event.get("thought_steps")
+                if isinstance(final_steps, list):
+                    thought_steps = [step for step in final_steps if isinstance(step, dict)]
+                event_output = event.get("output")
+                if isinstance(event_output, dict):
+                    output_payload = event_output
+                event_evidence = event.get("evidence_package")
+                if isinstance(event_evidence, dict):
+                    evidence_package = event_evidence
+                event_quality = event.get("answer_quality")
+                if isinstance(event_quality, dict):
+                    answer_quality = event_quality
+
+                self.repository.append_message(session, "assistant", final_answer)
+                log_trace(
+                    layer="chat",
+                    event="error",
+                    payload={
+                        "trace_id": trace_id,
+                        "stage": event.get("stage"),
+                        "error_code": event.get("error_code"),
+                        "retryable": event.get("retryable"),
+                        "answer": final_answer,
+                        "output_type": event.get("output_type"),
+                    },
+                )
+                error_data: Dict[str, Any] = {
+                    "session_id": session_id,
+                    "run_id": run_id,
+                    "trace_id": trace_id,
+                    "thought_steps": thought_steps,
+                    "answer": final_answer,
+                    "message": final_answer,
+                    # ── optional metadata ──
+                    "stage": event.get("stage") or "unknown",
+                    "error_code": event.get("error_code") or "unknown_error",
+                    "retryable": bool(event.get("retryable", False)),
+                    "output_type": event.get("output_type") or "",
+                }
+                if isinstance(output_payload, dict):
+                    error_data["output"] = output_payload
+                if isinstance(evidence_package, dict):
+                    error_data["evidence_package"] = evidence_package
+                if isinstance(answer_quality, dict):
+                    error_data["answer_quality"] = answer_quality
+                yield {"event": "error", "data": error_data}
+                return
 
         final_answer = "".join(answer_parts).strip()
         if not final_answer and isinstance(output_payload, dict):
@@ -359,6 +462,11 @@ class ChatService:
             done_data["output_type"] = output_type
         if isinstance(output_payload, dict):
             done_data["output"] = output_payload
+        if isinstance(evidence_package, dict):
+            done_data["evidence_package"] = evidence_package
+        if isinstance(answer_quality, dict):
+            done_data["answer_quality"] = answer_quality
+            
         error_fields = self._extract_done_error_fields(
             report_result=report_result,
             preprocess_result=preprocess_result,
