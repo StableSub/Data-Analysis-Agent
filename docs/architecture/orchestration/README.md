@@ -91,19 +91,21 @@ main graph의 node, edge, terminal, context merge를 정의한다.
 - `merge_context`: downstream answer/report에 넘길 `merged_context`, `evidence_package`, `answer_quality`를 만든다.
 - `data_qa_terminal`: 최종 data answer를 만들고 output에 evidence metadata를 포함한다.
 - `analysis_fail_terminal`: analysis 실패 시 evidence metadata와 abstain output을 만든다.
+- `status_terminal`: preprocess 실패/취소 또는 visualization 취소 시 `merged_context`, `evidence_package`, `answer_quality`를 보존한 뒤 종료한다.
 - `report_flow`: report subgraph.
 
 ### Route summary
 
 - `START` → `intake_flow`.
 - intake 결과 `general_question` → `general_question_terminal`, `data_pipeline` → `preprocess_flow`.
-- preprocess 결과 `analysis` → `analysis_flow`, `rag` → `rag_flow`, `cancelled` → `END`.
+- preprocess 결과 `analysis` → `analysis_flow`, `cancelled`/`failed` → `status_terminal`.
 - analysis 결과 `visualization`/`merge_context`/`clarification`/`analysis_fail_terminal`로 분기한다.
 - rag 결과 `guideline`/`visualization`/`merge_context`로 분기한다.
 - guideline 결과 `visualization` 또는 `merge_context`로 분기한다.
-- visualization 결과 `merge_context` 또는 `cancelled`로 분기한다.
+- visualization 결과 `merge_context` 또는 `cancelled` → `status_terminal`로 분기한다.
 - merge context 이후 `report` → `report_flow`, 그 외 `data_qa` → `data_qa_terminal`.
 - analysis failure는 `analysis_fail_terminal` → `END`로 끝난다.
+- status terminal은 `status_terminal` → `END`로 끝난다.
 
 ### `merge_context` payload
 

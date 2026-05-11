@@ -111,17 +111,18 @@ START
         -> planner
            -> general_question_terminal | rag_flow | preprocess_flow | analysis_flow | clarification_terminal | END(fail)
         -> preprocess_flow
-           -> analysis_flow | END(cancelled/failed)
+           -> analysis_flow | status_terminal(cancelled/failed)
         -> analysis_flow
            -> visualization_flow | merge_context | clarification_terminal | analysis_fail_terminal
         -> rag_flow
            -> visualization_flow | merge_context
         -> visualization_flow
-           -> merge_context | END(cancelled)
+           -> merge_context | status_terminal(cancelled)
         -> merge_context
            -> report_flow -> END
            -> data_qa_terminal -> END
         -> analysis_fail_terminal -> END
+        -> status_terminal -> END
 ```
 
 ### Terminal output type
@@ -130,7 +131,8 @@ START
 |---|---|---|
 | general question | `general_question` | `general_question_terminal` |
 | analysis clarification | `clarification` | `clarification_terminal` |
-| preprocess/visualization/report cancel | `cancelled` | 해당 workflow approval cancel path |
+| preprocess/visualization cancel | `cancelled` | 해당 workflow approval cancel path, 이후 `status_terminal`이 evidence metadata를 보존 |
+| report cancel | `cancelled` | report workflow approval cancel path |
 | analysis failure abstain | `fail` | `analysis_fail_terminal` |
 | data answer | `data_qa` | `data_qa_terminal` |
 | report answer | `report_answer` | report workflow finalize node |

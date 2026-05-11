@@ -20,7 +20,7 @@
 
 ## 상위 흐름
 
-메인 워크플로우는 질문을 받은 뒤 dataset 선택 여부를 확인한다. dataset이 없으면 intake 단계에서 `general_question`으로 분기한다. dataset이 있으면 `dataset_context`와 `guideline_flow`를 거쳐 `planner`가 route를 확정하고, 필요에 따라 `preprocess_flow`, `analysis_flow`, `rag_flow`, `visualization_flow`, `merge_context`, `data_qa_terminal`, `report_flow` 또는 `analysis_fail_terminal`로 진행한다.
+메인 워크플로우는 질문을 받은 뒤 dataset 선택 여부를 확인한다. dataset이 없으면 intake 단계에서 `general_question`으로 분기한다. dataset이 있으면 `dataset_context`와 `guideline_flow`를 거쳐 `planner`가 route를 확정하고, 필요에 따라 `preprocess_flow`, `analysis_flow`, `rag_flow`, `visualization_flow`, `merge_context`, `data_qa_terminal`, `report_flow`, `analysis_fail_terminal` 또는 `status_terminal`로 진행한다.
 
 ```mermaid
 flowchart TD
@@ -36,14 +36,14 @@ flowchart TD
     F -->|clarification| G["clarification_terminal"]
     F -->|fail| Z["END(fail)"]
     I -->|analysis| J
-    I -->|cancelled/failed| K["END"]
+    I -->|cancelled/failed| S["status_terminal"]
     J -->|needs_clarification| G
     J -->|fail| L["analysis_fail_terminal"]
     J -->|ask_visualization| M["visualization_flow"]
     J -->|바로 응답| N["merge_context"]
     H -->|ask_visualization| M
     H -->|바로 응답| N
-    M -->|cancelled| K
+    M -->|cancelled| S
     M -->|완료| N
     N -->|ask_report| O["report_flow"]
     N -->|바로 응답| P["data_qa_terminal"]
@@ -52,6 +52,7 @@ flowchart TD
     G --> R
     L --> R
     P --> R
+    S --> R
 ```
 
 
@@ -92,6 +93,7 @@ planner 주변 판단은 아래 위치에 나뉘어 있다.
 - `preprocess_decision`이 `run_preprocess`면 approval/revise/cancel을 거친다.
 - skip이면 바로 다음 단계로 넘어간다.
 - 메인 그래프는 preprocess 이후 `handoff.ask_analysis`를 보고 `analysis_flow` 또는 `rag_flow`를 결정한다.
+- 취소 또는 실패하면 `status_terminal`에서 `evidence_package`와 `answer_quality`를 보존한 뒤 종료한다.
 
 ### 4. analysis 경로
 
@@ -118,7 +120,7 @@ RAG 서브그래프는 선택된 `source_id`에 대해 인덱스 확인, 검색,
 
 visualization 서브그래프는 차트 planning, approval, 결과 생성/finalize를 담당한다.
 
-- 취소되면 `END(cancelled)`
+- 취소되면 `status_terminal`에서 `evidence_package`와 `answer_quality`를 보존한 뒤 종료한다.
 - 성공하면 `merge_context`로 이동한다.
 
 ### 8. merge_context와 최종 응답
@@ -151,7 +153,7 @@ report 서브그래프는 report context 준비, draft 생성, approval/revision
 - `fail`
   - planning, preprocess, analysis, report 등에서 실패한 상태. analysis 실패는 `analysis_fail_terminal`이 `evidence_package`/`answer_quality`와 abstain output을 만든다.
 - `cancelled`
-  - approval 단계에서 사용자가 취소한 상태
+  - approval 단계에서 사용자가 취소한 상태. preprocess/visualization 취소는 `status_terminal`이 `evidence_package`/`answer_quality`를 붙인 뒤 종료한다.
 
 ## 최종 응답 생성 위치
 
@@ -163,5 +165,7 @@ report 서브그래프는 report context 준비, draft 생성, approval/revision
   - `evidence_package`, `answer_quality`, `merged_context` 기반 최종 데이터 응답 생성
 - `analysis_fail_terminal`
   - analysis 실패 시 evidence contract와 abstain output 생성
+- `status_terminal`
+  - preprocess 실패/취소 또는 visualization 취소 시 기존 `output.content`를 유지하고 `merged_context`, `evidence_package`, `answer_quality`를 보존한 뒤 종료
 - `report_flow`
   - `report_answer` 생성 후 종료
