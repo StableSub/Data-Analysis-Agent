@@ -1549,9 +1549,9 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
           const errorCode = pickString(record.error_code);
           const message = pickString(record.message) ?? "스트리밍 처리 중 오류가 발생했습니다.";
           const answer = pickString(record.answer) ?? message;
-          const isWorkflowError = Boolean(
+          const isRouterLevelError = errorCode === "server_error";
+          const isWorkflowError = !isRouterLevelError && Boolean(
             pickString(record.answer) ||
-            errorCode ||
             outputType ||
             evidencePackage ||
             answerQuality,
