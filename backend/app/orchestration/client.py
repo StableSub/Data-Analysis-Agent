@@ -115,13 +115,18 @@ class AgentClient:
             # 실패 분기: error event 전송 후 종료 
             if self._is_failed_state(final_state):
                 summary = self._summarize_snapshot(final_state)
+                error_stage = summary.get("error_stage") or "unknown"
+                error_message = summary.get("error_message")
+                answer = self._extract_answer(final_state)
                 error_event: Dict[str, Any] = {
                     "type": "error",
-                    "stage": summary.get("error_stage") or "unknown",
+                    "status": "failed",
+                    "stage": error_stage,
+                    "error_stage": error_stage,
+                    "error_message": error_message if isinstance(error_message, str) else answer,
                     "error_code": self._resolve_error_code(final_state, summary),
                     "retryable": self._resolve_retryable(final_state, summary),
-                    
-                    "answer": self._extract_answer(final_state),
+                    "answer": answer,
                     "thought_steps": thought_steps,
                     "output_type": self._extract_output_type(final_state),
                 }

@@ -162,7 +162,10 @@ data: <json>
   "thought_steps": [],
   "answer": "사용자에게 보여줄 오류 응답",
   "message": "사용자에게 보여줄 오류 응답",
+  "status": "failed",
   "stage": "analysis",
+  "error_stage": "analysis",
+  "error_message": "실패 원인 메시지",
   "error_code": "analysis_execution_failed",
   "retryable": true,
   "output_type": "analysis_failed",
@@ -175,7 +178,8 @@ data: <json>
 현재 구현 특성:
 
 - workflow가 실패 상태로 끝나면 `AgentClient`가 `error` 내부 event를 만들고, `ChatService`가 SSE `error` payload로 변환한다.
-- `stage`, `error_code`, `retryable`, `output_type`은 optional metadata지만 workflow error에서는 기본값을 채워 보낸다.
+- `status`, `stage`, `error_stage`, `error_message`, `error_code`, `retryable`, `output_type`은 optional metadata지만 workflow error에서는 기본값을 채워 보낸다.
+- `stage`는 기존 호환 alias이며, 새 클라이언트는 `error_stage`를 우선 사용할 수 있다.
 - `evidence_package`, `answer_quality`가 workflow final state 또는 `output`에 있으면 `error` payload에도 보존된다.
 - router 단계 예외처럼 workflow 밖에서 발생한 오류는 `message` 중심의 단순 `error` payload로 떨어질 수 있으므로, 프론트엔드는 `message`를 계속 기본 표시값으로 사용한다.
 

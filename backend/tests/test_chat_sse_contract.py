@@ -19,7 +19,7 @@ def _collect(coro_or_agen) -> list[Dict[str, Any]]:
     async def _run():
         return [e async for e in coro_or_agen]
 
-    return asyncio.get_event_loop().run_until_complete(_run())
+    return asyncio.run(_run())
 
 
 def _make_fake_workflow(snapshots: list[Dict[str, Any]]):
@@ -241,6 +241,14 @@ class TestErrorEventNewlyAdded:
         error = next(e for e in events if e.get("type") == "error")
         assert isinstance(error["stage"], str) and error["stage"]
 
+    def test_error_event_passes_terminal_status_metadata(self):
+        agent = _make_agent([_fail_snapshot(error_stage="analysis")])
+        events = _collect(agent.astream_with_trace(session_id="1", question="매출 평균은?"))
+        error = next(e for e in events if e.get("type") == "error")
+        assert error["status"] == "failed"
+        assert error["error_stage"] == "analysis"
+        assert error["error_message"] == "컬럼을 찾을 수 없습니다."
+
     def test_error_event_has_error_code(self):
         agent = _make_agent([_fail_snapshot()])
         events = _collect(agent.astream_with_trace(session_id="1", question="매출 평균은?"))
@@ -378,6 +386,15 @@ class TestServiceLayerRelay:
         error = next(e for e in events if e.get("event") == "error")
         assert "error_code" in error["data"]
 
+    def test_service_error_passes_terminal_status_metadata(self):
+        agent = _make_agent([_fail_snapshot(error_stage="analysis")])
+        service = _make_service(agent)
+        events = _collect(service.ask_stream(question="매출 평균은?", session_id=1))
+        error = next(e for e in events if e.get("event") == "error")
+        assert error["data"]["status"] == "failed"
+        assert error["data"]["error_stage"] == "analysis"
+        assert error["data"]["error_message"] == "컬럼을 찾을 수 없습니다."
+
     def test_service_error_has_retryable(self):
         agent = _make_agent([_fail_snapshot()])
         service = _make_service(agent)
@@ -423,6 +440,17 @@ class TestInvalidSourceId:
         )
         error = next(e for e in events if e.get("event") == "error")
         assert error["data"]["retryable"] is False
+
+    def test_invalid_source_id_has_terminal_status_metadata(self):
+        agent = _make_agent([])
+        service = _make_service(agent, source_exists=False)
+        events = _collect(
+            service.ask_stream(question="매출 평균은?", source_id="nonexistent-id")
+        )
+        error = next(e for e in events if e.get("event") == "error")
+        assert error["data"]["status"] == "failed"
+        assert error["data"]["error_stage"] == "dataset_resolution"
+        assert error["data"]["error_message"] == "요청한 데이터셋을 찾을 수 없습니다."
 
     def test_invalid_source_id_session_event_comes_first(self):
         """source_id 오류여도 session event 는 먼저 와야 한다."""

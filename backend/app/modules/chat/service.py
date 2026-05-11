@@ -68,7 +68,10 @@ class ChatService:
                             "session_id": session.id,
                             "run_id": run_id,
                             "trace_id": active_trace_id,
+                            "status": "failed",
                             "stage": "dataset_resolution",
+                            "error_stage": "dataset_resolution",
+                            "error_message": "요청한 데이터셋을 찾을 수 없습니다.",
                             "error_code": "invalid_source_id",
                             "retryable": False,
                             "answer": "요청한 데이터셋을 찾을 수 없습니다.",
@@ -406,6 +409,10 @@ class ChatService:
 
             elif event_type == "error":
                 final_answer = event.get("answer") or "응답을 생성하지 못했습니다."
+                event_error_stage = event.get("error_stage") or event.get("stage") or "unknown"
+                event_error_message = event.get("error_message")
+                if not isinstance(event_error_message, str) or not event_error_message:
+                    event_error_message = final_answer
                 final_steps = event.get("thought_steps")
                 if isinstance(final_steps, list):
                     thought_steps = [step for step in final_steps if isinstance(step, dict)]
@@ -432,6 +439,9 @@ class ChatService:
                     payload={
                         "trace_id": trace_id,
                         "stage": event.get("stage"),
+                        "status": event.get("status"),
+                        "error_stage": event_error_stage,
+                        "error_message": event_error_message,
                         "error_code": event.get("error_code"),
                         "retryable": event.get("retryable"),
                         "answer": final_answer,
@@ -446,7 +456,10 @@ class ChatService:
                     "answer": final_answer,
                     "message": final_answer,
                     # ── optional metadata ──
-                    "stage": event.get("stage") or "unknown",
+                    "status": event.get("status") or "failed",
+                    "stage": event.get("stage") or event_error_stage,
+                    "error_stage": event_error_stage,
+                    "error_message": event_error_message,
                     "error_code": event.get("error_code") or "unknown_error",
                     "retryable": bool(event.get("retryable", False)),
                     "output_type": event.get("output_type") or "",
