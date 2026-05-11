@@ -116,29 +116,68 @@ data: <json>
   "answer": "최종 응답",
   "session_id": 123,
   "run_id": "<hex>",
+  "trace_id": "<hex>",
   "thought_steps": [],
   "preprocess_result": {},
   "visualization_result": {},
   "output_type": "...",
-  "output": {}
+  "output": {},
+  "status": "success|limited|unanswerable|failed|cancelled",
+  "error_stage": "preprocess",
+  "error_message": "오류 메시지",
+  "retryable": true,
+  "evidence_package": {
+    "source_id": "...",
+    "filename": "...",
+    "used_columns": [],
+    "analysis_status": "success|fail|missing",
+    "rag_retrieved_count": 0,
+    "guideline_retrieved_count": 0,
+    "preprocess_status": "skipped|applied|failed|cancelled",
+    "warnings": []
+  },
+  "answer_quality": {
+    "answerable": true,
+    "status": "answerable|limited|unanswerable",
+    "abstain_reason": "...",
+    "warnings": []
+  }
 }
 ```
 
 - `answer`가 비어 있으면 backend가 `응답을 생성하지 못했습니다.`로 보정한다.
 - `visualization_result`는 status가 `generated`일 때만 포함될 수 있다.
 - `output`은 orchestration 최종 payload를 전달할 때만 포함된다.
+- `status`는 `ChatService`가 최종 payload에서 계산하는 terminal 상태다. 성공은 `success`, 근거 제한은 `limited`/`unanswerable`, 실패/취소는 `failed`/`cancelled`로 표현한다.
+- `error_stage`, `error_message`, `retryable`은 실패 또는 취소 성격의 `done` payload에서만 포함될 수 있다.
+- `evidence_package`, `answer_quality`는 optional metadata다. 같은 값이 `output.evidence_package`, `output.answer_quality`에도 들어갈 수 있다.
 
 ### `error`
 
 ```json
-{ "message": "오류 메시지" }
+{
+  "session_id": 123,
+  "run_id": "<hex>",
+  "trace_id": "<hex>",
+  "thought_steps": [],
+  "answer": "사용자에게 보여줄 오류 응답",
+  "message": "사용자에게 보여줄 오류 응답",
+  "stage": "analysis",
+  "error_code": "analysis_execution_failed",
+  "retryable": true,
+  "output_type": "analysis_failed",
+  "output": {},
+  "evidence_package": {},
+  "answer_quality": {}
+}
 ```
 
 현재 구현 특성:
 
-- 구조화된 `code`, `stage`, `retryable` 필드는 없다.
-- 예외가 발생하면 router가 `str(exc)`만 담아 `error` 이벤트를 보낸다.
-- 프론트엔드는 이 이벤트를 받으면 `Error`를 throw하고 `state="error"` 경로로 이동한다.
+- workflow가 실패 상태로 끝나면 `AgentClient`가 `error` 내부 event를 만들고, `ChatService`가 SSE `error` payload로 변환한다.
+- `stage`, `error_code`, `retryable`, `output_type`은 optional metadata지만 workflow error에서는 기본값을 채워 보낸다.
+- `evidence_package`, `answer_quality`가 workflow final state 또는 `output`에 있으면 `error` payload에도 보존된다.
+- router 단계 예외처럼 workflow 밖에서 발생한 오류는 `message` 중심의 단순 `error` payload로 떨어질 수 있으므로, 프론트엔드는 `message`를 계속 기본 표시값으로 사용한다.
 
 ## HTTP 오류 계약
 
@@ -163,6 +202,8 @@ data: <json>
 - `approval_required.pending_approval`은 parse 가능한 객체다
 - `done.answer` 또는 누적 `chunk`로 최종 답을 복원할 수 있다
 - `error.message`는 사용자에게 보여줄 수 있는 문자열이다
+- `done.status`가 `failed`/`cancelled`이면 최종 응답을 실패/취소 상태로 표시할 수 있다
+- `done.evidence_package`, `done.answer_quality`, `error.evidence_package`, `error.answer_quality`는 없을 수 있는 optional metadata다
 
 따라서 SSE 이름이나 핵심 필드명(`session_id`, `run_id`, `pending_approval`, `delta`, `answer`, `message`)을 바꾸면 프론트엔드와 문서를 함께 수정해야 한다.
 
@@ -171,9 +212,10 @@ data: <json>
 - [ ] 새 SSE event를 추가했다면 프론트엔드 parser를 함께 수정했는가
 - [ ] 오류 payload에 새 필드를 추가했다면 backward compatibility를 확인했는가
 - [ ] `approval_required` shape 변경 시 `pending-approval` GET 응답도 같은 shape를 유지하는가
-- [ ] 발표에서 “오류 분류 체계”를 말할 때 현재는 message 중심 계약임을 분명히 했는가
+- [ ] `evidence_package`/`answer_quality`를 추가했다면 `output` 내부 값과 top-level 값이 같은 의미를 유지하는가
+- [ ] workflow error와 router-level exception의 payload 차이를 프론트엔드가 모두 처리하는가
 
 ## 발표용 framing
 
 현재 시스템의 장점은 SSE로 **session → thought → approval/done** 흐름이 명확하다는 점이다.
-반면 오류 계약은 아직 단순 메시지 수준이므로, 발표에서는 “구조화된 error code는 향후 보강 항목”이라고 설명하는 것이 정확하다.
+오류 계약은 기존 `message` 호환성을 유지하면서 `stage`, `error_code`, `retryable`, evidence metadata를 optional로 추가한 상태다. 발표에서는 기존 이벤트 이름과 core field는 유지하고, 실패 원인과 근거 부족 상태를 additive metadata로 노출한다고 설명하는 것이 정확하다.
