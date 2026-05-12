@@ -68,7 +68,10 @@ class ChatService:
                             "session_id": session.id,
                             "run_id": run_id,
                             "trace_id": active_trace_id,
+                            "status": "failed",
                             "stage": "dataset_resolution",
+                            "error_stage": "dataset_resolution",
+                            "error_message": "요청한 데이터셋을 찾을 수 없습니다.",
                             "error_code": "invalid_source_id",
                             "retryable": False,
                             "answer": "요청한 데이터셋을 찾을 수 없습니다.",
@@ -234,6 +237,7 @@ class ChatService:
         report_result: Dict[str, Any] | None,
         preprocess_result: Dict[str, Any] | None,
         analysis_result: Dict[str, Any] | None,
+        visualization_result: Dict[str, Any] | None,
         output_payload: Dict[str, Any] | None,
     ) -> Dict[str, Any]:
         error_stage = None
@@ -247,6 +251,10 @@ class ChatService:
         if isinstance(preprocess_result, dict) and preprocess_result.get("status") == "failed":
             error_stage = error_stage or "preprocess"
             error_message = error_message or preprocess_result.get("error") or preprocess_result.get("summary")
+
+        if isinstance(visualization_result, dict) and visualization_result.get("status") == "failed":
+            error_stage = error_stage or "visualization"
+            error_message = error_message or visualization_result.get("error") or visualization_result.get("summary")
 
         if isinstance(analysis_result, dict):
             error_stage = error_stage or analysis_result.get("error_stage")
@@ -263,6 +271,25 @@ class ChatService:
             "error_message": error_message,
             "error_type": error_type,
         }
+
+    @staticmethod
+    def _derive_terminal_status(
+        *,
+        output_type: str | None,
+        error_fields: Dict[str, Any],
+        answer_quality: Dict[str, Any] | None,
+    ) -> str:
+        if output_type == "cancelled":
+            return "cancelled"
+        if output_type == "fail" or (isinstance(output_type, str) and output_type.endswith("_failed")):
+            return "failed"
+        if error_fields.get("error_stage") or error_fields.get("error_message"):
+            return "failed"
+        if isinstance(answer_quality, dict):
+            quality_status = answer_quality.get("status")
+            if quality_status in {"limited", "unanswerable"}:
+                return str(quality_status)
+        return "success"
 
     async def _relay_agent_events(
         self,
@@ -281,7 +308,6 @@ class ChatService:
         report_result: Dict[str, Any] | None = None
         output_type: str | None = None
         output_payload: Dict[str, Any] | None = None
-        chunk_count = 0
         evidence_package: Dict[str, Any] | None = None
         answer_quality: Dict[str, Any] | None = None
         chunk_count = 0
@@ -368,6 +394,12 @@ class ChatService:
                 event_output = event.get("output")
                 if isinstance(event_output, dict):
                     output_payload = event_output
+                    output_evidence = event_output.get("evidence_package")
+                    if isinstance(output_evidence, dict):
+                        evidence_package = output_evidence
+                    output_answer_quality = event_output.get("answer_quality")
+                    if isinstance(output_answer_quality, dict):
+                        answer_quality = output_answer_quality
                 event_evidence = event.get("evidence_package")
                 if isinstance(event_evidence, dict):
                     evidence_package = event_evidence
@@ -377,12 +409,22 @@ class ChatService:
 
             elif event_type == "error":
                 final_answer = event.get("answer") or "응답을 생성하지 못했습니다."
+                event_error_stage = event.get("error_stage") or event.get("stage") or "unknown"
+                event_error_message = event.get("error_message")
+                if not isinstance(event_error_message, str) or not event_error_message:
+                    event_error_message = final_answer
                 final_steps = event.get("thought_steps")
                 if isinstance(final_steps, list):
                     thought_steps = [step for step in final_steps if isinstance(step, dict)]
                 event_output = event.get("output")
                 if isinstance(event_output, dict):
                     output_payload = event_output
+                    output_evidence = event_output.get("evidence_package")
+                    if isinstance(output_evidence, dict):
+                        evidence_package = output_evidence
+                    output_answer_quality = event_output.get("answer_quality")
+                    if isinstance(output_answer_quality, dict):
+                        answer_quality = output_answer_quality
                 event_evidence = event.get("evidence_package")
                 if isinstance(event_evidence, dict):
                     evidence_package = event_evidence
@@ -397,6 +439,9 @@ class ChatService:
                     payload={
                         "trace_id": trace_id,
                         "stage": event.get("stage"),
+                        "status": event.get("status"),
+                        "error_stage": event_error_stage,
+                        "error_message": event_error_message,
                         "error_code": event.get("error_code"),
                         "retryable": event.get("retryable"),
                         "answer": final_answer,
@@ -411,7 +456,10 @@ class ChatService:
                     "answer": final_answer,
                     "message": final_answer,
                     # ── optional metadata ──
-                    "stage": event.get("stage") or "unknown",
+                    "status": event.get("status") or "failed",
+                    "stage": event.get("stage") or event_error_stage,
+                    "error_stage": event_error_stage,
+                    "error_message": event_error_message,
                     "error_code": event.get("error_code") or "unknown_error",
                     "retryable": bool(event.get("retryable", False)),
                     "output_type": event.get("output_type") or "",
@@ -466,13 +514,27 @@ class ChatService:
             done_data["evidence_package"] = evidence_package
         if isinstance(answer_quality, dict):
             done_data["answer_quality"] = answer_quality
-            
         error_fields = self._extract_done_error_fields(
             report_result=report_result,
             preprocess_result=preprocess_result,
             analysis_result=analysis_result,
+            visualization_result=visualization_result,
             output_payload=output_payload,
         )
+        terminal_status = self._derive_terminal_status(
+            output_type=output_type,
+            error_fields=error_fields,
+            answer_quality=answer_quality,
+        )
+        done_data["status"] = terminal_status
+        if error_fields["error_stage"]:
+            done_data["error_stage"] = error_fields["error_stage"]
+        if error_fields["error_message"]:
+            done_data["error_message"] = error_fields["error_message"]
+        if error_fields["error_type"]:
+            done_data["error_type"] = error_fields["error_type"]
+        if terminal_status in {"failed", "cancelled"}:
+            done_data["retryable"] = terminal_status == "failed"
         log_trace(
             layer="chat",
             event="done",
@@ -480,6 +542,7 @@ class ChatService:
                 "trace_id": trace_id,
                 "answer": final_answer,
                 "output_type": output_type,
+                "status": terminal_status,
                 "preprocess_status": (
                     preprocess_result.get("status") if isinstance(preprocess_result, dict) else None
                 ),

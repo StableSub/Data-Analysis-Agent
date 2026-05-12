@@ -111,17 +111,18 @@ START
         -> planner
            -> general_question_terminal | rag_flow | preprocess_flow | analysis_flow | clarification_terminal | END(fail)
         -> preprocess_flow
-           -> analysis_flow | END(cancelled/failed)
+           -> analysis_flow | status_terminal(cancelled/failed)
         -> analysis_flow
            -> visualization_flow | merge_context | clarification_terminal | analysis_fail_terminal
         -> rag_flow
            -> visualization_flow | merge_context
         -> visualization_flow
-           -> merge_context | END(cancelled)
+           -> merge_context | status_terminal(cancelled)
         -> merge_context
            -> report_flow -> END
            -> data_qa_terminal -> END
         -> analysis_fail_terminal -> END
+        -> status_terminal -> END
 ```
 
 ### Terminal output type
@@ -130,7 +131,8 @@ START
 |---|---|---|
 | general question | `general_question` | `general_question_terminal` |
 | analysis clarification | `clarification` | `clarification_terminal` |
-| preprocess/visualization/report cancel | `cancelled` | 해당 workflow approval cancel path |
+| preprocess/visualization cancel | `cancelled` | 해당 workflow approval cancel path, 이후 `status_terminal`이 evidence metadata를 보존 |
+| report cancel | `cancelled` | report workflow approval cancel path |
 | analysis failure abstain | `fail` | `analysis_fail_terminal` |
 | data answer | `data_qa` | `data_qa_terminal` |
 | report answer | `report_answer` | report workflow finalize node |
@@ -218,6 +220,7 @@ START
 - `approval_required`: `pending_approval`과 현재 thought steps.
 - `chunk`: final answer text를 24자 단위로 나눈 delta.
 - `done`: final answer와 output metadata.
+- `error`: 실패 workflow state를 구조화된 error metadata와 함께 전달한다.
 
 `AgentClient` 내부 `done` event의 주요 key:
 
@@ -225,10 +228,19 @@ START
 - `thought_steps`
 - `output_type`
 - `output`: `final_state["output"]`이 dict일 때만 포함된다.
+- `evidence_package`: `final_state["evidence_package"]`가 dict일 때만 포함된다.
+- `answer_quality`: `final_state["answer_quality"]`가 dict일 때만 포함된다.
 - `preprocess_result`: `final_state["preprocess_result"]`가 dict일 때만 포함된다.
 - `visualization_result`는 status가 `generated`일 때만 포함된다.
+- `analysis_result`, `report_result`: 각 final state 값이 dict일 때만 포함된다.
 
-`ChatService._relay_agent_events()`는 내부 event를 SSE response data로 바꾼다. 최종 SSE `done` data에는 항상 `answer`, `session_id`, `run_id`, `thought_steps`, `preprocess_result` key가 있으며, `preprocess_result` 값은 내부 event에서 dict가 오지 않으면 `None`일 수 있다. `output_type`, `output`, `visualization_result`는 값이 있을 때만 추가된다.
+`AgentClient`는 `final_status="fail"`, 실패한 analysis/report result, invalid/empty analysis quality 같은 상태를 실패 workflow state로 보고 내부 `error` event를 만든다. 이 event에는 `stage`, `error_code`, `retryable`, `answer`, `output_type`이 들어가며, final state에 있던 `output`, `evidence_package`, `answer_quality`도 가능한 경우 보존된다.
+
+`ChatService._relay_agent_events()`는 내부 event를 SSE response data로 바꾼다. 최종 SSE `done` data에는 항상 `answer`, `session_id`, `run_id`, `trace_id`, `thought_steps`, `preprocess_result`, `status` key가 있으며, `preprocess_result` 값은 내부 event에서 dict가 오지 않으면 `None`일 수 있다. `output_type`, `output`, `analysis_result`, `visualization_result`, `report_result`, `evidence_package`, `answer_quality`는 값이 있을 때만 추가된다.
+
+`done.status`는 `ChatService`가 `output_type`, preprocess/analysis/visualization/report result, `answer_quality.status`를 보고 계산한다. 값은 `success`, `limited`, `unanswerable`, `failed`, `cancelled` 중 하나다. 실패/취소 성격이면 `error_stage`, `error_message`, `error_type`, `retryable`이 함께 붙을 수 있다.
+
+SSE `error` data에는 `session_id`, `run_id`, `trace_id`, `thought_steps`, `answer`, `message`, `stage`, `error_code`, `retryable`, `output_type`이 들어간다. workflow error에 `output`, `evidence_package`, `answer_quality`가 있으면 top-level error payload에도 유지된다. router-level exception은 여전히 `message` 중심의 단순 error payload로 떨어질 수 있으므로 frontend는 `message`를 기본 표시값으로 유지한다.
 
 ## 발견한 문제점 / 확인 필요 사항
 

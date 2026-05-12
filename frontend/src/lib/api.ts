@@ -67,6 +67,13 @@ export interface ChatResponse {
   trace_id?: string;
   thought_steps?: ThoughtStepPayload[];
   pending_approval?: PendingApprovalPayload;
+  output_type?: string;
+  status?: "success" | "limited" | "unanswerable" | "failed" | "cancelled";
+  error_stage?: string | null;
+  error_message?: string | null;
+  retryable?: boolean;
+  evidence_package?: EvidencePackagePayload;
+  answer_quality?: AnswerQualityPayload;
 }
 
 export interface ThoughtStepPayload {
@@ -76,6 +83,39 @@ export interface ThoughtStepPayload {
   display_message?: string;
   detail_message?: string;
   audience?: "user" | "debug";
+}
+
+export interface EvidenceWarningPayload {
+  stage?: string;
+  code?: string;
+  message?: string;
+}
+
+export interface EvidencePackagePayload {
+  source_id?: string;
+  filename?: string;
+  used_columns?: string[];
+  analysis_status?: string;
+  analysis_quality_status?: string;
+  analysis_quality_reason?: string;
+  analysis_summary?: string;
+  analysis_metrics?: Record<string, unknown>;
+  analysis_table?: Record<string, unknown>[];
+  rag_retrieved_count?: number;
+  rag_evidence_summary?: string;
+  guideline_status?: string;
+  guideline_retrieved_count?: number;
+  guideline_evidence_summary?: string;
+  preprocess_status?: string;
+  applied_steps?: string[];
+  warnings?: EvidenceWarningPayload[];
+}
+
+export interface AnswerQualityPayload {
+  answerable?: boolean;
+  status?: "answerable" | "limited" | "unanswerable";
+  abstain_reason?: string;
+  warnings?: EvidenceWarningPayload[];
 }
 
 export interface ChatHistoryMessage {

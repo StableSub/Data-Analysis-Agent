@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import inspect
 from types import SimpleNamespace
 from typing import Any, cast
@@ -7,10 +8,36 @@ from typing import Any, cast
 from backend.app.orchestration import ai, builder
 from backend.app.orchestration.workflows import analysis
 from backend.app.orchestration.evidence import build_evidence_contract
+from backend.app.modules.chat.service import ChatService
 
 
 def _warning_codes(payload: dict) -> set[str]:
     return {str(warning.get("code")) for warning in payload.get("warnings", [])}
+
+
+async def _fake_agent_stream(*events: dict[str, Any]):
+    for event in events:
+        yield event
+
+
+async def _collect_events(stream):
+    return [event async for event in stream]
+
+
+class _FakeChatRepository:
+    def __init__(self) -> None:
+        self.messages: list[tuple[object, str, str]] = []
+
+    def append_message(self, session: object, role: str, content: str) -> None:
+        self.messages.append((session, role, content))
+
+
+def _make_chat_service(repo: _FakeChatRepository | None = None) -> ChatService:
+    return ChatService(
+        agent=cast(Any, object()),
+        repository=cast(Any, repo or _FakeChatRepository()),
+        dataset_repository=cast(Any, object()),
+    )
 
 
 def test_evidence_contract_prefers_structured_analysis_and_keeps_mild_no_evidence_answerable() -> None:
@@ -176,6 +203,212 @@ def test_builder_wires_evidence_contract_into_merge_data_qa_and_analysis_fail_pa
     assert "answer_quality.get(\"answerable\") is False" in source
     assert "analysis_fail_terminal" in source
     assert '"fail": "analysis_fail_terminal"' in source
+    assert "status_terminal" in source
+    assert '"cancelled": "status_terminal"' in source
+    assert '"failed": "status_terminal"' in source
+
+
+def test_chat_done_metadata_marks_fail_cancel_and_limited_status() -> None:
+    preprocess_error = ChatService._extract_done_error_fields(
+        report_result=None,
+        preprocess_result={"status": "failed", "error": "bad preprocess"},
+        analysis_result=None,
+        visualization_result=None,
+        output_payload={"type": "preprocess_failed", "content": "preprocess failed"},
+    )
+
+    assert preprocess_error["error_stage"] == "preprocess"
+    assert preprocess_error["error_message"] == "bad preprocess"
+    assert ChatService._derive_terminal_status(
+        output_type="preprocess_failed",
+        error_fields=preprocess_error,
+        answer_quality=None,
+    ) == "failed"
+    assert ChatService._derive_terminal_status(
+        output_type="cancelled",
+        error_fields={"error_stage": None, "error_message": None, "error_type": None},
+        answer_quality=None,
+    ) == "cancelled"
+    assert ChatService._derive_terminal_status(
+        output_type="data_qa",
+        error_fields={"error_stage": None, "error_message": None, "error_type": None},
+        answer_quality={"status": "limited"},
+    ) == "limited"
+
+
+def test_chat_relay_done_exposes_status_error_and_evidence_metadata() -> None:
+    repo = _FakeChatRepository()
+    service = _make_chat_service(repo)
+
+    events = asyncio.run(
+        _collect_events(
+            service._relay_agent_events(
+                session_id=7,
+                run_id="run-1",
+                trace_id="trace-1",
+                session=cast(Any, object()),
+                agent_stream=_fake_agent_stream(
+                    {
+                        "type": "done",
+                        "answer": "전처리 단계에서 오류가 발생했습니다.",
+                        "thought_steps": [{"phase": "preprocess", "message": "failed"}],
+                        "output_type": "preprocess_failed",
+                        "preprocess_result": {
+                            "status": "failed",
+                            "error": "bad preprocess",
+                        },
+                        "output": {
+                            "type": "preprocess_failed",
+                            "content": "전처리 단계에서 오류가 발생했습니다.",
+                            "evidence_package": {
+                                "warnings": [
+                                    {
+                                        "stage": "preprocess",
+                                        "code": "preprocess_not_applied",
+                                        "message": "bad preprocess",
+                                    }
+                                ]
+                            },
+                            "answer_quality": {
+                                "answerable": False,
+                                "status": "unanswerable",
+                            },
+                        },
+                    }
+                ),
+            )
+        )
+    )
+
+    assert repo.messages[-1][1:] == ("assistant", "전처리 단계에서 오류가 발생했습니다.")
+    assert events == [
+        {
+            "event": "done",
+            "data": {
+                "answer": "전처리 단계에서 오류가 발생했습니다.",
+                "session_id": 7,
+                "run_id": "run-1",
+                "trace_id": "trace-1",
+                "thought_steps": [{"phase": "preprocess", "message": "failed"}],
+                "preprocess_result": {
+                    "status": "failed",
+                    "error": "bad preprocess",
+                },
+                "output_type": "preprocess_failed",
+                "output": {
+                    "type": "preprocess_failed",
+                    "content": "전처리 단계에서 오류가 발생했습니다.",
+                    "evidence_package": {
+                        "warnings": [
+                            {
+                                "stage": "preprocess",
+                                "code": "preprocess_not_applied",
+                                "message": "bad preprocess",
+                            }
+                        ]
+                    },
+                    "answer_quality": {
+                        "answerable": False,
+                        "status": "unanswerable",
+                    },
+                },
+                "evidence_package": {
+                    "warnings": [
+                        {
+                            "stage": "preprocess",
+                            "code": "preprocess_not_applied",
+                            "message": "bad preprocess",
+                        }
+                    ]
+                },
+                "answer_quality": {
+                    "answerable": False,
+                    "status": "unanswerable",
+                },
+                "status": "failed",
+                "error_stage": "preprocess",
+                "error_message": "bad preprocess",
+                "retryable": True,
+            },
+        }
+    ]
+
+
+def test_chat_relay_error_event_preserves_error_metadata_and_evidence() -> None:
+    repo = _FakeChatRepository()
+    service = _make_chat_service(repo)
+
+    events = asyncio.run(
+        _collect_events(
+            service._relay_agent_events(
+                session_id=9,
+                run_id="run-2",
+                trace_id="trace-2",
+                session=cast(Any, object()),
+                agent_stream=_fake_agent_stream(
+                    {
+                        "type": "error",
+                        "answer": "분석 실행이 실패했습니다.",
+                        "stage": "analysis",
+                        "error_code": "analysis_failed",
+                        "retryable": True,
+                        "output_type": "analysis_failed",
+                        "thought_steps": [{"phase": "analysis", "message": "failed"}],
+                        "evidence_package": {
+                            "analysis_status": "fail",
+                            "warnings": [
+                                {
+                                    "stage": "analysis",
+                                    "code": "analysis_failed",
+                                    "message": "분석 실행이 실패했습니다.",
+                                }
+                            ],
+                        },
+                        "answer_quality": {
+                            "answerable": False,
+                            "status": "unanswerable",
+                        },
+                    }
+                ),
+            )
+        )
+    )
+
+    assert repo.messages[-1][1:] == ("assistant", "분석 실행이 실패했습니다.")
+    assert events == [
+        {
+            "event": "error",
+            "data": {
+                "session_id": 9,
+                "run_id": "run-2",
+                "trace_id": "trace-2",
+                "thought_steps": [{"phase": "analysis", "message": "failed"}],
+                "answer": "분석 실행이 실패했습니다.",
+                "message": "분석 실행이 실패했습니다.",
+                "status": "failed",
+                "stage": "analysis",
+                "error_stage": "analysis",
+                "error_message": "분석 실행이 실패했습니다.",
+                "error_code": "analysis_failed",
+                "retryable": True,
+                "output_type": "analysis_failed",
+                "evidence_package": {
+                    "analysis_status": "fail",
+                    "warnings": [
+                        {
+                            "stage": "analysis",
+                            "code": "analysis_failed",
+                            "message": "분석 실행이 실패했습니다.",
+                        }
+                    ],
+                },
+                "answer_quality": {
+                    "answerable": False,
+                    "status": "unanswerable",
+                },
+            },
+        }
+    ]
 
 
 def test_analysis_workflow_marks_internal_failures_invalid_quality() -> None:

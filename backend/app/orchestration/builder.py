@@ -133,6 +133,30 @@ def build_main_workflow(
             return "cancelled"
         return "merge_context"
 
+    def status_terminal(state: MainWorkflowState) -> Dict[str, Any]:
+        set_trace_stage("workflow_terminal")
+        merged_context = build_merged_context(state)
+        evidence_package, answer_quality = build_evidence_contract(
+            state=state,
+            merged_context=merged_context,
+        )
+        output = state.get("output")
+        output_payload = output if isinstance(output, dict) else {}
+        content = str(output_payload.get("content") or "").strip()
+        output_type = str(output_payload.get("type") or "status").strip() or "status"
+        return {
+            "merged_context": merged_context,
+            "evidence_package": evidence_package,
+            "answer_quality": answer_quality,
+            "output": {
+                **output_payload,
+                "type": output_type,
+                "content": content or "워크플로가 완료되지 않았습니다.",
+                "evidence_package": evidence_package,
+                "answer_quality": answer_quality,
+            },
+        }
+
     def general_question_terminal(state: MainWorkflowState) -> Dict[str, Any]:
         set_trace_stage("general_question")
         answer = answer_general_question(
@@ -311,6 +335,7 @@ def build_main_workflow(
     graph.add_node("merge_context", merge_context_node)
     graph.add_node("data_qa_terminal", data_qa_terminal)
     graph.add_node("analysis_fail_terminal", analysis_fail_terminal)
+    graph.add_node("status_terminal", status_terminal)
     graph.add_node("report_flow", report_graph)
 
     graph.add_edge(START, "intake_flow")
@@ -341,8 +366,8 @@ def build_main_workflow(
         route_after_preprocess,
         {
             "analysis": "analysis_flow",
-            "cancelled": END,
-            "failed": END,
+            "cancelled": "status_terminal",
+            "failed": "status_terminal",
         },
     )
     graph.add_conditional_edges(
@@ -368,7 +393,7 @@ def build_main_workflow(
         route_after_visualization,
         {
             "merge_context": "merge_context",
-            "cancelled": END,
+            "cancelled": "status_terminal",
         },
     )
     graph.add_conditional_edges(
@@ -382,6 +407,7 @@ def build_main_workflow(
     graph.add_edge("report_flow", END)
     graph.add_edge("data_qa_terminal", END)
     graph.add_edge("analysis_fail_terminal", END)
+    graph.add_edge("status_terminal", END)
     graph.add_edge("general_question_terminal", END)
     graph.add_edge("clarification_terminal", END)
 

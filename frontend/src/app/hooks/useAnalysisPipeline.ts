@@ -22,6 +22,8 @@ import {
   type EdaProfileResponse,
   type EdaRecommendedOperation,
   type EdaStatsResponse,
+  type AnswerQualityPayload,
+  type EvidencePackagePayload,
   type PendingApprovalPayload,
   type ThoughtStepPayload,
 } from "../../lib/api";
@@ -572,6 +574,26 @@ function parseThoughtStep(payload: unknown): ThoughtStep | null {
       ? data.audience
       : undefined;
   return { phase, message, status, displayMessage, detailMessage, audience };
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
+}
+
+function pickString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function pickRecordFromDone(
+  record: Record<string, unknown>,
+  key: string,
+): Record<string, unknown> | null {
+  const direct = asRecord(record[key]);
+  if (direct) {
+    return direct;
+  }
+  const output = asRecord(record.output);
+  return output ? asRecord(output[key]) : null;
 }
 
 function pickVisualizationResultFromDoneRecord(
@@ -1374,14 +1396,36 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
             setTraceId(nextTraceId);
           }
           const answer = typeof record.answer === "string" ? record.answer : streamText;
-          const outputType = typeof record.output_type === "string" ? record.output_type : null;
-          const isReportFailure = outputType === "report_failed";
+          const outputRecord = asRecord(record.output);
+          const outputType =
+            pickString(record.output_type) ??
+            (outputRecord ? pickString(outputRecord.type) : null);
+          const terminalStatus = pickString(record.status);
+          const evidencePackage = pickRecordFromDone(record, "evidence_package");
+          const answerQuality = pickRecordFromDone(record, "answer_quality");
+          const answerQualityStatus = answerQuality ? pickString(answerQuality.status) : null;
+          const errorStage = pickString(record.error_stage);
+          const outputContent = outputRecord ? pickString(outputRecord.content) : null;
+          const errorMessage = pickString(record.error_message);
+          const isTerminalFailure =
+            terminalStatus === "failed" ||
+            outputType === "fail" ||
+            outputType === "analysis_failed" ||
+            (typeof outputType === "string" && outputType.endsWith("_failed"));
+          const isTerminalCancelled =
+            terminalStatus === "cancelled" || outputType === "cancelled";
           finalAnswer = answer;
           setStreamingAnswer(answer);
           setPendingApproval(null);
-          if (isReportFailure) {
-            terminalErrorStep = "report";
-            terminalErrorMessage = answer.trim() || "분석 결과 생성에 실패했습니다.";
+          if (isTerminalFailure || isTerminalCancelled) {
+            terminalErrorStep = errorStage ?? (isTerminalCancelled ? "cancelled" : outputType ?? "workflow");
+            terminalErrorMessage =
+              errorMessage ??
+              outputContent ??
+              (
+                answer.trim() ||
+                (isTerminalCancelled ? "사용자 요청으로 실행이 취소되었습니다." : "워크플로 실행에 실패했습니다.")
+              );
           }
 
           const nextSession = record.session_id;
@@ -1412,6 +1456,19 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
               run_id: typeof nextRunId === "string" ? nextRunId : undefined,
               trace_id: activeTraceId,
               thought_steps: Array.isArray(doneThoughts) ? doneThoughts as ThoughtStepPayload[] : [],
+              output_type: outputType ?? undefined,
+              status: (
+                terminalStatus === "success" ||
+                terminalStatus === "limited" ||
+                terminalStatus === "unanswerable" ||
+                terminalStatus === "failed" ||
+                terminalStatus === "cancelled"
+              ) ? terminalStatus : undefined,
+              error_stage: errorStage,
+              error_message: errorMessage,
+              retryable: typeof record.retryable === "boolean" ? record.retryable : undefined,
+              evidence_package: (evidencePackage as EvidencePackagePayload | null) ?? undefined,
+              answer_quality: (answerQuality as AnswerQualityPayload | null) ?? undefined,
             });
           }
 
@@ -1459,13 +1516,18 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
                 trace_id: activeTraceId,
                 run_id: typeof nextRunId === "string" ? nextRunId : null,
                 output_type: outputType,
+                status: terminalStatus,
+                answer_quality_status: answerQualityStatus,
+                warning_count: Array.isArray(evidencePackage?.warnings)
+                  ? evidencePackage.warnings.length
+                  : 0,
                 answer_length: answer.length,
               },
-              isReportFailure,
+              isTerminalFailure || isTerminalCancelled,
               activeTraceId,
             ),
           );
-          if (!isReportFailure) {
+          if (!isTerminalFailure && !isTerminalCancelled) {
             setState("success");
           }
           return;
@@ -1477,10 +1539,82 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
             activeTraceId = nextTraceId;
             setTraceId(nextTraceId);
           }
-          addLog(makeRawLog("sse: error", record, true, activeTraceId));
-          const message = typeof record.message === "string"
-            ? record.message
-            : "스트리밍 처리 중 오류가 발생했습니다.";
+          const outputRecord = asRecord(record.output);
+          const outputType =
+            pickString(record.output_type) ??
+            (outputRecord ? pickString(outputRecord.type) : null);
+          const evidencePackage = pickRecordFromDone(record, "evidence_package");
+          const answerQuality = pickRecordFromDone(record, "answer_quality");
+          const errorStage = pickString(record.stage) ?? pickString(record.error_stage);
+          const errorCode = pickString(record.error_code);
+          const message = pickString(record.message) ?? "스트리밍 처리 중 오류가 발생했습니다.";
+          const answer = pickString(record.answer) ?? message;
+          const isRouterLevelError = errorCode === "server_error";
+          const isWorkflowError = !isRouterLevelError && Boolean(
+            pickString(record.answer) ||
+            outputType ||
+            evidencePackage ||
+            answerQuality,
+          );
+          addLog(
+            makeRawLog(
+              "sse: error",
+              {
+                ...record,
+                output_type: outputType,
+                stage: errorStage,
+                error_code: errorCode,
+                warning_count: Array.isArray(evidencePackage?.warnings)
+                  ? evidencePackage.warnings.length
+                  : 0,
+              },
+              true,
+              activeTraceId,
+            ),
+          );
+          if (isWorkflowError) {
+            const nextSession = record.session_id;
+            const resolvedSessionId = typeof nextSession === "number" ? nextSession : sessionId;
+            if (typeof resolvedSessionId === "number") {
+              setSessionId(resolvedSessionId);
+              setChatResponse({
+                answer,
+                session_id: resolvedSessionId,
+                run_id: pickString(record.run_id) ?? undefined,
+                trace_id: activeTraceId,
+                thought_steps: Array.isArray(record.thought_steps)
+                  ? record.thought_steps as ThoughtStepPayload[]
+                  : [],
+                output_type: outputType ?? undefined,
+                status: "failed",
+                error_stage: errorStage,
+                error_message: message,
+                retryable: typeof record.retryable === "boolean" ? record.retryable : undefined,
+                evidence_package: (evidencePackage as EvidencePackagePayload | null) ?? undefined,
+                answer_quality: (answerQuality as AnswerQualityPayload | null) ?? undefined,
+              });
+            }
+            const nextRunId = pickString(record.run_id);
+            if (nextRunId) {
+              setRunId(nextRunId);
+            }
+            if (answer.trim()) {
+              setStreamingAnswer(answer);
+              setChatHistory((prev) => [
+                ...prev,
+                {
+                  id: nextLocalMessageId(),
+                  role: "assistant",
+                  content: answer,
+                  created_at: new Date().toISOString(),
+                },
+              ]);
+            }
+            finalAnswer = answer;
+            terminalErrorStep = errorStage ?? outputType ?? "chat_stream";
+            terminalErrorMessage = message;
+            return;
+          }
           throw new Error(message);
         }
       };
@@ -2520,15 +2654,30 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
 
   const derivedEvidence: EvidenceFooterProps = (() => {
     const selectedDataset = uploadedDatasets.find((item) => item.sourceId === sourceId);
+    const evidencePackage = chatResponse?.evidence_package;
+    const answerQuality = chatResponse?.answer_quality;
     const ragUsed = thoughtSteps.some(
       (step) => step.phase === "rag_retrieval" && step.displayMessage === "질문과 관련된 참고 정보를 찾았습니다.",
     );
+    const ragCount = evidencePackage?.rag_retrieved_count;
+    const guidelineCount = evidencePackage?.guideline_retrieved_count;
+    const warningCount = evidencePackage?.warnings?.length ?? answerQuality?.warnings?.length ?? 0;
+    const computeStatus =
+      answerQuality?.status ??
+      evidencePackage?.analysis_quality_status ??
+      evidencePackage?.analysis_status;
 
     return {
-      data: selectedDataset?.fileName || "-",
-      scope: uploadedDatasets.length > 0 ? `${uploadedDatasets.length} files` : "-",
-      compute: `v3 · ${formatElapsed(elapsedSeconds)}`,
-      rag: ragUsed ? "사용함" : "사용 안 함",
+      data: evidencePackage?.filename || selectedDataset?.fileName || "-",
+      scope: evidencePackage?.used_columns?.length
+        ? `${evidencePackage.used_columns.length} cols`
+        : uploadedDatasets.length > 0 ? `${uploadedDatasets.length} files` : "-",
+      compute: warningCount > 0
+        ? `${computeStatus ?? "limited"} · ${warningCount} warnings`
+        : `${computeStatus ?? "v3"} · ${formatElapsed(elapsedSeconds)}`,
+      rag: typeof ragCount === "number" || typeof guidelineCount === "number"
+        ? `${ragCount ?? 0} data / ${guidelineCount ?? 0} guide`
+        : ragUsed ? "사용함" : "사용 안 함",
     };
   })();
 
