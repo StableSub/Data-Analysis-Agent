@@ -153,6 +153,7 @@
 - 대표 타입
   - `general_question`
   - `fast_dataset_answer`
+  - `fast_common_analytics`
   - `clarification`
   - `data_qa`
   - `report_answer`

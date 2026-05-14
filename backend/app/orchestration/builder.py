@@ -1,11 +1,15 @@
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import TYPE_CHECKING, Any, Dict
 
 from langgraph.graph import END, START, StateGraph
 
 from ..core.trace_logging import set_trace_stage
-from ..modules.chat_fast_path import try_fast_dataset_answer
+from ..modules.chat_fast_path import (
+    decide_common_analytics_fast_path,
+    try_fast_dataset_answer,
+)
+from ..modules.datasets.service import DatasetReadError
 from ..modules.planner.service import build_handoff_from_planning_result
 from .ai import answer_data_question, answer_general_question
 from .evidence import build_evidence_contract
@@ -18,6 +22,9 @@ from .workflows.preprocess import build_preprocess_workflow
 from .workflows.rag import build_rag_workflow
 from .workflows.report import build_report_workflow
 from .workflows.visualization import build_visualization_workflow
+
+if TYPE_CHECKING:
+    from ..modules.chat_fast_path.executor import CommonAnalyticsExecutionResult
 
 
 def build_main_workflow(
@@ -208,6 +215,50 @@ def build_main_workflow(
         dataset_context = planner_service.dataset_context_service.build_context(source_id)
         return {"dataset_context": dataset_context.model_dump()}
 
+    def common_analytics_output(result: CommonAnalyticsExecutionResult) -> Dict[str, Any]:
+        metric_labels = {
+            "mean": "평균",
+            "sum": "합계",
+            "min": "최소값",
+            "max": "최대값",
+            "median": "중앙값",
+            "ratio": "비율",
+            "value_counts": "빈도",
+            "top": "최빈값",
+            "correlation": "상관계수",
+            "outlier": "이상치",
+        }
+        metric_label = metric_labels.get(result.metric, result.metric)
+        lines = [result.summary]
+        if result.table:
+            lines.append("")
+            for row in result.table[:5]:
+                if "group" in row:
+                    lines.append(f"- {row['group']}: {row.get(result.metric)}")
+                elif "ratio" in row:
+                    lines.append(
+                        f"- {row['value']}: {row['count']}건 ({row['ratio']:.2%})"
+                    )
+                else:
+                    lines.append(f"- {row}")
+        elif result.value is not None:
+            columns = ", ".join(result.columns)
+            lines[0] = f"{columns}의 {metric_label}은 {result.value}입니다."
+
+        return {
+            "type": "fast_common_analytics",
+            "content": "\n".join(lines),
+            "common_analytics_result": {
+                "operation": result.operation,
+                "metric": result.metric,
+                "columns": result.columns,
+                "summary": result.summary,
+                "value": result.value,
+                "table": result.table,
+                "raw_metrics": result.raw_metrics,
+            },
+        }
+
     def chat_fast_path_node(state: MainWorkflowState) -> Dict[str, Any]:
         set_trace_stage("chat_fast_path")
         dataset_context = state.get("dataset_context")
@@ -230,12 +281,60 @@ def build_main_workflow(
                 "fast_path_result": fast_dataset_answer.fast_path_result,
             }
 
-        return {
-            "fast_path_result": {
-                "status": "skipped",
-                "reason": "no_fast_dataset_answer_match",
-                "blockers": ["no_fast_dataset_answer_match"],
+        decision = decide_common_analytics_fast_path(
+            question=str(state.get("user_input", "")),
+            dataset_context=dataset_context,
+        )
+        if not decision.eligible:
+            result = decision.to_fast_path_result()
+            return {
+                "fast_path_result": {
+                    **result,
+                    "reason": "common_analytics_ineligible",
+                }
             }
+
+        source_id = str(state.get("source_id") or "").strip()
+        dataset_repository = getattr(analysis_service, "dataset_repository", None)
+        reader = getattr(eda_service, "reader", None)
+        dataset = (
+            dataset_repository.get_by_source_id(source_id)
+            if dataset_repository is not None and source_id
+            else None
+        )
+        storage_path = getattr(dataset, "storage_path", "") if dataset is not None else ""
+        if not storage_path or reader is None:
+            return {
+                "fast_path_result": {
+                    **decision.to_fast_path_result(),
+                    "status": "skipped",
+                    "reason": "common_analytics_dataset_unavailable",
+                    "blockers": ["common_analytics_dataset_unavailable"],
+                }
+            }
+
+        from ..modules.chat_fast_path.executor import execute_common_analytics
+
+        try:
+            common_result = execute_common_analytics(
+                decision=decision,
+                storage_path=storage_path,
+                dataset_context=dataset_context,
+                reader=reader,
+            )
+        except (DatasetReadError, FileNotFoundError, KeyError, ValueError):
+            return {
+                "fast_path_result": {
+                    **decision.to_fast_path_result(),
+                    "status": "skipped",
+                    "reason": "common_analytics_execution_failed",
+                    "blockers": ["common_analytics_execution_failed"],
+                }
+            }
+
+        return {
+            "output": common_analytics_output(common_result),
+            "fast_path_result": decision.to_fast_path_result(),
         }
 
     def planner_node(state: MainWorkflowState) -> Dict[str, Any]:

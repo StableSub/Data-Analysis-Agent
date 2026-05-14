@@ -20,7 +20,7 @@
 
 ### Main workflow
 
-- route/status: `general_question`, `data_pipeline`, `chat_fast_path`, `fast_dataset_answer`, `analysis`, `rag`, `guideline`, `visualization`, `merge_context`, `clarification`, `fail`, `cancelled`, `report`, `data_qa`, `report_answer`, `analysis_fail_terminal`, `applied`, `generated`.
+- route/status: `general_question`, `data_pipeline`, `chat_fast_path`, `fast_dataset_answer`, `fast_common_analytics`, `analysis`, `rag`, `guideline`, `visualization`, `merge_context`, `clarification`, `fail`, `cancelled`, `report`, `data_qa`, `report_answer`, `analysis_fail_terminal`, `applied`, `generated`.
 - payload contract: `user_input`, `request_context`, `handoff`, `fast_path_result`, `preprocess_result`, `rag_result`, `guideline_index_status`, `guideline_result`, `insight`, `analysis_plan`, `analysis_result`, `visualization_result`, `clarification_question`, `model_id`, `output`, `merged_context`, `evidence_package`, `answer_quality`.
 
 ### Evidence contract
