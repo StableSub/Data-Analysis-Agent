@@ -70,6 +70,17 @@ class DatasetContextPayload(TypedDict, total=False):
     quality_summary: Dict[str, Any]
 
 
+class FastPathResultPayload(TypedDict, total=False):
+    status: Literal["handled", "skipped"]
+    kind: Literal["dataset_answer", "common_analytics"]
+    operation: str
+    metric: str
+    columns: list[str]
+    eligibility_score: float
+    blockers: list[str]
+    reason: str
+
+
 class GuidelineContextPayload(TypedDict, total=False):
     guideline_source_id: str
     guideline_id: str
@@ -276,6 +287,8 @@ class MainWorkflowState(AgentState, total=False):
     guideline_data_exists: bool
     guideline_result: GuidelineResultPayload
     insight: Dict[str, Any]
+
+    fast_path_result: FastPathResultPayload
 
     final_status: FinalStatus
 
