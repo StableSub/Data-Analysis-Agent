@@ -131,7 +131,7 @@ Compiled workflow를 실행하고 LangGraph snapshot을 사용자-facing stream 
 - `thought`: phase/status progress.
 - `approval_required`: pending approval payload와 thought steps.
 - `chunk`: final answer를 24자 단위로 나눈 delta.
-- `done`: answer, thought steps, output type, optional output, optional preprocess result, generated visualization result.
+- `done`: answer, thought steps, output type, optional output, optional preprocess/analysis/visualization/report result, optional evidence/quality metadata.
 
 ## Hotspot: `backend/app/orchestration/dependencies.py`
 

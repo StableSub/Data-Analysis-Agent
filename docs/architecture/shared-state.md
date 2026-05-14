@@ -170,9 +170,9 @@
 - 의미
   - dataset 선택 이후 chat fast path가 질문을 처리했는지 또는 기존 workflow로 넘겼는지 남기는 판정 결과
 - 주 생성 위치
-  - `chat_fast_path` node 예정
+  - `chat_fast_path` node
 - 주 소비 위치
-  - 메인 그래프 fast path 이후 분기 예정
+  - 메인 그래프 fast path 이후 분기
 - 주요 내용
   - `status` (`handled`, `skipped`)
   - `kind` (`dataset_answer`, `common_analytics`)
