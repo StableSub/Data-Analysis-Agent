@@ -273,7 +273,9 @@ def _score_decision(
         score += 0.35
     if not blockers:
         score += 0.1
-    return round(score, 2)
+    else:
+        score -= 0.35
+    return round(max(score, 0.0), 2)
 
 
 def _as_text_list(value: object) -> list[str]:
