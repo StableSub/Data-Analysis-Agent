@@ -5,10 +5,11 @@ from typing import Any, Dict
 from langgraph.graph import END, START, StateGraph
 
 from ..core.trace_logging import set_trace_stage
+from ..modules.chat_fast_path import try_fast_dataset_answer
+from ..modules.planner.service import build_handoff_from_planning_result
 from .ai import answer_data_question, answer_general_question
 from .evidence import build_evidence_contract
 from .intake_router import build_intake_router_workflow
-from ..modules.planner.service import build_handoff_from_planning_result
 from .state import MainWorkflowState
 from .state_view import build_merged_context
 from .workflows.analysis import build_analysis_workflow
@@ -66,6 +67,12 @@ def build_main_workflow(
     def route_after_intake(state: MainWorkflowState) -> str:
         branch = str((state.get("handoff") or {}).get("next_step", "general_question"))
         return branch
+
+    def route_after_chat_fast_path(state: MainWorkflowState) -> str:
+        fast_path_result = state.get("fast_path_result") or {}
+        if fast_path_result.get("status") == "handled":
+            return "handled"
+        return "skipped"
 
     def route_after_planner(state: MainWorkflowState) -> str:
         if state.get("final_status") == "fail":
@@ -201,6 +208,36 @@ def build_main_workflow(
         dataset_context = planner_service.dataset_context_service.build_context(source_id)
         return {"dataset_context": dataset_context.model_dump()}
 
+    def chat_fast_path_node(state: MainWorkflowState) -> Dict[str, Any]:
+        set_trace_stage("chat_fast_path")
+        dataset_context = state.get("dataset_context")
+        if not isinstance(dataset_context, dict):
+            return {
+                "fast_path_result": {
+                    "status": "skipped",
+                    "reason": "dataset_context_unavailable",
+                    "blockers": ["dataset_context_unavailable"],
+                }
+            }
+
+        fast_dataset_answer = try_fast_dataset_answer(
+            question=str(state.get("user_input", "")),
+            dataset_context=dataset_context,
+        )
+        if fast_dataset_answer is not None:
+            return {
+                "output": fast_dataset_answer.output,
+                "fast_path_result": fast_dataset_answer.fast_path_result,
+            }
+
+        return {
+            "fast_path_result": {
+                "status": "skipped",
+                "reason": "no_fast_dataset_answer_match",
+                "blockers": ["no_fast_dataset_answer_match"],
+            }
+        }
+
     def planner_node(state: MainWorkflowState) -> Dict[str, Any]:
         set_trace_stage("planner")
         try:
@@ -326,6 +363,7 @@ def build_main_workflow(
     graph.add_node("general_question_terminal", general_question_terminal)
     graph.add_node("clarification_terminal", clarification_terminal)
     graph.add_node("dataset_context", dataset_context_node)
+    graph.add_node("chat_fast_path", chat_fast_path_node)
     graph.add_node("planner", planner_node)
     graph.add_node("preprocess_flow", preprocess_graph)
     graph.add_node("analysis_flow", analysis_graph)
@@ -347,7 +385,15 @@ def build_main_workflow(
             "dataset_selected": "dataset_context",
         },
     )
-    graph.add_edge("dataset_context", "guideline_flow")
+    graph.add_edge("dataset_context", "chat_fast_path")
+    graph.add_conditional_edges(
+        "chat_fast_path",
+        route_after_chat_fast_path,
+        {
+            "handled": END,
+            "skipped": "guideline_flow",
+        },
+    )
     graph.add_edge("guideline_flow", "planner")
     graph.add_conditional_edges(
         "planner",

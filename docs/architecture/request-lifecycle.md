@@ -20,14 +20,16 @@
 
 ## 상위 흐름
 
-메인 워크플로우는 질문을 받은 뒤 dataset 선택 여부를 확인한다. dataset이 없으면 intake 단계에서 `general_question`으로 분기한다. dataset이 있으면 `dataset_context`와 `guideline_flow`를 거쳐 `planner`가 route를 확정하고, 필요에 따라 `preprocess_flow`, `analysis_flow`, `rag_flow`, `visualization_flow`, `merge_context`, `data_qa_terminal`, `report_flow`, `analysis_fail_terminal` 또는 `status_terminal`로 진행한다.
+메인 워크플로우는 질문을 받은 뒤 dataset 선택 여부를 확인한다. dataset이 없으면 intake 단계에서 `general_question`으로 분기한다. dataset이 있으면 `dataset_context` 이후 `chat_fast_path`가 metadata-only 질문을 먼저 처리한다. fast path가 처리하지 않으면 `guideline_flow`를 거쳐 `planner`가 route를 확정하고, 필요에 따라 `preprocess_flow`, `analysis_flow`, `rag_flow`, `visualization_flow`, `merge_context`, `data_qa_terminal`, `report_flow`, `analysis_fail_terminal` 또는 `status_terminal`로 진행한다.
 
 ```mermaid
 flowchart TD
     A["START"] --> B["intake_flow"]
     B -->|general_question| C["general_question_terminal"]
     B -->|dataset_selected| D["dataset_context"]
-    D --> E["guideline_flow"]
+    D --> X["chat_fast_path"]
+    X -->|handled| R
+    X -->|skipped| E["guideline_flow"]
     E --> F["planner"]
     F -->|general_question| C
     F -->|fallback_rag| H["rag_flow"]
@@ -79,6 +81,7 @@ planner 주변 판단은 아래 위치에 나뉘어 있다.
 
 - dataset 여부와 coarse handoff: `backend/app/orchestration/intake_router.py`
 - dataset/profile context: `dataset_context` node
+- metadata-only fast answer: `chat_fast_path` node
 - active guideline prefetch: `guideline_flow`
 - main route 판단: `builder.py`의 `planner` node와 `route_after_planner()`
 - 분석 실행 계획 확정: `backend/app/orchestration/workflows/analysis.py`

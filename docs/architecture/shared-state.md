@@ -152,6 +152,7 @@
   - client streaming
 - 대표 타입
   - `general_question`
+  - `fast_dataset_answer`
   - `clarification`
   - `data_qa`
   - `report_answer`

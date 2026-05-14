@@ -107,22 +107,24 @@ START
   -> intake_flow
      -> general_question_terminal -> END
      -> dataset_context
-        -> guideline_flow
-        -> planner
-           -> general_question_terminal | rag_flow | preprocess_flow | analysis_flow | clarification_terminal | END(fail)
-        -> preprocess_flow
-           -> analysis_flow | status_terminal(cancelled/failed)
-        -> analysis_flow
-           -> visualization_flow | merge_context | clarification_terminal | analysis_fail_terminal
-        -> rag_flow
-           -> visualization_flow | merge_context
-        -> visualization_flow
-           -> merge_context | status_terminal(cancelled)
-        -> merge_context
-           -> report_flow -> END
-           -> data_qa_terminal -> END
-        -> analysis_fail_terminal -> END
-        -> status_terminal -> END
+        -> chat_fast_path
+           -> END(fast_dataset_answer)
+           -> guideline_flow
+              -> planner
+                 -> general_question_terminal | rag_flow | preprocess_flow | analysis_flow | clarification_terminal | END(fail)
+              -> preprocess_flow
+                 -> analysis_flow | status_terminal(cancelled/failed)
+              -> analysis_flow
+                 -> visualization_flow | merge_context | clarification_terminal | analysis_fail_terminal
+              -> rag_flow
+                 -> visualization_flow | merge_context
+              -> visualization_flow
+                 -> merge_context | status_terminal(cancelled)
+              -> merge_context
+                 -> report_flow -> END
+                 -> data_qa_terminal -> END
+              -> analysis_fail_terminal -> END
+              -> status_terminal -> END
 ```
 
 ### Terminal output type
@@ -130,6 +132,7 @@ START
 | terminal/path | `output.type` | 생성 위치 |
 |---|---|---|
 | general question | `general_question` | `general_question_terminal` |
+| fast dataset answer | `fast_dataset_answer` | `chat_fast_path` |
 | analysis clarification | `clarification` | `clarification_terminal` |
 | preprocess/visualization cancel | `cancelled` | 해당 workflow approval cancel path, 이후 `status_terminal`이 evidence metadata를 보존 |
 | report cancel | `cancelled` | report workflow approval cancel path |
