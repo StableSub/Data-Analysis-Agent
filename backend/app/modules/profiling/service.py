@@ -4,6 +4,7 @@ import pandas as pd
 
 from ..datasets.repository import DataSourceRepository
 from ..datasets.service import DatasetReader
+from .ai import generate_column_aliases
 from .schemas import (
     ColumnProfile,
     ColumnProfileType,
@@ -45,6 +46,7 @@ GROUP_KEY_NAME_TOKENS = (
     "brand",
     "cluster",
 )
+_COLUMN_ALIAS_CACHE: dict[tuple[str, tuple[str, ...]], dict[str, list[str]]] = {}
 
 
 class DatasetProfileService:
@@ -110,7 +112,10 @@ class DatasetProfileService:
             else:
                 categorical_columns.append(column_name)
 
-            sample_values = [self._serialize_value(value) for value in non_null_series.head(3).tolist()]
+            sample_values = [
+                self._serialize_value(value)
+                for value in non_null_series.drop_duplicates().head(10).tolist()
+            ]
             unique_count = int(non_null_series.nunique(dropna=True))
             column_profiles.append(
                 ColumnProfile(
@@ -332,9 +337,11 @@ class DatasetContextService:
         *,
         repository: DataSourceRepository,
         profile_service: DatasetProfileService,
+        default_model: str = "gpt-5-nano",
     ) -> None:
         self.repository = repository
         self.profile_service = profile_service
+        self.default_model = default_model
 
     def build_context(self, source_id: str) -> DatasetContext:
         if not source_id:
@@ -345,6 +352,7 @@ class DatasetContextService:
             return DatasetContext(source_id=source_id, available=False)
 
         profile = self.profile_service.build_profile(source_id)
+        column_aliases = self._build_column_aliases(profile)
         return DatasetContext(
             source_id=source_id,
             filename=dataset.filename or "",
@@ -364,8 +372,40 @@ class DatasetContextService:
             group_key_columns=profile.group_key_columns,
             sample_rows=profile.sample_rows,
             missing_rates=profile.missing_rates,
+            column_aliases=column_aliases,
+            column_value_samples={
+                column.name: column.sample_values
+                for column in profile.column_profiles
+            },
             quality_summary=self._build_quality_summary(profile),
         )
+
+    def _build_column_aliases(self, profile: DatasetProfile) -> dict[str, list[str]]:
+        if not profile.available or not profile.columns:
+            return {}
+
+        cache_key = (profile.source_id, tuple(profile.columns))
+        cached = _COLUMN_ALIAS_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
+
+        payload = {
+            "source_id": profile.source_id,
+            "columns": profile.columns,
+            "dtypes": profile.dtypes,
+            "logical_types": profile.logical_types,
+            "sample_values": {
+                column.name: column.sample_values
+                for column in profile.column_profiles
+            },
+        }
+        aliases = generate_column_aliases(
+            payload=payload,
+            model_id=None,
+            default_model=self.default_model,
+        )
+        _COLUMN_ALIAS_CACHE[cache_key] = aliases
+        return aliases
 
     @staticmethod
     def _build_quality_summary(profile: DatasetProfile) -> DatasetQualitySummary:

@@ -25,10 +25,12 @@ def build_dataset_context_service(
     *,
     repository: DataSourceRepository,
     profile_service: DatasetProfileService,
+    default_model: str = "gpt-5-nano",
 ) -> DatasetContextService:
     return DatasetContextService(
         repository=repository,
         profile_service=profile_service,
+        default_model=default_model,
     )
 
 
