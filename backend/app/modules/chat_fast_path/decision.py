@@ -107,8 +107,12 @@ def decide_common_analytics_fast_path(
 
     if operation is None:
         blockers.append("unsupported_operation")
-    if operation is not None and len(matched_columns) < _REQUIRED_COLUMN_COUNTS[operation]:
-        blockers.append("missing_column_hint")
+    if operation is not None:
+        required_column_count = _REQUIRED_COLUMN_COUNTS[operation]
+        if len(matched_columns) < required_column_count:
+            blockers.append("missing_column_hint")
+        elif len(matched_columns) > required_column_count:
+            blockers.append("ambiguous_column_hint")
     if operation == "basic_metric" and metric is None:
         blockers.append("missing_metric_hint")
     if operation is not None and _has_type_blocker(
