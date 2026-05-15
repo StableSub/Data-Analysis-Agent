@@ -1,4 +1,5 @@
 import logging
+from collections import OrderedDict
 from pathlib import Path
 
 import pandas as pd
@@ -47,7 +48,11 @@ GROUP_KEY_NAME_TOKENS = (
     "brand",
     "cluster",
 )
-_COLUMN_ALIAS_CACHE: dict[tuple[str, tuple[str, ...]], dict[str, list[str]]] = {}
+_COLUMN_ALIAS_CACHE_MAX_SIZE = 128
+_COLUMN_ALIAS_CACHE: OrderedDict[
+    tuple[str, tuple[str, ...]],
+    dict[str, list[str]],
+] = OrderedDict()
 logger = logging.getLogger(__name__)
 
 
@@ -389,6 +394,7 @@ class DatasetContextService:
         cache_key = (profile.source_id, tuple(profile.columns))
         cached = _COLUMN_ALIAS_CACHE.get(cache_key)
         if cached is not None:
+            _COLUMN_ALIAS_CACHE.move_to_end(cache_key)
             return cached
 
         payload = {
@@ -411,6 +417,8 @@ class DatasetContextService:
             logger.exception("Failed to generate column aliases for dataset context.")
             return {}
         _COLUMN_ALIAS_CACHE[cache_key] = aliases
+        if len(_COLUMN_ALIAS_CACHE) > _COLUMN_ALIAS_CACHE_MAX_SIZE:
+            _COLUMN_ALIAS_CACHE.popitem(last=False)
         return aliases
 
     @staticmethod
