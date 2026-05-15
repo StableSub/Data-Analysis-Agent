@@ -137,12 +137,12 @@ def _matches_intent(question: str, intent: str) -> bool:
         )
     if intent == "row_count":
         has_row = any(keyword in question for keyword in ("행", "row", "rows"))
-        has_count = any(keyword in question for keyword in ("개수", "수", "몇", "count", "how many"))
+        has_count = any(keyword in question for keyword in ("개수", "몇", "count", "how many"))
         has_column = any(keyword in question for keyword in ("열", "컬럼", "column", "columns"))
         return has_row and has_count and not has_column
     if intent == "column_count":
         has_column = any(keyword in question for keyword in ("열", "컬럼", "column", "columns"))
-        has_count = any(keyword in question for keyword in ("개수", "수", "몇", "count", "how many"))
+        has_count = any(keyword in question for keyword in ("개수", "몇", "count", "how many"))
         has_row = any(keyword in question for keyword in ("행", "row", "rows"))
         return has_column and has_count and not has_row
     if intent == "numeric_columns":
