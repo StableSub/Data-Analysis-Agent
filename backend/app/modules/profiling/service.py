@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 
 import pandas as pd
@@ -47,6 +48,7 @@ GROUP_KEY_NAME_TOKENS = (
     "cluster",
 )
 _COLUMN_ALIAS_CACHE: dict[tuple[str, tuple[str, ...]], dict[str, list[str]]] = {}
+logger = logging.getLogger(__name__)
 
 
 class DatasetProfileService:
@@ -399,11 +401,15 @@ class DatasetContextService:
                 for column in profile.column_profiles
             },
         }
-        aliases = generate_column_aliases(
-            payload=payload,
-            model_id=None,
-            default_model=self.default_model,
-        )
+        try:
+            aliases = generate_column_aliases(
+                payload=payload,
+                model_id=None,
+                default_model=self.default_model,
+            )
+        except Exception:
+            logger.exception("Failed to generate column aliases for dataset context.")
+            return {}
         _COLUMN_ALIAS_CACHE[cache_key] = aliases
         return aliases
 
