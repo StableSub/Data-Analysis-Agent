@@ -213,26 +213,36 @@ def _match_columns(question: str, dataset_context: Mapping[str, Any]) -> list[st
     columns = _as_text_list(dataset_context.get("columns"))
     column_aliases = _as_alias_mapping(dataset_context.get("column_aliases"))
     column_value_samples = _as_alias_mapping(dataset_context.get("column_value_samples"))
+    sample_value_columns = set(_as_text_list(dataset_context.get("categorical_columns")))
+    sample_value_columns.update(_as_text_list(dataset_context.get("group_key_columns")))
     matched = [
         column
         for column in columns
         if _column_mentioned(
             question=question,
             column=column,
-            aliases=[
-                *column_aliases.get(column, []),
-                *column_value_samples.get(column, []),
-            ],
+            aliases=column_aliases.get(column, []),
+            sample_values=column_value_samples.get(column, [])
+            if column in sample_value_columns
+            else [],
         )
     ]
     return matched
 
 
-def _column_mentioned(*, question: str, column: str, aliases: list[str]) -> bool:
+def _column_mentioned(
+    *,
+    question: str,
+    column: str,
+    aliases: list[str],
+    sample_values: list[str],
+) -> bool:
     normalized_column = _normalize_column(column)
     if not normalized_column:
         return False
     if any(_alias_mentioned(question=question, alias=alias) for alias in aliases):
+        return True
+    if any(_sample_value_mentioned(question=question, value=value) for value in sample_values):
         return True
     if any(_alias_mentioned(question=question, alias=variant) for variant in _column_name_variants(column)):
         return True
@@ -258,6 +268,31 @@ def _alias_mentioned(*, question: str, alias: str) -> bool:
     compact_question = _normalize_column(question).replace(" ", "")
     compact_alias = normalized_alias.replace(" ", "")
     return normalized_alias in question or compact_alias in compact_question
+
+
+def _sample_value_mentioned(*, question: str, value: str) -> bool:
+    normalized_value = _normalize_column(value)
+    if _is_unsafe_sample_value_alias(value):
+        return False
+    if _is_ascii_identifier(normalized_value):
+        pattern = rf"(?<![a-z0-9_]){re.escape(normalized_value)}(?![a-z0-9_])"
+        return re.search(pattern, _normalize_column(question)) is not None
+    return normalized_value in _normalize_column(question)
+
+
+def _is_unsafe_sample_value_alias(value: object) -> bool:
+    text = str(value or "").strip()
+    normalized = _normalize_column(text)
+    compact = normalized.replace(" ", "")
+    if len(compact) < 2:
+        return True
+    if re.fullmatch(r"[+-]?\d+(?:[.,]\d+)?", text):
+        return True
+    if re.search(r"\d{4}\s*(?:[-/.년]|$)", text):
+        return True
+    if re.search(r"\d{1,2}\s*[-/.]\s*\d{1,2}", text):
+        return True
+    return False
 
 
 def _column_name_variants(column: str) -> list[str]:
