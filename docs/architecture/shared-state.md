@@ -86,6 +86,7 @@
 - 주요 입력 소스
   - `request_context`
   - `handoff`
+  - `dataset_context`
   - `preprocess_result`
   - `rag_result`
   - `guideline_result`
@@ -182,6 +183,29 @@
   - `eligibility_score`
   - `blockers`
   - `reason`
+
+### `dataset_context.column_aliases`
+
+- 의미
+  - LLM이 데이터셋 컬럼별 자연어 alias를 미리 생성해 둔 의미 사전
+- 주 생성 위치
+  - `DatasetContextService`
+- 주 소비 위치
+  - `chat_fast_path`의 common analytics column matching
+- 원칙
+  - LLM은 alias 사전 생성에만 사용한다.
+  - fast path 실행 시점에는 `column_aliases`를 deterministic lookup으로만 사용한다.
+
+### `dataset_context.column_value_samples`
+
+- 의미
+  - 컬럼별 대표 고유값 샘플
+- 주 생성 위치
+  - `DatasetContextService`
+- 주 소비 위치
+  - `chat_fast_path`의 categorical column matching
+- 사용 예
+  - 질문에 `iOS`, `Android`, `Male`, `Female` 같은 실제 categorical 값이 들어오면 해당 값을 가진 컬럼을 deterministic하게 찾는다.
 
 ### `pending_approval`
 

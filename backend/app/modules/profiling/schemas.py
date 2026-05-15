@@ -76,4 +76,6 @@ class DatasetContext(BaseModel):
     group_key_columns: list[str] = Field(default_factory=list)
     sample_rows: list[dict[str, object]] = Field(default_factory=list)
     missing_rates: dict[str, float] = Field(default_factory=dict)
+    column_aliases: dict[str, list[str]] = Field(default_factory=dict)
+    column_value_samples: dict[str, list[object]] = Field(default_factory=dict)
     quality_summary: DatasetQualitySummary = Field(default_factory=DatasetQualitySummary)

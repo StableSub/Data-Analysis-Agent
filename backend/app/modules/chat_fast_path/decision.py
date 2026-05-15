@@ -36,7 +36,7 @@ _CATEGORICAL_METRICS = {
     "ratio": ("비율", "구성비", "share", "ratio", "proportion", "percent"),
     "top": ("가장 많은", "최빈", "최다", "top", "most common"),
 }
-_CORRELATION_KEYWORDS = ("상관", "correlation", "corr")
+_CORRELATION_KEYWORDS = ("상관", "관계", "correlation", "corr", "relationship", "related")
 _COMPARISON_KEYWORDS = ("비교", "compare", "comparison")
 _SEGMENT_KEYWORDS = ("별", "그룹", "세그먼트", "segment", "group by", "by ")
 _OUTLIER_KEYWORDS = ("이상치", "outlier", "anomaly")
@@ -154,11 +154,21 @@ def _normalize_question(question: str) -> str:
 
 def _detect_complex_blockers(question: str) -> list[str]:
     blockers: list[str] = []
-    if any(keyword in question for keyword in _COMPLEX_BLOCKERS):
+    if any(_keyword_mentioned(question=question, keyword=keyword) for keyword in _COMPLEX_BLOCKERS):
         blockers.append("complex_request")
     if question.count("?") > 1 or question.count("？") > 1:
         blockers.append("multi_question")
     return blockers
+
+
+def _keyword_mentioned(*, question: str, keyword: str) -> bool:
+    normalized_keyword = _normalize_column(keyword)
+    if not normalized_keyword:
+        return False
+    if _is_ascii_identifier(normalized_keyword):
+        pattern = rf"(?<![a-z0-9_]){re.escape(normalized_keyword)}(?=$|[\s?.!,])"
+        return re.search(pattern, _normalize_column(question)) is not None
+    return normalized_keyword in _normalize_column(question)
 
 
 def _detect_operation(question: str) -> CommonAnalyticsOperation | None:
@@ -197,21 +207,34 @@ def _detect_metric(
 
 def _match_columns(question: str, dataset_context: Mapping[str, Any]) -> list[str]:
     columns = _as_text_list(dataset_context.get("columns"))
+    column_aliases = _as_alias_mapping(dataset_context.get("column_aliases"))
+    column_value_samples = _as_alias_mapping(dataset_context.get("column_value_samples"))
     matched = [
         column
         for column in columns
-        if _column_mentioned(question=question, column=column)
+        if _column_mentioned(
+            question=question,
+            column=column,
+            aliases=[
+                *column_aliases.get(column, []),
+                *column_value_samples.get(column, []),
+            ],
+        )
     ]
     return matched
 
 
-def _column_mentioned(*, question: str, column: str) -> bool:
+def _column_mentioned(*, question: str, column: str, aliases: list[str]) -> bool:
     normalized_column = _normalize_column(column)
     if not normalized_column:
         return False
+    if any(_alias_mentioned(question=question, alias=alias) for alias in aliases):
+        return True
+    if any(_alias_mentioned(question=question, alias=variant) for variant in _column_name_variants(column)):
+        return True
     if _is_ascii_identifier(normalized_column):
         pattern = rf"(?<![a-z0-9_]){re.escape(normalized_column)}(?![a-z0-9_])"
-        return re.search(pattern, question) is not None
+        return re.search(pattern, _normalize_column(question)) is not None
     compact_question = _normalize_column(question)
     compact_column = normalized_column.replace(" ", "")
     return normalized_column in question or compact_column in compact_question
@@ -219,6 +242,33 @@ def _column_mentioned(*, question: str, column: str) -> bool:
 
 def _normalize_column(value: object) -> str:
     return " ".join(str(value or "").strip().lower().replace("_", " ").replace("-", " ").split())
+
+
+def _alias_mentioned(*, question: str, alias: str) -> bool:
+    normalized_alias = _normalize_column(alias)
+    if not normalized_alias:
+        return False
+    if _is_ascii_identifier(normalized_alias):
+        pattern = rf"(?<![a-z0-9_]){re.escape(normalized_alias)}(?![a-z0-9_])"
+        return re.search(pattern, _normalize_column(question)) is not None
+    compact_question = _normalize_column(question).replace(" ", "")
+    compact_alias = normalized_alias.replace(" ", "")
+    return normalized_alias in question or compact_alias in compact_question
+
+
+def _column_name_variants(column: str) -> list[str]:
+    variants = [column, re.sub(r"\([^)]*\)", "", column)]
+    normalized_variants = []
+    seen = set()
+    for variant in variants:
+        normalized = _normalize_column(variant)
+        alnum = re.sub(r"[^a-z0-9가-힣]+", " ", normalized).strip()
+        for candidate in (normalized, alnum, alnum.replace(" ", "_")):
+            text = candidate.strip()
+            if text and text not in seen:
+                seen.add(text)
+                normalized_variants.append(text)
+    return normalized_variants
 
 
 def _is_ascii_identifier(value: str) -> bool:
@@ -282,3 +332,14 @@ def _as_text_list(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
     return [text for item in value if (text := str(item or "").strip())]
+
+
+def _as_alias_mapping(value: object) -> dict[str, list[str]]:
+    if not isinstance(value, Mapping):
+        return {}
+    aliases_by_column: dict[str, list[str]] = {}
+    for column, aliases in value.items():
+        column_text = str(column or "").strip()
+        if column_text and isinstance(aliases, list):
+            aliases_by_column[column_text] = _as_text_list(aliases)
+    return aliases_by_column

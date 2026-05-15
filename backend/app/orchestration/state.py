@@ -67,6 +67,8 @@ class DatasetContextPayload(TypedDict, total=False):
     group_key_columns: list[str]
     sample_rows: list[Dict[str, Any]]
     missing_rates: Dict[str, float]
+    column_aliases: Dict[str, list[str]]
+    column_value_samples: Dict[str, list[Any]]
     quality_summary: Dict[str, Any]
 
 
