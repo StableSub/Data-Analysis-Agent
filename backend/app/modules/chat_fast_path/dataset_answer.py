@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -150,7 +151,10 @@ def _matches_intent(question: str, intent: str) -> bool:
     if intent == "categorical_columns":
         return any(keyword in question for keyword in ("범주형", "카테고리", "categorical", "category"))
     if intent == "datetime_columns":
-        return any(keyword in question for keyword in ("날짜", "시간", "일시", "datetime", "date", "time"))
+        return any(keyword in question for keyword in ("날짜", "시간", "일시")) or any(
+            _english_token_mentioned(question=question, token=token)
+            for token in ("datetime", "date", "time")
+        )
     if intent == "boolean_columns":
         return any(keyword in question for keyword in ("불리언", "참거짓", "boolean", "bool"))
     if intent == "identifier_columns":
@@ -162,6 +166,10 @@ def _matches_intent(question: str, intent: str) -> bool:
             return False
         return any(keyword in question for keyword in ("컬럼", "열", "스키마", "변수", "column", "columns", "schema"))
     return False
+
+
+def _english_token_mentioned(*, question: str, token: str) -> bool:
+    return re.search(rf"(?<![a-z0-9_]){re.escape(token)}(?![a-z0-9_])", question) is not None
 
 
 def _build_answer_content(intent: str, dataset_context: Mapping[str, Any]) -> str:
