@@ -17,6 +17,7 @@ _ANALYTIC_KEYWORDS = (
     "최대",
     "최소",
     "상관",
+    "관계",
     "비율",
     "분포",
     "비교",
@@ -89,12 +90,29 @@ def _detect_dataset_lookup_intent(question: str) -> str | None:
 
     matched_intents = [
         intent
-        for intent in ("summary", "missing", "sample_rows", "shape", "columns")
+        for intent in (
+            "summary",
+            "missing",
+            "sample_rows",
+            "shape",
+            "row_count",
+            "column_count",
+            "numeric_columns",
+            "categorical_columns",
+            "datetime_columns",
+            "boolean_columns",
+            "identifier_columns",
+            "column_types",
+        )
         if _matches_intent(question, intent)
     ]
-    if len(matched_intents) != 1:
+    if len(matched_intents) == 1:
+        return matched_intents[0]
+    if len(matched_intents) > 1:
         return None
-    return matched_intents[0]
+    if _matches_intent(question, "columns"):
+        return "columns"
+    return None
 
 
 def _matches_intent(question: str, intent: str) -> bool:
@@ -117,6 +135,28 @@ def _matches_intent(question: str, intent: str) -> bool:
             or "shape" in question
             or "크기" in question
         )
+    if intent == "row_count":
+        has_row = any(keyword in question for keyword in ("행", "row", "rows"))
+        has_count = any(keyword in question for keyword in ("개수", "수", "몇", "count", "how many"))
+        has_column = any(keyword in question for keyword in ("열", "컬럼", "column", "columns"))
+        return has_row and has_count and not has_column
+    if intent == "column_count":
+        has_column = any(keyword in question for keyword in ("열", "컬럼", "column", "columns"))
+        has_count = any(keyword in question for keyword in ("개수", "수", "몇", "count", "how many"))
+        has_row = any(keyword in question for keyword in ("행", "row", "rows"))
+        return has_column and has_count and not has_row
+    if intent == "numeric_columns":
+        return any(keyword in question for keyword in ("숫자형", "수치형", "numeric", "numerical", "number"))
+    if intent == "categorical_columns":
+        return any(keyword in question for keyword in ("범주형", "카테고리", "categorical", "category"))
+    if intent == "datetime_columns":
+        return any(keyword in question for keyword in ("날짜", "시간", "일시", "datetime", "date", "time"))
+    if intent == "boolean_columns":
+        return any(keyword in question for keyword in ("불리언", "참거짓", "boolean", "bool"))
+    if intent == "identifier_columns":
+        return any(keyword in question for keyword in ("식별자", "아이디", "identifier", "id column"))
+    if intent == "column_types":
+        return any(keyword in question for keyword in ("데이터 타입", "자료형", "dtype", "dtypes", "data type", "data types"))
     if intent == "columns":
         if any(keyword in question for keyword in ("행", "row", "rows", "개수", "count", "shape", "크기")):
             return False
@@ -133,6 +173,20 @@ def _build_answer_content(intent: str, dataset_context: Mapping[str, Any]) -> st
         return _format_sample_rows_answer(dataset_context)
     if intent == "shape":
         return _format_shape_answer(dataset_context)
+    if intent == "row_count":
+        return _format_row_count_answer(dataset_context)
+    if intent == "column_count":
+        return _format_column_count_answer(dataset_context)
+    if intent in {
+        "numeric_columns",
+        "categorical_columns",
+        "datetime_columns",
+        "boolean_columns",
+        "identifier_columns",
+    }:
+        return _format_typed_columns_answer(intent, dataset_context)
+    if intent == "column_types":
+        return _format_column_types_answer(dataset_context)
     if intent == "columns":
         return _format_columns_answer(dataset_context)
     return ""
@@ -171,6 +225,48 @@ def _format_columns_answer(dataset_context: Mapping[str, Any]) -> str:
     return f"총 {len(columns):,}개 컬럼입니다.\n" + ", ".join(column_items) + suffix
 
 
+def _format_column_types_answer(dataset_context: Mapping[str, Any]) -> str:
+    columns = _as_text_list(dataset_context.get("columns"))
+    dtypes = _as_mapping(dataset_context.get("dtypes"))
+    if not columns or not dtypes:
+        return "데이터 타입 정보를 확인할 수 없습니다."
+
+    type_items = []
+    for column in columns[:_MAX_LISTED_COLUMNS]:
+        dtype = _as_text(dtypes.get(column)) or "unknown"
+        type_items.append(f"{column}: {dtype}")
+
+    suffix = ""
+    if len(columns) > _MAX_LISTED_COLUMNS:
+        suffix = f"\n외 {len(columns) - _MAX_LISTED_COLUMNS:,}개 컬럼의 타입이 더 있습니다."
+    return f"총 {len(columns):,}개 컬럼의 데이터 타입입니다.\n" + ", ".join(type_items) + suffix
+
+
+def _format_typed_columns_answer(intent: str, dataset_context: Mapping[str, Any]) -> str:
+    type_specs = {
+        "numeric_columns": ("숫자형", "numeric_columns"),
+        "categorical_columns": ("범주형", "categorical_columns"),
+        "datetime_columns": ("날짜/시간형", "datetime_columns"),
+        "boolean_columns": ("불리언", "boolean_columns"),
+        "identifier_columns": ("식별자", "identifier_columns"),
+    }
+    label, context_key = type_specs[intent]
+    columns = _as_text_list(dataset_context.get(context_key))
+    if not columns:
+        return f"확인된 {label} 컬럼이 없습니다."
+
+    dtypes = _as_mapping(dataset_context.get("dtypes"))
+    column_items = []
+    for column in columns[:_MAX_LISTED_COLUMNS]:
+        dtype = _as_text(dtypes.get(column))
+        column_items.append(f"{column} ({dtype})" if dtype else column)
+
+    suffix = ""
+    if len(columns) > _MAX_LISTED_COLUMNS:
+        suffix = f"\n외 {len(columns) - _MAX_LISTED_COLUMNS:,}개 {label} 컬럼이 더 있습니다."
+    return f"총 {len(columns):,}개 {label} 컬럼입니다.\n" + ", ".join(column_items) + suffix
+
+
 def _format_sample_rows_answer(dataset_context: Mapping[str, Any]) -> str:
     sample_rows = _as_records(dataset_context.get("sample_rows"))
     if not sample_rows:
@@ -189,10 +285,17 @@ def _format_sample_rows_answer(dataset_context: Mapping[str, Any]) -> str:
 def _format_shape_answer(dataset_context: Mapping[str, Any]) -> str:
     row_count = _as_int(dataset_context.get("row_count_total"))
     column_count = _as_int(dataset_context.get("column_count"))
-    sample_count = _as_int(dataset_context.get("row_count_sample"))
-    if sample_count and sample_count != row_count:
-        return f"전체 데이터셋은 {row_count:,}행 {column_count:,}열입니다. 현재 프로파일 샘플은 {sample_count:,}행입니다."
     return f"전체 데이터셋은 {row_count:,}행 {column_count:,}열입니다."
+
+
+def _format_row_count_answer(dataset_context: Mapping[str, Any]) -> str:
+    row_count = _as_int(dataset_context.get("row_count_total"))
+    return f"전체 데이터셋은 {row_count:,}행입니다."
+
+
+def _format_column_count_answer(dataset_context: Mapping[str, Any]) -> str:
+    column_count = _as_int(dataset_context.get("column_count"))
+    return f"전체 데이터셋은 {column_count:,}열입니다."
 
 
 def _format_missing_answer(dataset_context: Mapping[str, Any]) -> str:

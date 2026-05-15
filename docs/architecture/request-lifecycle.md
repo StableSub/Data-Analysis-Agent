@@ -81,7 +81,7 @@ planner 주변 판단은 아래 위치에 나뉘어 있다.
 
 - dataset 여부와 coarse handoff: `backend/app/orchestration/intake_router.py`
 - dataset/profile context: `dataset_context` node
-- metadata-only fast answer와 common analytics fast answer: `chat_fast_path` node
+- metadata-only fast answer(컬럼/컬럼 타입/타입별 컬럼/행·열 개수/샘플/shape/결측 요약)와 common analytics fast answer: `chat_fast_path` node
 - active guideline prefetch: `guideline_flow`
 - main route 판단: `builder.py`의 `planner` node와 `route_after_planner()`
 - 분석 실행 계획 확정: `backend/app/orchestration/workflows/analysis.py`
