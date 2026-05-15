@@ -86,13 +86,15 @@ def _normalize_question(question: str) -> str:
 
 
 def _detect_dataset_lookup_intent(question: str) -> str | None:
+    if _matches_intent(question, "summary"):
+        return "summary"
+
     if any(keyword in question for keyword in _ANALYTIC_KEYWORDS):
         return None
 
     matched_intents = [
         intent
         for intent in (
-            "summary",
             "missing",
             "sample_rows",
             "shape",
