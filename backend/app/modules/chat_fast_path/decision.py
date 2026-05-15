@@ -263,6 +263,8 @@ def _alias_mentioned(*, question: str, alias: str) -> bool:
     if not normalized_alias:
         return False
     if _is_ascii_identifier(normalized_alias):
+        if len(normalized_alias.replace(" ", "")) < 2:
+            return False
         pattern = rf"(?<![a-z0-9_]){re.escape(normalized_alias)}(?![a-z0-9_])"
         return re.search(pattern, _normalize_column(question)) is not None
     compact_question = _normalize_column(question).replace(" ", "")
