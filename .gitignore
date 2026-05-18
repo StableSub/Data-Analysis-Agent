@@ -84,3 +84,22 @@ CLAUDE.md
 .agents/
 findings/
 project_docs/
+
+# Benchmark raw datasets are local artifacts unless explicitly promoted.
+evaluation/raw/
+!evaluation/
+!evaluation/docs/
+!evaluation/docs/**
+!evaluation/cases/
+!evaluation/cases/**
+
+# Allow committed task findings when explicitly requested.
+!findings/
+!findings/**
+
+# Allow benchmark/evaluation tests under backend/tests.
+!backend/tests/evaluation/
+!backend/tests/evaluation/**
+# Keep benchmark test bytecode local even though backend/tests/evaluation is committed.
+backend/tests/evaluation/**/__pycache__/
+backend/tests/evaluation/**/*.py[cod]

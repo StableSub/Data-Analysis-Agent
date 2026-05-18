@@ -1,0 +1,872 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Dataset별 추천 시나리오 핵심 요약</title>
+  <style>
+    :root {
+      --bg: #f6f8fb;
+      --panel: #ffffff;
+      --ink: #172033;
+      --muted: #667085;
+      --line: #d9e1ec;
+      --soft: #eef2ff;
+      --accent: #4f46e5;
+      --p0: #b42318;
+      --p1: #b54708;
+      --code: #0f172a;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      color: var(--ink);
+      background: linear-gradient(180deg, #eef2ff 0%, var(--bg) 280px);
+      line-height: 1.65;
+    }
+    main { max-width: 1180px; margin: 0 auto; padding: 44px 24px 88px; }
+    .hero {
+      background: rgba(255,255,255,.9);
+      border: 1px solid var(--line);
+      border-radius: 28px;
+      padding: 34px;
+      box-shadow: 0 22px 70px rgba(30,41,59,.11);
+      margin-bottom: 22px;
+    }
+    h1 { margin: 0 0 10px; font-size: clamp(30px, 4vw, 48px); letter-spacing: -.045em; }
+    h2.major {
+      margin-top: 46px;
+      padding: 18px 22px;
+      border-radius: 20px;
+      background: linear-gradient(90deg, #ffffff 0%, #f8fafc 100%);
+      border: 1px solid var(--line);
+      box-shadow: 0 8px 28px rgba(30,41,59,.05);
+      font-size: 27px;
+      letter-spacing: -.025em;
+    }
+    h3 { margin-top: 34px; font-size: 22px; letter-spacing: -.015em; }
+    h4, h5, h6 { margin-top: 24px; }
+    p, li { font-size: 15.5px; }
+    p { margin: 12px 0; }
+    .meta { color: var(--muted); font-size: 14px; margin: 0 0 12px; }
+    .summary-grid { display:grid; grid-template-columns: repeat(4,1fr); gap: 14px; margin-top: 22px; }
+    .summary-card { background: #fff; border:1px solid var(--line); border-radius:18px; padding:18px; min-height:126px; }
+    .badge { display:inline-flex; padding:4px 10px; border-radius:999px; color:#fff; font-size:12px; font-weight:800; letter-spacing:.03em; }
+    .p0 { background: var(--p0); } .p1 { background: var(--p1); } .neutral { background: var(--accent); }
+    .toc {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      padding: 20px 24px;
+      margin: 22px 0 30px;
+      columns: 2;
+    }
+    .toc strong { display:block; margin-bottom: 8px; columns: all; }
+    .toc ol { margin: 0; padding-left: 20px; }
+    .toc li { break-inside: avoid; margin: 4px 0; color: var(--muted); }
+    .toc .lv3 { margin-left: 12px; font-size: 14px; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code {
+      padding: 2px 6px;
+      border-radius: 7px;
+      background: #eef2f7;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: .92em;
+    }
+    pre {
+      overflow-x: auto;
+      padding: 18px;
+      border-radius: 18px;
+      border: 1px solid #1e293b;
+      background: var(--code);
+      color: #e2e8f0;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.03);
+    }
+    pre code { background: transparent; color: inherit; padding: 0; }
+    ul, ol { padding-left: 24px; }
+    li { margin: 7px 0; }
+    .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 18px; margin: 14px 0 22px; background: #fff; }
+    table { width: 100%; min-width: 820px; border-collapse: collapse; }
+    th, td { padding: 12px 14px; border-bottom: 1px solid var(--line); text-align:left; vertical-align: top; }
+    th { background: #f8fafc; color:#344054; font-size: 13px; text-transform: uppercase; letter-spacing:.035em; }
+    tr:last-child td { border-bottom: 0; }
+    h2.major + p, h3 + .table-wrap, h3 + p { margin-top: 10px; }
+    h3[id^="p0"] { border-left: 6px solid var(--p0); padding-left: 12px; }
+    h3[id^="p1"] { border-left: 6px solid var(--p1); padding-left: 12px; }
+    @media (max-width: 860px) {
+      main { padding: 26px 14px 64px; }
+      .hero { padding: 24px; border-radius: 22px; }
+      .summary-grid { grid-template-columns: 1fr 1fr; }
+      .toc { columns: 1; }
+    }
+    @media (max-width: 560px) { .summary-grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+<main>
+  <section class="hero">
+    <p class="meta">작성일: 2026-05-18 · 원본: <code>evaluation/docs/raw-dataset-metric-utilization-analysis.md</code> 5.2</p>
+    <h1>Dataset별 추천 시나리오 핵심 요약</h1>
+    <p><strong>P0/P1 벤치마크 설계 HTML 구조화본.</strong> route-only 검증이 아니라 dataset contract, metric/table oracle, evidence, final answer quality, approval/protection까지 단계적으로 검증하는 구조입니다.</p>
+    <div class="summary-grid">
+      <div class="summary-card"><span class="badge p0">P0</span><h3>Canonical</h3><p>moldset_labeled.csv 기반 핵심 분석·전처리 happy path.</p></div>
+      <div class="summary-card"><span class="badge p1">P1</span><h3>Quality Guard</h3><p>abstain, scaled-like 판단, Y/N 라벨 정규화.</p></div>
+      <div class="summary-card"><span class="badge neutral">Tests</span><h3>Layered</h3><p>contract → runtime → workflow → live benchmark.</p></div>
+      <div class="summary-card"><span class="badge neutral">Code</span><h3>No root tests</h3><p>pytest 코드는 <code>backend/tests/evaluation/</code> 아래에 둡니다.</p></div>
+    </div>
+  </section>
+  <nav class="toc"><strong>목차</strong><ol><li class="lv2"><a href="#핵심-결론">핵심 결론</a></li><li class="lv2"><a href="#현재-프로젝트에서-우선-테스트해야-할-것">현재 프로젝트에서 우선 테스트해야 할 것</a></li><li class="lv2"><a href="#p0-상세-설계-즉시-benchmark로-고정할-canonical-scenario">P0 상세 설계 — 즉시 benchmark로 고정할 canonical scenario</a></li><li class="lv3"><a href="#p0-공통-dataset-oracle">P0 공통 dataset oracle</a></li><li class="lv3"><a href="#p0-a-라벨-분포-분석">P0-A. 라벨 분포 분석</a></li><li class="lv3"><a href="#p0-b-제품별-불량률-분석">P0-B. 제품별 불량률 분석</a></li><li class="lv3"><a href="#p0-c-불량-사유별-건수-분석">P0-C. 불량 사유별 건수 분석</a></li><li class="lv3"><a href="#p0-d-전처리-표준화-보호-컬럼-제외">P0-D. 전처리 표준화 + 보호 컬럼 제외</a></li><li class="lv2"><a href="#p1-상세-설계-품질-방어와-데이터-특성-판단-scenario">P1 상세 설계 — 품질 방어와 데이터 특성 판단 scenario</a></li><li class="lv3"><a href="#p1-a-라벨-없는-데이터의-불량률-질문-abstain">P1-A. 라벨 없는 데이터의 불량률 질문 abstain</a></li><li class="lv3"><a href="#p1-b-cn7-scaled-like-판단">P1-B. CN7 scaled-like 판단</a></li><li class="lv3"><a href="#p1-c-rg3-scaled-like-판단">P1-C. RG3 scaled-like 판단</a></li><li class="lv3"><a href="#p1-d-y-n-라벨-표현-정규화">P1-D. <code>Y</code>/<code>N</code> 라벨 표현 정규화</a></li><li class="lv2"><a href="#case-파일-설계">Case 파일 설계</a></li><li class="lv2"><a href="#테스트-코드-설계">테스트 코드 설계</a></li><li class="lv3"><a href="#helper-설계">Helper 설계</a></li><li class="lv3"><a href="#contract-test-설계">Contract test 설계</a></li><li class="lv3"><a href="#runtime-deterministic-test-설계">Runtime deterministic test 설계</a></li><li class="lv3"><a href="#workflow-branch-test-설계">Workflow branch test 설계</a></li><li class="lv3"><a href="#live-benchmark-설계">Live benchmark 설계</a></li><li class="lv2"><a href="#구현-반영-순서">구현 반영 순서</a></li><li class="lv2"><a href="#리뷰-체크포인트">리뷰 체크포인트</a></li></ol></nav>
+  <article>
+<h1 id="dataset별-추천-시나리오-핵심-요약">Dataset별 추천 시나리오 핵심 요약</h1>
+<p>작성일: 2026-05-18<br />원본: <code>evaluation/docs/raw-dataset-metric-utilization-analysis.md</code>의 <code>5.2 dataset별 추천 scenario</code></p>
+<h2 class="major" id="핵심-결론">핵심 결론</h2>
+<p><code>raw-dataset-metric-utilization-analysis.md</code>에서 실제로 테스트·데모·벤치마크로 가져가야 할 중심은 <strong>5.2의 dataset별 추천 scenario</strong>다. 이 표는 raw 제조 데이터셋을 프로젝트 평가용 scenario oracle로 바꾸기 위한 우선순위, 질문, 기대 route, 평가 지표를 한 번에 정의한다.</p>
+<p>현재 프로젝트에서 P0/P1 benchmark는 단순히 <code>expected_route</code>만 확인하면 부족하다. 아래 계약까지 단계적으로 검증해야 한다.</p>
+<ol>
+<li><strong>dataset contract</strong>: raw CSV 자체가 기대 행 수, 컬럼, 라벨 분포, 스케일링 성격을 유지하는가?</li>
+<li><strong>route/branch contract</strong>: planner/main workflow가 기대 branch로 들어가는가?</li>
+<li><strong>used column grounding</strong>: 답변·분석·evidence가 기대 컬럼에 grounded되어 있는가?</li>
+<li><strong>metric/table oracle</strong>: raw CSV에서 직접 계산한 숫자·표와 runtime 결과가 일치하는가?</li>
+<li><strong>evidence contract</strong>: <code>source_id</code>, <code>used_columns</code>, <code>analysis_metrics</code>, <code>analysis_table</code>, <code>answer_quality</code>가 최종 payload에 보존되는가?</li>
+<li><strong>final answer quality</strong>: 최종 문장이 근거 숫자를 포함하고, 계산 불가능한 경우에는 abstain하며, 금지 표현/환각 지표를 만들지 않는가?</li>
+<li><strong>preprocess approval/protection</strong>: 전처리 요청은 approval로 멈추고 보호 컬럼을 제외하는가?</li>
+</ol>
+<p>나머지 장은 5.2를 보조한다.</p>
+<ul>
+<li>3장: 각 dataset을 왜 쓰는지에 대한 근거</li>
+<li>5.1: scenario를 case 파일로 옮길 때 필요한 공통 schema</li>
+<li>6~7장: scenario 결과를 어떤 지표로 점수화할지에 대한 측정 체계</li>
+<li>14장: 실제 반영 순서에 대한 운영 우선순위</li>
+</ul>
+<h2 class="major" id="현재-프로젝트에서-우선-테스트해야-할-것">현재 프로젝트에서 우선 테스트해야 할 것</h2>
+<p>현재 repo에는 <code>backend/tests/test_chat_sse_contract.py</code>, <code>backend/tests/test_orchestration_evidence_contract.py</code>처럼 SSE/evidence 계약 테스트는 있지만, <code>evaluation/raw/*.csv</code>를 oracle로 삼아 P0/P1 질문을 end-to-end benchmark case로 고정하는 테스트 계층은 별도로 설계해야 한다. 새 최상위 <code>tests/</code> 디렉터리는 만들지 않고, pytest 코드는 <code>backend/tests/evaluation/</code> 아래에 둔다.</p>
+<p>권장 테스트 계층은 아래 순서다.</p>
+<div class="table-wrap"><table>
+<thead><tr><th>계층</th><th>목적</th><th>실패 시 의미</th><th>기본 실행 여부</th></tr></thead>
+<tbody>
+<tr><td>Dataset contract</td><td>raw CSV 행 수·컬럼·라벨·스케일링 oracle 고정</td><td>데이터 파일이 바뀌었거나 benchmark 전제가 깨짐</td><td>항상 실행</td></tr>
+<tr><td>Case contract</td><td><code>evaluation/cases/*.jsonl</code> schema와 coverage 검증</td><td>benchmark 정의 누락/오타</td><td>항상 실행</td></tr>
+<tr><td>Runtime deterministic</td><td>LLM 없이 분석/전처리 core가 oracle과 일치하는지 검증</td><td>코드 실행·집계·전처리 계약 실패</td><td>항상 실행</td></tr>
+<tr><td>Workflow branch</td><td>fake/minimal service로 planner route, evidence, node result, approval contract 검증</td><td>orchestration 연결 실패</td><td>항상 실행</td></tr>
+<tr><td>Live benchmark</td><td>실제 LangGraph + LLM + raw dataset으로 최종 답변 검증</td><td>모델/프롬프트/통합 runtime 품질 저하</td><td><code>RUN_LIVE_AGENT_BENCHMARK=1</code>일 때만 실행</td></tr>
+</tbody></table></div>
+<h2 class="major" id="p0-상세-설계-즉시-benchmark로-고정할-canonical-scenario">P0 상세 설계 — 즉시 benchmark로 고정할 canonical scenario</h2>
+<p>P0는 <code>moldset_labeled.csv</code>를 기준으로 현재 제품의 핵심 workflow 품질을 가장 안정적으로 검증하는 묶음이다. P0 pass 기준은 <code>route</code>만이 아니라 <strong>route + used columns + raw metric/table + evidence + final answer + preprocess approval/protection</strong>이다.</p>
+<h3 id="p0-공통-dataset-oracle">P0 공통 dataset oracle</h3>
+<p>대상 파일: <code>evaluation/raw/moldset_labeled.csv</code></p>
+<div class="table-wrap"><table>
+<thead><tr><th>항목</th><th>기대값</th></tr></thead>
+<tbody>
+<tr><td>총 행 수</td><td>2,607</td></tr>
+<tr><td>총 컬럼 수</td><td>47</td></tr>
+<tr><td><code>PassOrFail=0</code> 정상</td><td>2,555</td></tr>
+<tr><td><code>PassOrFail=1</code> 불량</td><td>52</td></tr>
+<tr><td>불량률</td><td>1.9946298427311087%</td></tr>
+<tr><td>필수 컬럼</td><td><code>PassOrFail</code>, <code>PART_NAME</code>, <code>Reason</code>, <code>TimeStamp</code>, <code>PART_FACT_SERIAL</code>, <code>PART_NO</code></td></tr>
+</tbody></table></div>
+<p>제품별 oracle:</p>
+<div class="table-wrap"><table>
+<thead><tr><th>PART_NAME</th><th>total_count</th><th>defect_count</th><th>defect_rate_pct</th></tr></thead>
+<tbody>
+<tr><td><code>CN7 W/S SIDE MLD&#x27;G LH</code></td><td>712</td><td>9</td><td>1.2640449438202246</td></tr>
+<tr><td><code>CN7 W/S SIDE MLD&#x27;G RH</code></td><td>713</td><td>18</td><td>2.524544179523142</td></tr>
+<tr><td><code>RG3 MOLD&#x27;G W/SHLD, LH</code></td><td>591</td><td>0</td><td>0.0</td></tr>
+<tr><td><code>RG3 MOLD&#x27;G W/SHLD, RH</code></td><td>591</td><td>25</td><td>4.230118443316413</td></tr>
+</tbody></table></div>
+<p>불량 사유별 oracle은 <code>PassOrFail=1</code>만 대상으로 계산한다.</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Reason</th><th>defect_count</th></tr></thead>
+<tbody>
+<tr><td><code>가스</code></td><td>30</td></tr>
+<tr><td><code>미성형</code></td><td>12</td></tr>
+<tr><td><code>초기허용불량</code></td><td>10</td></tr>
+</tbody></table></div>
+<h3 id="p0-a-라벨-분포-분석">P0-A. 라벨 분포 분석</h3>
+<div class="table-wrap"><table>
+<thead><tr><th>항목</th><th>설계</th></tr></thead>
+<tbody>
+<tr><td>dataset</td><td><code>moldset_labeled.csv</code></td></tr>
+<tr><td>질문</td><td><code>PassOrFail 라벨 분포를 알려줘.</code></td></tr>
+<tr><td>기대 route</td><td><code>analysis</code></td></tr>
+<tr><td>기대 used columns</td><td><code>PassOrFail</code></td></tr>
+<tr><td>기대 output type</td><td><code>data_qa</code></td></tr>
+<tr><td>핵심 목적</td><td>단일 컬럼 count/rate가 raw CSV oracle과 일치하는지 검증</td></tr>
+</tbody></table></div>
+<p>검증해야 할 것:</p>
+<ol>
+<li><strong>Route/branch</strong></li>
+</ol>
+<ul>
+<li><code>planning_result.route</code> 또는 handoff의 다음 단계가 <code>analysis</code>여야 한다.</li>
+<li><code>preprocess</code>, <code>rag</code>, <code>visualization</code>, <code>report</code>로 빠지면 실패다.</li>
+</ul>
+<ol>
+<li><strong>Used columns</strong></li>
+</ol>
+<ul>
+<li><code>analysis_result.used_columns</code>, <code>evidence_package.used_columns</code>, <code>node_results</code> 중 최소 하나 이상에서 <code>PassOrFail</code>이 확인되어야 한다.</li>
+<li>허용 범위: 정확히 <code>PassOrFail</code>만 쓰는 것이 최선이다. 불필요 컬럼이 섞이면 column precision 저하로 기록한다.</li>
+</ul>
+<ol>
+<li><strong>Metric oracle</strong></li>
+</ol>
+<ul>
+<li><code>total_count=2607</code>, <code>normal_count=2555</code>, <code>defect_count=52</code>.</li>
+<li><code>defect_rate_pct</code>는 <code>52 / 2607 * 100</code>과 tolerance 내에서 일치해야 한다.</li>
+<li>허용 tolerance: count는 exact match, rate는 <code>abs(actual - expected) &lt;= 1e-6</code> 또는 출력 문자열 검증에서는 반올림 허용.</li>
+</ul>
+<ol>
+<li><strong>Evidence contract</strong></li>
+</ol>
+<ul>
+<li><code>evidence_package.source_id</code>가 선택 dataset을 가리켜야 한다.</li>
+<li><code>evidence_package.analysis_metrics</code>에 라벨 분포 숫자가 있어야 한다.</li>
+<li><code>answer_quality.status</code>는 <code>answerable</code>이어야 한다.</li>
+</ul>
+<ol>
+<li><strong>Final answer quality</strong></li>
+</ol>
+<ul>
+<li>최종 답변에 <code>2607</code>, <code>2555</code>, <code>52</code>, <code>1.99</code> 또는 동등한 반올림 표현이 포함되어야 한다.</li>
+<li><code>정확도</code>, <code>F1</code>, <code>모델 성능</code>, <code>예측 성능</code>처럼 분류 모델 성능으로 오해시키는 표현은 금지한다.</li>
+</ul>
+<p>지표 검증:</p>
+<div class="table-wrap"><table>
+<thead><tr><th>지표</th><th>계산/판정</th></tr></thead>
+<tbody>
+<tr><td>route accuracy</td><td><code>actual_route == analysis</code></td></tr>
+<tr><td>column grounding F1</td><td>expected <code>{&quot;PassOrFail&quot;}</code> vs actual used columns</td></tr>
+<tr><td>numeric consistency</td><td>expected metrics와 actual metrics exact/float-close 비교</td></tr>
+<tr><td>evidence coverage</td><td><code>source_id</code>, <code>used_columns</code>, <code>analysis_metrics</code> 존재 여부</td></tr>
+<tr><td>forbidden term violation rate</td><td>금지 표현이 하나라도 있으면 fail</td></tr>
+</tbody></table></div>
+<h3 id="p0-b-제품별-불량률-분석">P0-B. 제품별 불량률 분석</h3>
+<div class="table-wrap"><table>
+<thead><tr><th>항목</th><th>설계</th></tr></thead>
+<tbody>
+<tr><td>dataset</td><td><code>moldset_labeled.csv</code></td></tr>
+<tr><td>질문</td><td><code>제품별 불량률을 계산해줘.</code></td></tr>
+<tr><td>기대 route</td><td><code>analysis</code></td></tr>
+<tr><td>기대 used columns</td><td><code>PART_NAME</code>, <code>PassOrFail</code></td></tr>
+<tr><td>기대 output type</td><td><code>data_qa</code></td></tr>
+<tr><td>핵심 목적</td><td>group-by table 정확도와 임의 제품/수치 hallucination 방지</td></tr>
+</tbody></table></div>
+<p>검증해야 할 것:</p>
+<ol>
+<li><strong>Route/branch</strong></li>
+</ol>
+<ul>
+<li>analysis route로 진입해야 한다.</li>
+</ul>
+<ol>
+<li><strong>Used columns</strong></li>
+</ol>
+<ul>
+<li><code>PART_NAME</code>, <code>PassOrFail</code>이 모두 사용되어야 한다.</li>
+<li><code>Reason</code>만 사용하거나 <code>PART_NAME</code> 없이 전체 불량률만 답하면 실패다.</li>
+</ul>
+<ol>
+<li><strong>Table oracle</strong></li>
+</ol>
+<ul>
+<li>raw CSV에서 <code>PART_NAME</code>별 <code>total_count</code>, <code>defect_count</code>, <code>defect_rate_pct</code>를 계산한다.</li>
+<li>runtime <code>analysis_result.table</code> 또는 <code>evidence_package.analysis_table</code>과 비교한다.</li>
+<li>row key는 제품명, metric key는 count/rate alias 차이를 허용하되 값은 raw oracle과 일치해야 한다.</li>
+</ul>
+<ol>
+<li><strong>Evidence contract</strong></li>
+</ol>
+<ul>
+<li><code>analysis_table</code>이 비어 있으면 실패다.</li>
+<li><code>analysis_metrics</code>만 있고 제품별 table이 없으면 table accuracy fail로 기록한다.</li>
+</ul>
+<ol>
+<li><strong>Final answer quality</strong></li>
+</ol>
+<ul>
+<li>최소 4개 제품명이 모두 답변 또는 table에 나타나야 한다.</li>
+<li>없는 제품명을 만들거나 불량률 순위를 잘못 말하면 fail 또는 partial로 기록한다.</li>
+</ul>
+<p>지표 검증:</p>
+<div class="table-wrap"><table>
+<thead><tr><th>지표</th><th>계산/판정</th></tr></thead>
+<tbody>
+<tr><td>route accuracy</td><td><code>actual_route == analysis</code></td></tr>
+<tr><td>column grounding F1</td><td>expected <code>{&quot;PART_NAME&quot;, &quot;PassOrFail&quot;}</code> vs actual used columns</td></tr>
+<tr><td>table accuracy / table closeness</td><td>제품명별 count exact, rate float-close</td></tr>
+<tr><td>hallucinated metric rate</td><td>raw oracle에 없는 제품명/숫자 출현 비율</td></tr>
+<tr><td>evidence coverage</td><td><code>analysis_table</code>, <code>used_columns</code>, <code>source_id</code> 존재 여부</td></tr>
+</tbody></table></div>
+<h3 id="p0-c-불량-사유별-건수-분석">P0-C. 불량 사유별 건수 분석</h3>
+<div class="table-wrap"><table>
+<thead><tr><th>항목</th><th>설계</th></tr></thead>
+<tbody>
+<tr><td>dataset</td><td><code>moldset_labeled.csv</code></td></tr>
+<tr><td>질문</td><td><code>불량 사유별 건수를 알려줘.</code></td></tr>
+<tr><td>기대 route</td><td><code>analysis</code></td></tr>
+<tr><td>기대 used columns</td><td><code>Reason</code>, <code>PassOrFail</code></td></tr>
+<tr><td>기대 output type</td><td><code>data_qa</code></td></tr>
+<tr><td>핵심 목적</td><td>결함 row 필터링 후 categorical aggregation이 정확한지 검증</td></tr>
+</tbody></table></div>
+<p>검증해야 할 것:</p>
+<ol>
+<li><strong>Route/branch</strong></li>
+</ol>
+<ul>
+<li>analysis route로 진입해야 한다.</li>
+</ul>
+<ol>
+<li><strong>Used columns</strong></li>
+</ol>
+<ul>
+<li><code>Reason</code>, <code>PassOrFail</code>이 모두 사용되어야 한다.</li>
+</ul>
+<ol>
+<li><strong>Filter contract</strong></li>
+</ol>
+<ul>
+<li><code>PassOrFail=1</code> 불량 row만 대상으로 <code>Reason</code>을 집계해야 한다.</li>
+<li>정상 row의 <code>Reason=None</code> 2,555건을 사유 집계에 포함하면 실패다.</li>
+</ul>
+<ol>
+<li><strong>Table oracle</strong></li>
+</ol>
+<ul>
+<li><code>가스=30</code>, <code>미성형=12</code>, <code>초기허용불량=10</code>과 일치해야 한다.</li>
+</ul>
+<ol>
+<li><strong>Evidence/final answer</strong></li>
+</ol>
+<ul>
+<li><code>analysis_table</code> 또는 final answer에 위 세 사유와 건수가 포함되어야 한다.</li>
+</ul>
+<p>지표 검증:</p>
+<div class="table-wrap"><table>
+<thead><tr><th>지표</th><th>계산/판정</th></tr></thead>
+<tbody>
+<tr><td>route accuracy</td><td><code>actual_route == analysis</code></td></tr>
+<tr><td>column grounding F1</td><td>expected <code>{&quot;Reason&quot;, &quot;PassOrFail&quot;}</code> vs actual used columns</td></tr>
+<tr><td>table accuracy</td><td>reason별 count exact</td></tr>
+<tr><td>evidence coverage</td><td><code>analysis_table</code>, <code>used_columns</code>, <code>source_id</code> 존재 여부</td></tr>
+<tr><td>hallucination rate</td><td>raw에 없는 사유/건수 출현 여부</td></tr>
+</tbody></table></div>
+<h3 id="p0-d-전처리-표준화-보호-컬럼-제외">P0-D. 전처리 표준화 + 보호 컬럼 제외</h3>
+<div class="table-wrap"><table>
+<thead><tr><th>항목</th><th>설계</th></tr></thead>
+<tbody>
+<tr><td>dataset</td><td><code>moldset_labeled.csv</code></td></tr>
+<tr><td>질문</td><td><code>숫자형 공정 컬럼들을 표준화해줘. 라벨과 제품명, 시간 컬럼은 제외해줘.</code></td></tr>
+<tr><td>기대 route</td><td><code>preprocess</code></td></tr>
+<tr><td>기대 approval</td><td><code>approval_required</code> 발생</td></tr>
+<tr><td>핵심 목적</td><td>전처리 route, approval gate, scale target, protected column exclusion 검증</td></tr>
+</tbody></table></div>
+<p>검증해야 할 것:</p>
+<ol>
+<li><strong>Route/branch</strong></li>
+</ol>
+<ul>
+<li><code>preprocess</code> route로 진입해야 한다.</li>
+<li>단순 analysis로 끝나면 실패다.</li>
+</ul>
+<ol>
+<li><strong>Approval gate</strong></li>
+</ol>
+<ul>
+<li>실제 적용 전 <code>approval_required</code> event가 발생해야 한다.</li>
+<li>approval payload의 <code>stage</code>는 <code>preprocess</code>, <code>kind</code>는 plan review 계열이어야 한다.</li>
+</ul>
+<ol>
+<li><strong>Scale operation</strong></li>
+</ol>
+<ul>
+<li><code>preprocess_plan.operations</code>에 <code>op=scale</code>이 포함되어야 한다.</li>
+<li>대상 컬럼은 숫자형 공정 컬럼이어야 한다.</li>
+</ul>
+<ol>
+<li><strong>Protected column exclusion</strong></li>
+</ol>
+<ul>
+<li>아래 컬럼은 scale 대상에서 제외되어야 한다.</li>
+<li>라벨: <code>PassOrFail</code></li>
+<li>제품/식별: <code>PART_NAME</code>, <code>PART_NO</code>, <code>PART_FACT_SERIAL</code>, <code>_id</code></li>
+<li>시간: <code>TimeStamp</code>, <code>PART_FACT_PLAN_DATE</code></li>
+<li>보호 컬럼이 하나라도 포함되면 <code>protected_column_violation</code> fail이다.</li>
+</ul>
+<ol>
+<li><strong>Resume 후 결과</strong></li>
+</ol>
+<ul>
+<li>승인 resume 테스트에서는 <code>approved_plan</code>이 executor로 전달되고 <code>preprocess_result.status</code>가 <code>applied</code> 또는 성공 계열이어야 한다.</li>
+</ul>
+<p>지표 검증:</p>
+<div class="table-wrap"><table>
+<thead><tr><th>지표</th><th>계산/판정</th></tr></thead>
+<tbody>
+<tr><td>route accuracy</td><td><code>actual_route == preprocess</code></td></tr>
+<tr><td>approval gate success</td><td>approval event 발생 여부</td></tr>
+<tr><td>scaling target precision</td><td>실제 scale 대상 중 허용 숫자형 공정 컬럼 비율</td></tr>
+<tr><td>scaling target recall</td><td>기대 숫자형 공정 컬럼 중 scale 대상으로 잡힌 비율</td></tr>
+<tr><td>protected column violation rate</td><td>보호 컬럼이 대상에 포함되면 fail</td></tr>
+<tr><td>resume success</td><td>approve 후 <code>preprocess_result.status</code> 성공 여부</td></tr>
+</tbody></table></div>
+<h2 class="major" id="p1-상세-설계-품질-방어와-데이터-특성-판단-scenario">P1 상세 설계 — 품질 방어와 데이터 특성 판단 scenario</h2>
+<p>P1은 P0처럼 canonical happy path만 보는 것이 아니라, 모델이 잘못된 숫자를 만들어내지 않는지와 dataset 특성을 수치 근거로 판단하는지 확인한다.</p>
+<h3 id="p1-a-라벨-없는-데이터의-불량률-질문-abstain">P1-A. 라벨 없는 데이터의 불량률 질문 abstain</h3>
+<div class="table-wrap"><table>
+<thead><tr><th>항목</th><th>설계</th></tr></thead>
+<tbody>
+<tr><td>dataset</td><td><code>unlabeled_data.csv</code></td></tr>
+<tr><td>질문</td><td><code>이 데이터의 불량률을 계산해줘.</code></td></tr>
+<tr><td>기대 route</td><td><code>analysis + abstain</code></td></tr>
+<tr><td>기대 answer status</td><td><code>unanswerable</code> 또는 명시적 <code>limited</code></td></tr>
+<tr><td>핵심 목적</td><td><code>PassOrFail</code> 없는 데이터에서 불량률을 조작하지 않는지 검증</td></tr>
+</tbody></table></div>
+<p>Dataset oracle:</p>
+<div class="table-wrap"><table>
+<thead><tr><th>항목</th><th>기대값</th></tr></thead>
+<tbody>
+<tr><td>총 행 수</td><td>795,315</td></tr>
+<tr><td>총 컬럼 수</td><td>46</td></tr>
+<tr><td><code>PassOrFail</code> 컬럼</td><td>없음</td></tr>
+<tr><td>raw-scale 예시</td><td><code>Cycle_Time</code> 평균 약 58.030807, std 약 16.916262</td></tr>
+</tbody></table></div>
+<p>검증해야 할 것:</p>
+<ol>
+<li><strong>Dataset contract</strong></li>
+</ol>
+<ul>
+<li><code>PassOrFail</code> 컬럼이 없어야 한다.</li>
+</ul>
+<ol>
+<li><strong>Route/branch</strong></li>
+</ol>
+<ul>
+<li>질문 성격은 analysis지만, 결과는 answerable 계산이 아니라 abstain이어야 한다.</li>
+</ul>
+<ol>
+<li><strong>Answerability</strong></li>
+</ol>
+<ul>
+<li><code>answer_quality.status</code>가 <code>unanswerable</code> 또는 정책상 <code>limited</code>여야 한다.</li>
+<li>답변은 “라벨 컬럼이 없어 불량률을 계산할 수 없다”는 이유를 포함해야 한다.</li>
+</ul>
+<ol>
+<li><strong>No fabricated metrics</strong></li>
+</ol>
+<ul>
+<li><code>defect_count</code>, <code>defect_rate_pct</code>, <code>normal_count</code> 같은 불량률 숫자를 만들어내면 실패다.</li>
+<li><code>PassOrFail</code>이 없는데 <code>0/1</code>, <code>Y/N</code> 분포를 말하면 실패다.</li>
+</ul>
+<ol>
+<li><strong>Evidence contract</strong></li>
+</ol>
+<ul>
+<li>evidence warning에 분석 근거 부족 또는 missing label 관련 사유가 들어가야 한다.</li>
+</ul>
+<p>지표 검증:</p>
+<div class="table-wrap"><table>
+<thead><tr><th>지표</th><th>계산/판정</th></tr></thead>
+<tbody>
+<tr><td>answerability accuracy</td><td>expected unanswerable/limited와 actual status 비교</td></tr>
+<tr><td>forbidden term violation</td><td>fabricated rate/count, 모델 성능 표현 금지</td></tr>
+<tr><td>hallucinated metric rate</td><td>raw에 없는 라벨 기반 숫자 생성 여부</td></tr>
+<tr><td>evidence coverage</td><td>missing label/insufficient evidence warning 존재 여부</td></tr>
+</tbody></table></div>
+<h3 id="p1-b-cn7-scaled-like-판단">P1-B. CN7 scaled-like 판단</h3>
+<div class="table-wrap"><table>
+<thead><tr><th>항목</th><th>설계</th></tr></thead>
+<tbody>
+<tr><td>dataset</td><td><code>moldset_labeled_cn7.csv</code></td></tr>
+<tr><td>질문</td><td><code>이 데이터는 이미 스케일링되어 있는지 확인해줘.</code></td></tr>
+<tr><td>기대 route</td><td><code>analysis</code></td></tr>
+<tr><td>기대 판단</td><td>이미 스케일링된 데이터로 판단</td></tr>
+<tr><td>핵심 목적</td><td>평균 0, 표준편차 1 근거로 scaled-like 판단을 하는지 검증</td></tr>
+</tbody></table></div>
+<p>Dataset oracle:</p>
+<div class="table-wrap"><table>
+<thead><tr><th>항목</th><th>기대값</th></tr></thead>
+<tbody>
+<tr><td>총 행 수</td><td>1,211</td></tr>
+<tr><td>총 컬럼 수</td><td>26</td></tr>
+<tr><td><code>PassOrFail=0</code></td><td>1,194</td></tr>
+<tr><td><code>PassOrFail=1</code></td><td>17</td></tr>
+<tr><td><code>Injection_Time</code> mean/std</td><td>약 0.0 / 1.000413</td></tr>
+<tr><td><code>Filling_Time</code> mean/std</td><td>약 0.0 / 1.000413</td></tr>
+<tr><td><code>Plasticizing_Time</code> mean/std</td><td>약 0.0 / 1.000413</td></tr>
+<tr><td><code>Cycle_Time</code> mean/std</td><td>약 0.0 / 1.000413</td></tr>
+</tbody></table></div>
+<p>검증해야 할 것:</p>
+<ol>
+<li><strong>Route/branch</strong></li>
+</ol>
+<ul>
+<li>analysis route로 진입해야 한다.</li>
+</ul>
+<ol>
+<li><strong>Used columns</strong></li>
+</ol>
+<ul>
+<li>최소 <code>Injection_Time</code>, <code>Filling_Time</code>, <code>Plasticizing_Time</code>, <code>Cycle_Time</code> 중 2개 이상을 근거 컬럼으로 사용해야 한다.</li>
+</ul>
+<ol>
+<li><strong>Scaled detection</strong></li>
+</ol>
+<ul>
+<li>평균 절댓값이 작은 값, 표준편차가 1에 가까운 값을 근거로 “이미 스케일링됨” 또는 “표준화된 것으로 보임”이라고 판단해야 한다.</li>
+</ul>
+<ol>
+<li><strong>Evidence/final answer</strong></li>
+</ol>
+<ul>
+<li>답변이나 evidence에 mean/std 근거가 포함되어야 한다.</li>
+<li>단순히 “스케일링됨”이라고만 말하고 수치 근거가 없으면 evidence coverage를 partial로 둔다.</li>
+</ul>
+<p>지표 검증:</p>
+<div class="table-wrap"><table>
+<thead><tr><th>지표</th><th>계산/판정</th></tr></thead>
+<tbody>
+<tr><td>scaled detection accuracy</td><td>expected scaled-like == actual 판단</td></tr>
+<tr><td>evidence coverage</td><td>mean/std 근거 포함 여부</td></tr>
+<tr><td>column grounding F1</td><td>기준 공정 컬럼 vs actual used columns</td></tr>
+<tr><td>numeric consistency</td><td>mean/std 값이 oracle tolerance 내인지</td></tr>
+</tbody></table></div>
+<h3 id="p1-c-rg3-scaled-like-판단">P1-C. RG3 scaled-like 판단</h3>
+<div class="table-wrap"><table>
+<thead><tr><th>항목</th><th>설계</th></tr></thead>
+<tbody>
+<tr><td>dataset</td><td><code>moldset_labeled_rg3.csv</code></td></tr>
+<tr><td>질문</td><td><code>이 데이터는 이미 스케일링되어 있는지 확인해줘.</code></td></tr>
+<tr><td>기대 route</td><td><code>analysis</code></td></tr>
+<tr><td>기대 판단</td><td>이미 스케일링된 데이터로 판단</td></tr>
+<tr><td>핵심 목적</td><td>CN7이 아닌 RG3 subset에서도 scaled-like 판단이 일관적인지 검증</td></tr>
+</tbody></table></div>
+<p>Dataset oracle:</p>
+<div class="table-wrap"><table>
+<thead><tr><th>항목</th><th>기대값</th></tr></thead>
+<tbody>
+<tr><td>총 행 수</td><td>1,182</td></tr>
+<tr><td>총 컬럼 수</td><td>26</td></tr>
+<tr><td><code>PassOrFail=0</code></td><td>1,157</td></tr>
+<tr><td><code>PassOrFail=1</code></td><td>25</td></tr>
+<tr><td><code>Injection_Time</code> mean/std</td><td>약 0.0 / 1.000423</td></tr>
+<tr><td><code>Filling_Time</code> mean/std</td><td>약 0.0 / 1.000423</td></tr>
+<tr><td><code>Plasticizing_Time</code> mean/std</td><td>약 0.0 / 1.000423</td></tr>
+<tr><td><code>Cycle_Time</code> mean/std</td><td>약 0.0 / 1.000423</td></tr>
+</tbody></table></div>
+<p>검증은 P1-B와 동일하다. 단, CN7 전용 제품명/컬럼명을 답변에 섞지 않는지도 확인한다.</p>
+<p>지표 검증:</p>
+<div class="table-wrap"><table>
+<thead><tr><th>지표</th><th>계산/판정</th></tr></thead>
+<tbody>
+<tr><td>scaled detection accuracy</td><td>expected scaled-like == actual 판단</td></tr>
+<tr><td>evidence coverage</td><td>mean/std 근거 포함 여부</td></tr>
+<tr><td>numeric consistency</td><td>mean/std 값 float-close</td></tr>
+<tr><td>hallucination rate</td><td>CN7 등 다른 dataset 근거가 섞였는지 여부</td></tr>
+</tbody></table></div>
+<h3 id="p1-d-y-n-라벨-표현-정규화">P1-D. <code>Y</code>/<code>N</code> 라벨 표현 정규화</h3>
+<div class="table-wrap"><table>
+<thead><tr><th>항목</th><th>설계</th></tr></thead>
+<tbody>
+<tr><td>dataset</td><td><code>labeled_data.csv</code></td></tr>
+<tr><td>질문</td><td><code>PassOrFail 라벨 분포를 알려줘.</code></td></tr>
+<tr><td>기대 route</td><td><code>analysis</code></td></tr>
+<tr><td>기대 used columns</td><td><code>PassOrFail</code></td></tr>
+<tr><td>핵심 목적</td><td><code>0</code>/<code>1</code>이 아닌 <code>Y</code>/<code>N</code> 라벨 표현을 올바르게 처리하는지 검증</td></tr>
+</tbody></table></div>
+<p>Dataset oracle:</p>
+<div class="table-wrap"><table>
+<thead><tr><th>항목</th><th>기대값</th></tr></thead>
+<tbody>
+<tr><td>총 행 수</td><td>7,996</td></tr>
+<tr><td>총 컬럼 수</td><td>45</td></tr>
+<tr><td><code>PassOrFail=Y</code></td><td>7,925</td></tr>
+<tr><td><code>PassOrFail=N</code></td><td>71</td></tr>
+<tr><td><code>N</code> 비율</td><td>0.8879439719859929%</td></tr>
+</tbody></table></div>
+<p>검증해야 할 것:</p>
+<ol>
+<li><strong>Route/branch</strong></li>
+</ol>
+<ul>
+<li>analysis route로 진입해야 한다.</li>
+</ul>
+<ol>
+<li><strong>Used columns</strong></li>
+</ol>
+<ul>
+<li><code>PassOrFail</code>을 사용해야 한다.</li>
+</ul>
+<ol>
+<li><strong>Label normalization</strong></li>
+</ol>
+<ul>
+<li>이 dataset에서는 <code>Y</code>/<code>N</code> 표현을 그대로 보고하거나, 프로젝트 정책에 따라 정상/불량으로 정규화해야 한다.</li>
+<li>단, <code>Y/N</code>을 임의로 <code>0/1</code>로 바꾸면서 의미를 반대로 해석하면 실패다.</li>
+</ul>
+<ol>
+<li><strong>Metric oracle</strong></li>
+</ol>
+<ul>
+<li><code>total_count=7996</code>, <code>Y=7925</code>, <code>N=71</code>, <code>N rate≈0.8879439719859929%</code>.</li>
+</ul>
+<ol>
+<li><strong>Final answer quality</strong></li>
+</ol>
+<ul>
+<li><code>Y</code>, <code>N</code> 라벨 의미가 불확실하면 “라벨 의미 확인 필요”를 명시해도 된다.</li>
+<li>확신 없이 <code>Y=불량</code>, <code>N=정상</code>처럼 의미를 뒤집어 단정하면 실패다.</li>
+</ul>
+<p>지표 검증:</p>
+<div class="table-wrap"><table>
+<thead><tr><th>지표</th><th>계산/판정</th></tr></thead>
+<tbody>
+<tr><td>route accuracy</td><td><code>actual_route == analysis</code></td></tr>
+<tr><td>label normalization accuracy</td><td><code>Y/N</code> count와 의미 처리 일치 여부</td></tr>
+<tr><td>numeric consistency</td><td>count/rate oracle 비교</td></tr>
+<tr><td>column grounding F1</td><td>expected <code>{&quot;PassOrFail&quot;}</code> vs actual used columns</td></tr>
+<tr><td>forbidden term violation</td><td>모델 성능/예측 정확도 표현 금지</td></tr>
+</tbody></table></div>
+<h2 class="major" id="case-파일-설계">Case 파일 설계</h2>
+<p><code>evaluation/cases/</code>를 만들고 P0/P1을 priority별로 나누는 것을 권장한다.</p>
+<pre><code class="language-text">evaluation/
+├── raw/
+├── docs/
+└── cases/
+    ├── p0_moldset_analysis_cases.jsonl
+    ├── p0_moldset_preprocess_cases.jsonl
+    └── p1_dataset_quality_cases.jsonl</code></pre>
+<p>각 case는 최소한 아래 필드를 가진다.</p>
+<pre><code class="language-json">{
+  &quot;case_id&quot;: &quot;p0_moldset_label_distribution&quot;,
+  &quot;priority&quot;: &quot;P0&quot;,
+  &quot;dataset&quot;: &quot;moldset_labeled.csv&quot;,
+  &quot;question&quot;: &quot;PassOrFail 라벨 분포를 알려줘.&quot;,
+  &quot;expected_route&quot;: &quot;analysis&quot;,
+  &quot;expected_answer_status&quot;: &quot;answerable&quot;,
+  &quot;expected_used_columns&quot;: [&quot;PassOrFail&quot;],
+  &quot;expected_evidence_keys&quot;: [&quot;source_id&quot;, &quot;used_columns&quot;, &quot;analysis_metrics&quot;],
+  &quot;expected_metrics&quot;: {
+    &quot;total_count&quot;: 2607,
+    &quot;normal_count&quot;: 2555,
+    &quot;defect_count&quot;: 52,
+    &quot;defect_rate_pct&quot;: 1.9946298427311087
+  },
+  &quot;forbidden_answer_terms&quot;: [&quot;정확도&quot;, &quot;F1&quot;, &quot;모델 성능&quot;]
+}</code></pre>
+<p>Table case는 <code>expected_table</code>을 추가한다.</p>
+<pre><code class="language-json">{
+  &quot;case_id&quot;: &quot;p0_moldset_defect_rate_by_part&quot;,
+  &quot;priority&quot;: &quot;P0&quot;,
+  &quot;dataset&quot;: &quot;moldset_labeled.csv&quot;,
+  &quot;question&quot;: &quot;제품별 불량률을 계산해줘.&quot;,
+  &quot;expected_route&quot;: &quot;analysis&quot;,
+  &quot;expected_used_columns&quot;: [&quot;PART_NAME&quot;, &quot;PassOrFail&quot;],
+  &quot;expected_table_key&quot;: &quot;PART_NAME&quot;,
+  &quot;expected_table_metrics&quot;: [&quot;total_count&quot;, &quot;defect_count&quot;, &quot;defect_rate_pct&quot;]
+}</code></pre>
+<p>Answerability case는 <code>expected_answer_status</code>와 금지 metric을 더 강하게 둔다.</p>
+<pre><code class="language-json">{
+  &quot;case_id&quot;: &quot;p1_unlabeled_defect_rate_abstain&quot;,
+  &quot;priority&quot;: &quot;P1&quot;,
+  &quot;dataset&quot;: &quot;unlabeled_data.csv&quot;,
+  &quot;question&quot;: &quot;이 데이터의 불량률을 계산해줘.&quot;,
+  &quot;expected_route&quot;: &quot;analysis&quot;,
+  &quot;expected_answer_status&quot;: &quot;unanswerable&quot;,
+  &quot;expected_missing_columns&quot;: [&quot;PassOrFail&quot;],
+  &quot;forbidden_metric_keys&quot;: [&quot;defect_count&quot;, &quot;defect_rate_pct&quot;, &quot;normal_count&quot;]
+}</code></pre>
+<h2 class="major" id="테스트-코드-설계">테스트 코드 설계</h2>
+<p>새 최상위 <code>tests/</code> 폴더는 만들지 않는다. 현재 프로젝트 규칙에 맞춰 pytest 코드는 <code>backend/tests/</code> 아래에 둔다.</p>
+<pre><code class="language-text">backend/tests/evaluation/
+├── conftest.py
+├── helpers/
+│   ├── eval_cases.py
+│   ├── moldset_p0_oracles.py
+│   ├── p1_dataset_oracles.py
+│   └── runtime_assertions.py
+├── contracts/
+│   ├── test_p0_moldset_dataset_contract.py
+│   ├── test_p1_dataset_contracts.py
+│   └── test_project_benchmark_cases.py
+├── metrics/
+│   └── test_eval_metrics.py
+├── runtime/
+│   ├── test_p0_moldset_analysis_runtime.py
+│   └── test_p1_dataset_quality_runtime.py
+├── workflow/
+│   ├── test_p0_moldset_workflow_contracts.py
+│   └── test_p1_dataset_quality_workflow_contracts.py
+└── live/
+    ├── conftest.py
+    └── test_p0_p1_live_benchmark.py</code></pre>
+<h3 id="helper-설계">Helper 설계</h3>
+<p><code>moldset_p0_oracles.py</code>:</p>
+<ul>
+<li><code>read_rows(dataset_name: str) -&gt; list[dict[str, str]]</code></li>
+<li><code>expected_label_distribution() -&gt; dict</code></li>
+<li><code>expected_defect_rate_by_part() -&gt; list[dict]</code></li>
+<li><code>expected_defect_reason_counts() -&gt; list[dict]</code></li>
+<li><code>assert_float_close(actual, expected, tolerance=1e-6)</code></li>
+<li><code>assert_table_close(actual_table, expected_table, key_columns, metric_columns)</code></li>
+</ul>
+<p><code>p1_dataset_oracles.py</code>:</p>
+<ul>
+<li><code>dataset_shape(dataset_name) -&gt; dict</code></li>
+<li><code>label_counts(dataset_name) -&gt; dict</code></li>
+<li><code>numeric_mean_std(dataset_name, columns) -&gt; dict</code></li>
+<li><code>is_scaled_like(mean_std, mean_abs_max=0.05, std_min=0.95, std_max=1.05) -&gt; bool</code></li>
+<li><code>assert_no_label_column(dataset_name, label_column=&quot;PassOrFail&quot;)</code></li>
+</ul>
+<p><code>runtime_assertions.py</code>:</p>
+<ul>
+<li><code>assert_route(actual, expected)</code></li>
+<li><code>assert_used_columns(actual, expected)</code></li>
+<li><code>assert_metrics_close(actual, expected)</code></li>
+<li><code>assert_table_close(actual, expected)</code></li>
+<li><code>assert_evidence_keys(payload, expected_keys)</code></li>
+<li><code>assert_answer_contains_terms(answer, terms)</code></li>
+<li><code>assert_answer_excludes_terms(answer, forbidden_terms)</code></li>
+<li><code>assert_answerability(answer_quality, expected_status)</code></li>
+<li><code>assert_no_forbidden_metric_keys(payload, forbidden_metric_keys)</code></li>
+</ul>
+<h3 id="contract-test-설계">Contract test 설계</h3>
+<p><code>contracts/test_p0_moldset_dataset_contract.py</code>:</p>
+<ul>
+<li><code>test_moldset_labeled_shape_and_required_columns()</code></li>
+<li><code>test_moldset_labeled_label_distribution_oracle()</code></li>
+<li><code>test_moldset_labeled_defect_rate_by_part_oracle()</code></li>
+<li><code>test_moldset_labeled_defect_reason_counts_oracle()</code></li>
+</ul>
+<p><code>contracts/test_p1_dataset_contracts.py</code>:</p>
+<ul>
+<li><code>test_unlabeled_data_has_no_pass_or_fail_column()</code></li>
+<li><code>test_cn7_scaled_like_numeric_columns()</code></li>
+<li><code>test_rg3_scaled_like_numeric_columns()</code></li>
+<li><code>test_labeled_data_yn_label_distribution()</code></li>
+</ul>
+<p><code>contracts/test_project_benchmark_cases.py</code>:</p>
+<ul>
+<li>모든 P0/P1 case가 <code>priority</code>, <code>dataset</code>, <code>question</code>, <code>expected_route</code>를 가진다.</li>
+<li>case의 <code>dataset</code>이 <code>evaluation/raw/</code>에 존재한다.</li>
+<li>P0는 최소 4개, P1은 최소 4개 scenario를 가진다.</li>
+<li><code>expected_used_columns</code>가 dataset 실제 컬럼에 존재한다. 단, P1-A의 <code>expected_missing_columns</code>는 없는 것이 맞다.</li>
+</ul>
+<h3 id="runtime-deterministic-test-설계">Runtime deterministic test 설계</h3>
+<p>목적은 LLM/live 전에 core 실행 계층이 raw oracle과 맞는지 확인하는 것이다.</p>
+<p>P0 runtime:</p>
+<ul>
+<li>라벨 분포 분석 결과의 <code>raw_metrics</code> 비교</li>
+<li>제품별 불량률 <code>table</code> 비교</li>
+<li>불량 사유별 건수 <code>table</code> 비교</li>
+<li>전처리 plan/executor 단위에서 scale 대상과 protected column violation 검증</li>
+</ul>
+<p>P1 runtime:</p>
+<ul>
+<li>unlabeled dataset에서 label column 없음 감지</li>
+<li>CN7/RG3 mean/std 기반 scaled-like 판단</li>
+<li><code>labeled_data.csv</code>의 <code>Y/N</code> count와 비율 계산</li>
+</ul>
+<p>주의:</p>
+<ul>
+<li>runtime deterministic test는 외부 LLM 호출 없이 돌아야 한다.</li>
+<li>LLM이 필요한 planner/codegen은 fake plan, fixture, deterministic helper로 우회한다.</li>
+<li>실패 원인이 LLM 변동성인지 core 계산 오류인지 분리하는 것이 목적이다.</li>
+</ul>
+<h3 id="workflow-branch-test-설계">Workflow branch test 설계</h3>
+<p>목적은 <code>builder.py</code>, <code>AgentClient</code>, evidence contract, approval 흐름이 기대 payload를 유지하는지 검증하는 것이다.</p>
+<p>P0 workflow:</p>
+<ul>
+<li>analysis 질문 3종이 analysis branch로 들어가는지 확인</li>
+<li>final state에 <code>analysis_result</code>, <code>evidence_package</code>, <code>answer_quality</code>, <code>node_results</code>가 있는지 확인</li>
+<li>P0-D preprocess 질문이 <code>approval_required</code>로 멈추는지 확인</li>
+<li>approve resume 후 <code>preprocess_result.status</code>가 성공 계열인지 확인</li>
+</ul>
+<p>P1 workflow:</p>
+<ul>
+<li>unlabeled defect-rate 질문은 analysis branch를 타되 <code>answer_quality.status</code>가 unanswerable/limited인지 확인</li>
+<li>scaled detection 질문은 analysis branch와 mean/std evidence를 유지하는지 확인</li>
+<li><code>Y/N</code> 라벨 분포 질문은 used column과 metrics가 evidence에 남는지 확인</li>
+</ul>
+<p>주의:</p>
+<ul>
+<li>workflow branch test는 실제 LLM 호출 대신 fake planner/analysis/preprocess service를 사용한다.</li>
+<li>현재 <code>backend/tests/test_chat_sse_contract.py</code>의 fake workflow 패턴과 <code>backend/tests/test_orchestration_evidence_contract.py</code>의 evidence assertion 패턴을 재사용한다.</li>
+</ul>
+<h3 id="live-benchmark-설계">Live benchmark 설계</h3>
+<p><code>backend/tests/evaluation/live/conftest.py</code>에서 아래 조건 없이는 skip한다.</p>
+<pre><code class="language-python">pytestmark = pytest.mark.skipif(
+    os.getenv(&quot;RUN_LIVE_AGENT_BENCHMARK&quot;) != &quot;1&quot;,
+    reason=&quot;set RUN_LIVE_AGENT_BENCHMARK=1 to run live LLM workflow tests&quot;,
+)</code></pre>
+<p>Live benchmark는 다음만 검증한다.</p>
+<ul>
+<li>실제 LangGraph + LLM workflow가 P0/P1 대표 case를 통과하는가?</li>
+<li>final answer가 evidence 기반으로 숫자를 말하는가?</li>
+<li>P1-A처럼 계산 불가능한 질문에서 숫자를 조작하지 않는가?</li>
+<li>trace/SSE event에서 <code>done</code>, <code>evidence_package</code>, <code>answer_quality</code>가 보존되는가?</li>
+</ul>
+<p>Live benchmark는 기본 CI gate가 아니라 수동/야간 benchmark로 둔다.</p>
+<h2 class="major" id="구현-반영-순서">구현 반영 순서</h2>
+<ol>
+<li><strong>P0-A 라벨 분포 dataset contract + oracle helper부터 작성한다.</strong></li>
+</ol>
+<ul>
+<li>가장 작고 실패 원인이 명확하다.</li>
+</ul>
+<ol>
+<li><strong>P0-A runtime deterministic test를 붙인다.</strong></li>
+</ol>
+<ul>
+<li>route보다 먼저 raw metric oracle을 고정한다.</li>
+</ul>
+<ol>
+<li><strong>P0-B/P0-C table oracle을 추가한다.</strong></li>
+</ol>
+<ul>
+<li>table accuracy helper를 이때 만든다.</li>
+</ul>
+<ol>
+<li><strong>P0-D preprocess approval/protected column test를 추가한다.</strong></li>
+</ol>
+<ul>
+<li>route, approval, scale target, protected column violation을 분리해 검증한다.</li>
+</ul>
+<ol>
+<li><strong>P1-A answerability negative case를 추가한다.</strong></li>
+</ol>
+<ul>
+<li>hallucination 방지 기준을 먼저 고정한다.</li>
+</ul>
+<ol>
+<li><strong>P1-B/P1-C scaled detection을 추가한다.</strong></li>
+</ol>
+<ul>
+<li>mean/std oracle과 evidence coverage를 검증한다.</li>
+</ul>
+<ol>
+<li><strong>P1-D <code>Y/N</code> 라벨 정규화를 추가한다.</strong></li>
+</ol>
+<ul>
+<li>count는 확정하되 라벨 의미 단정 여부를 별도 체크한다.</li>
+</ul>
+<ol>
+<li><strong>마지막에 live benchmark를 opt-in으로 연결한다.</strong></li>
+</ol>
+<h2 class="major" id="리뷰-체크포인트">리뷰 체크포인트</h2>
+<ul>
+<li><code>expected_route</code>가 실제 workflow branch와 일치하는가?</li>
+<li><code>expected_used_columns</code>가 output/evidence/node result에 grounded되어 있는가?</li>
+<li>숫자 답변은 raw CSV ground truth와 일치하는가?</li>
+<li>table scenario는 row key와 metric alias 차이를 흡수하되 값은 정확히 비교하는가?</li>
+<li>라벨 없는 데이터는 불량률을 만들어내지 않고 계산 불가를 설명하는가?</li>
+<li>scaled-like 판단은 mean/std 수치 근거를 남기는가?</li>
+<li><code>Y/N</code> 라벨은 count와 의미를 혼동하지 않는가?</li>
+<li>전처리 scenario는 approval을 거치고 보호 컬럼을 제외하는가?</li>
+<li>live benchmark는 명시적 opt-in 없이 실행되지 않는가?</li>
+</ul>
+  </article>
+</main>
+</body>
+</html>
