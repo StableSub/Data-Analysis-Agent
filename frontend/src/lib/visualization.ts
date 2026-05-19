@@ -24,7 +24,9 @@ export interface VisualizationResultPayload {
   summary?: string;
   chart?: VisualizationChartPayload;
   chart_data?: VisualizationChartPayload;
+  charts?: VisualizationChartPayload[];
   artifact?: VisualizationArtifactPayload;
+  fallback_table?: Record<string, unknown>[];
 }
 
 function parseChartPayload(payload: unknown): VisualizationChartPayload | undefined {
@@ -70,8 +72,20 @@ export function parseVisualizationResult(payload: unknown): VisualizationResultP
 
   const chart = parseChartPayload(data.chart);
   const chartData = parseChartPayload(data.chart_data);
+  const charts = Array.isArray(data.charts)
+    ? data.charts.map(parseChartPayload).filter((item): item is VisualizationChartPayload => Boolean(item))
+    : undefined;
+  const fallbackTable = Array.isArray(data.fallback_table)
+    ? data.fallback_table.filter(
+        (item): item is Record<string, unknown> => Boolean(item) && typeof item === "object",
+      )
+    : undefined;
 
-  if (!imageBase64 && !hasVisualizationChartData({ chart, chart_data: chartData })) {
+  if (
+    !imageBase64 &&
+    !hasVisualizationChartData({ chart, chart_data: chartData, charts }) &&
+    !fallbackTable?.length
+  ) {
     return null;
   }
 
@@ -81,6 +95,8 @@ export function parseVisualizationResult(payload: unknown): VisualizationResultP
     summary: typeof data.summary === "string" ? data.summary : undefined,
     chart,
     chart_data: chartData,
+    charts,
+    fallback_table: fallbackTable,
     artifact: imageBase64
       ? {
           mime_type:
@@ -101,10 +117,29 @@ export function hasVisualizationArtifact(
   );
 }
 
+export function getVisualizationCharts(
+  visualization: Pick<VisualizationResultPayload, "chart" | "chart_data" | "charts"> | null | undefined,
+): VisualizationChartPayload[] {
+  const charts = Array.isArray(visualization?.charts)
+    ? visualization.charts.filter(
+        (chart) =>
+          typeof chart.chart_type === "string" &&
+          Array.isArray(chart.x) &&
+          Array.isArray(chart.series) &&
+          chart.series.length > 0,
+      )
+    : [];
+  if (charts.length > 0) {
+    return charts;
+  }
+  const legacy = getVisualizationChartData(visualization);
+  return legacy ? [legacy] : [];
+}
+
 export function getVisualizationChartData(
-  visualization: Pick<VisualizationResultPayload, "chart" | "chart_data"> | null | undefined,
+  visualization: Pick<VisualizationResultPayload, "chart" | "chart_data" | "charts"> | null | undefined,
 ): VisualizationChartPayload | null {
-  const candidates = [visualization?.chart_data, visualization?.chart];
+  const candidates = [visualization?.chart_data, visualization?.chart, visualization?.charts?.[0]];
   for (const candidate of candidates) {
     if (
       candidate &&
@@ -120,7 +155,7 @@ export function getVisualizationChartData(
 }
 
 export function hasVisualizationChartData(
-  visualization: Pick<VisualizationResultPayload, "chart" | "chart_data"> | null | undefined,
+  visualization: Pick<VisualizationResultPayload, "chart" | "chart_data" | "charts"> | null | undefined,
 ): boolean {
   return getVisualizationChartData(visualization) !== null;
 }
