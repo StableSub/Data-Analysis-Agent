@@ -464,13 +464,18 @@ class AnalysisProcessor:
             required.extend(derived.source_columns)
         if time_context and time_context.time_column:
             required.append(time_context.time_column)
+        metric_aliases = {metric.alias for metric in metrics if metric.alias}
         if visualization_hint:
             for column in (
                 visualization_hint.x,
                 visualization_hint.y,
                 visualization_hint.series,
             ):
-                if column and column not in derived_names:
+                if (
+                    column
+                    and column not in derived_names
+                    and column not in metric_aliases
+                ):
                     required.append(column)
 
         return list(dict.fromkeys(required))
