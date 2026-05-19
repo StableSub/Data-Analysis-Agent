@@ -228,7 +228,7 @@
 - `visualization_result`, `report_result`, `data_qa_result`, `output`
 - `evidence_package`, `answer_quality`
   - 최종 응답 구성 단계 표현
-  - 시각화 결과는 `renderer`, `vega_lite_spec`, legacy `chart/chart_data`, `artifact`를 함께 가질 수 있다
+  - 시각화 결과는 canonical `charts`, legacy `chart/chart_data`, PNG `artifact`, 보조 `fallback_table`을 함께 가질 수 있다
 
 ## freshness 체크리스트
 

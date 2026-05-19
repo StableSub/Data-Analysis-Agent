@@ -25,8 +25,8 @@
 | `backend/app/modules/visualization/planner.py` | LLM/heuristic 기반 chart selection, plan, review payload, revision instruction을 만든다. |
 | `backend/app/modules/visualization/processor.py` | analysis result를 chart spec/data로 변환하는 deterministic processor다. |
 | `backend/app/modules/visualization/router.py` | `APIRouter(prefix="/vizualization")`로 manual/from-analysis route를 제공한다. |
-| `backend/app/modules/visualization/schemas.py` | chart columns, manual visualization request/response, from-analysis request schema를 정의한다. |
-| `backend/app/modules/visualization/service.py` | dataset sample/preview rows, manual chart data, analysis result 기반 visualization 생성을 담당한다. |
+| `backend/app/modules/visualization/schemas.py` | chart columns, manual visualization request/response, from-analysis request schema와 `VisualizationResultPayload`를 정의한다. |
+| `backend/app/modules/visualization/service.py` | dataset sample/preview rows, manual chart data, analysis result 기반 canonical `charts` visualization 생성을 담당한다. |
 
 ## Public route 요약
 
@@ -92,6 +92,14 @@ preprocess가 필요한지 판단하고, 필요한 경우 user approval에 올�
 - `apply(...)`: preprocess plan을 적용하고 output source id/path/summary/diff를 반환한다.
 - `_build_output_path(...)`: preprocess output 파일 경로를 만든다.
 - `_build_summary(...)`, `_build_diff(...)`: 사용자에게 보여줄 변화 요약을 만든다.
+
+### Visualization result payload contract
+
+- `visualization_result.status`는 `generated`, `fallback`, `unavailable` 중 하나다.
+- `charts`는 canonical 다중 차트 목록이다. analysis result 기반 생성은 현재 단일 chart를 `charts[0]`로 제공한다.
+- `chart_data`와 `chart`는 기존 frontend 호환용 단일 대표 chart alias로 유지한다.
+- executor가 PNG artifact를 만든 manual visualization 경로는 `artifact`와 metadata성 `chart`를 제공하고, data-backed canonical chart가 없으면 `charts=[]`를 둔다.
+- chart 대신 표만 제공해야 하면 `fallback_table`을 사용할 수 있다.
 
 ## Hotspot: `backend/app/modules/visualization/planner.py`
 

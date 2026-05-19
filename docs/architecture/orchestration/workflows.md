@@ -54,7 +54,7 @@
 ### Visualization workflow
 
 - route/status: `analysis_generated`, `planned`, `approve`, `revise`, `cancel`, `generated`, `cancelled`.
-- payload contract: `analysis_result`, `analysis_plan`, `source_id`, `dataset_profile`, `revision_request`, `model_id`, `user_input`, `visualization_plan`, `visualization_result`, `approved_plan`, `pending_approval`, `output`, `renderer`, `vega_lite_spec`.
+- payload contract: `analysis_result`, `analysis_plan`, `source_id`, `dataset_profile`, `revision_request`, `model_id`, `user_input`, `visualization_plan`, `visualization_result`, `approved_plan`, `pending_approval`, `output`, legacy `renderer`, legacy `vega_lite_spec`, `chart`, `chart_data`, `charts`, `artifact`, `fallback_table`.
 - approval contract: `pending_approval.stage="visualization"`, `pending_approval.kind="plan_review"`, `revision_request.stage="visualization"`.
 
 ### Report workflow
@@ -189,6 +189,12 @@
 - planner status `planned` → `approval_gate`.
 - 그 외 planner output은 `visualization_executor`로 간다.
 - approval `approve` → `visualization_executor`, `revise` → `visualization_planner`, `cancel` → `cancel`.
+
+### State/output
+
+- analysis-generated direct path는 `visualization_result.chart_data`, legacy alias `chart`, canonical `charts`를 함께 반환한다.
+- approval executor path는 PNG `artifact`와 chart metadata를 반환하며, data-backed chart list가 없으면 `charts=[]`를 둔다.
+- `fallback_table`은 chart 대신 표 형태로 보여줄 수 있는 보조 결과다.
 
 ## 발견한 문제점 / 확인 필요 사항
 

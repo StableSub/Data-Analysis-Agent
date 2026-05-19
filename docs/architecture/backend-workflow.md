@@ -232,7 +232,7 @@ START
 - `evidence_package`: `final_state["evidence_package"]`가 dict일 때만 포함된다.
 - `answer_quality`: `final_state["answer_quality"]`가 dict일 때만 포함된다.
 - `preprocess_result`: `final_state["preprocess_result"]`가 dict일 때만 포함된다.
-- `visualization_result`는 status가 `generated`일 때만 포함된다.
+- `visualization_result`는 status가 `generated`일 때만 포함된다. 주요 shape는 canonical `charts`, legacy `chart/chart_data`, PNG `artifact`, `fallback_table`이다.
 - `analysis_result`, `report_result`: 각 final state 값이 dict일 때만 포함된다.
 
 `AgentClient`는 `final_status="fail"`, 실패한 analysis/report result, invalid/empty analysis quality 같은 상태를 실패 workflow state로 보고 내부 `error` event를 만든다. 이 event에는 `stage`, `error_code`, `retryable`, `answer`, `output_type`이 들어가며, final state에 있던 `output`, `evidence_package`, `answer_quality`도 가능한 경우 보존된다.
