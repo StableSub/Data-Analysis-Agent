@@ -464,6 +464,7 @@ class AnalysisProcessor:
             required.extend(derived.source_columns)
         if time_context and time_context.time_column:
             required.append(time_context.time_column)
+        time_axis_output_column = self._time_axis_output_column(time_context)
         metric_aliases = {metric.alias for metric in metrics if metric.alias}
         if visualization_hint:
             for column in (
@@ -473,6 +474,7 @@ class AnalysisProcessor:
             ):
                 if (
                     column
+                    and column != time_axis_output_column
                     and column not in derived_names
                     and column not in metric_aliases
                 ):
