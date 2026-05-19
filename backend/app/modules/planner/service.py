@@ -31,6 +31,8 @@ PROMPTS = PromptRegistry(
             "preprocess_required는 결측치 처리, 형변환, 문자열 정리, 정규화, 스케일링, 인코딩, 컬럼명 변경, 파생 컬럼 생성처럼 "
             "데이터를 먼저 정제하거나 변환해야 할 때만 true다. "
             "월/주/일 버킷팅, 최근 N개월 필터링, 집계, 비교, 추세 분석은 전처리가 아니라 분석이므로 그 이유만으로 preprocess_required를 true로 두지 마라. "
+            "양품/불량 비율, 사유별 건수, 제품별 생산량, 그룹별 count, 차트/그래프/시각화 요청은 원본 컬럼으로 계산 가능한 분석/시각화다. "
+            "사용자가 결측치 처리, 정규화, 표준화, 인코딩, 형변환 같은 전처리를 명시하지 않았다면 이런 요청은 preprocess_required=false로 둬라. "
             "need_visualization은 사용자가 차트/그래프/시각화를 원하면 true다. "
             "need_report는 리포트/보고서/요약 보고 형식을 원하면 true다. "
             "guideline_context_used는 guideline_context.has_evidence가 true이고, 그 근거가 planning에 실제로 영향을 준 경우에만 true다."
@@ -111,6 +113,7 @@ class PlannerService:
             guideline_context=guideline_context,
             model_id=model_id,
         )
+        decision = _apply_planner_decision_guards(decision, user_input)
         if not bool((guideline_context or {}).get("has_evidence", False)):
             decision.guideline_context_used = False
         route = self._resolve_route(decision)
@@ -291,6 +294,49 @@ class PlannerService:
     @staticmethod
     def _to_json(payload: Mapping[str, Any]) -> str:
         return json.dumps(dict(payload), ensure_ascii=False, default=str)
+
+
+def _should_force_skip_preprocess_for_analysis_request(user_input: str) -> bool:
+    text = user_input.lower()
+    analysis_terms = (
+        "비율",
+        "건수",
+        "생산량",
+        "그래프",
+        "시각화",
+        "차트",
+        "count",
+        "ratio",
+    )
+    preprocess_terms = (
+        "전처리",
+        "결측",
+        "결측치",
+        "정규화",
+        "표준화",
+        "스케일",
+        "scale",
+        "normalize",
+        "standardize",
+        "인코딩",
+        "형변환",
+        "파생",
+        "컬럼명",
+        "제거한 뒤",
+        "채운 뒤",
+    )
+    return any(term in text for term in analysis_terms) and not any(
+        term in text for term in preprocess_terms
+    )
+
+
+def _apply_planner_decision_guards(
+    decision: PlannerDecision,
+    user_input: str,
+) -> PlannerDecision:
+    if _should_force_skip_preprocess_for_analysis_request(user_input):
+        decision.preprocess_required = False
+    return decision
 
 
 def build_handoff_from_planning_result(planning_result: PlanningResult) -> dict[str, Any]:
