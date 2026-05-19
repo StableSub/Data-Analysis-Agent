@@ -17,7 +17,10 @@ interface LineChartCardProps {
 export function LineChartCard({ card }: LineChartCardProps) {
   return (
     <div className={VISUALIZATION_CHART_THEME.cardClassName}>
-      <ChartContainer config={card.config} className="min-h-[260px] w-full">
+      <ChartContainer
+        config={card.config}
+        className={`${VISUALIZATION_CHART_THEME.chartContainerClassName} ${VISUALIZATION_CHART_THEME.guideCursorClassName}`}
+      >
         <LineChart data={card.rows}>
           <CartesianGrid vertical={false} stroke={VISUALIZATION_CHART_THEME.grid} />
           <XAxis
@@ -32,6 +35,11 @@ export function LineChartCard({ card }: LineChartCardProps) {
             tickLine={{ stroke: VISUALIZATION_CHART_THEME.axis }}
           />
           <ChartTooltip
+            cursor={{
+              stroke: VISUALIZATION_CHART_THEME.cursorStroke,
+              strokeWidth: 1,
+              strokeDasharray: "3 3",
+            }}
             content={<ChartTooltipContent className={VISUALIZATION_CHART_THEME.tooltipClassName} />}
           />
           {card.seriesKeys.length > 1 ? <ChartLegend content={<ChartLegendContent />} /> : null}

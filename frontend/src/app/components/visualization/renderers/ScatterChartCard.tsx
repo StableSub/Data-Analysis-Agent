@@ -13,7 +13,10 @@ export function ScatterChartCard({ card }: ScatterChartCardProps) {
 
   return (
     <div className={VISUALIZATION_CHART_THEME.cardClassName}>
-      <ChartContainer config={card.config} className="min-h-[260px] w-full">
+      <ChartContainer
+        config={card.config}
+        className={`${VISUALIZATION_CHART_THEME.chartContainerClassName} ${VISUALIZATION_CHART_THEME.guideCursorClassName}`}
+      >
         <ScatterChart>
           <CartesianGrid stroke={VISUALIZATION_CHART_THEME.grid} />
           <XAxis
@@ -31,6 +34,11 @@ export function ScatterChartCard({ card }: ScatterChartCardProps) {
             tickLine={{ stroke: VISUALIZATION_CHART_THEME.axis }}
           />
           <ChartTooltip
+            cursor={{
+              stroke: VISUALIZATION_CHART_THEME.cursorStroke,
+              strokeWidth: 1,
+              strokeDasharray: "3 3",
+            }}
             content={<ChartTooltipContent className={VISUALIZATION_CHART_THEME.tooltipClassName} />}
           />
           <Scatter data={card.rows} fill={fill} />
