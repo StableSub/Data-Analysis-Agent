@@ -133,6 +133,7 @@ def execute_visualization_plan(
                 "x_key": plan.x_key,
                 "y_key": plan.y_key,
             },
+            "charts": [],
             "artifact": {
                 "mime_type": "image/png",
                 "image_base64": image_base64,
@@ -222,20 +223,22 @@ def _build_python_code(
         "import matplotlib\n"
         "matplotlib.use('Agg')\n"
         "import matplotlib.pyplot as plt\n\n"
+        "plt.style.use('default')\n"
         f"dataset_path = Path({dataset_path!r})\n"
         f"output_path = Path(__file__).resolve().parent / {output_filename!r}\n"
         f"max_points = {max_points}\n\n"
         "df = pd.read_csv(dataset_path)\n"
-        "plt.figure(figsize=(8, 5))\n"
+        "fig, ax = plt.subplots(figsize=(8, 5), facecolor='white')\n"
+        "ax.set_facecolor('white')\n"
     )
 
     if chart_type == "scatter":
         body = (
             f"data = df[[{x_key!r}, {y_key!r}]].dropna().head(max_points)\n"
-            f"plt.scatter(data[{x_key!r}], data[{y_key!r}], alpha=0.7, s=25)\n"
-            f"plt.xlabel({x_key!r})\n"
-            f"plt.ylabel({y_key!r})\n"
-            f"plt.title({f'Scatter: {x_key} vs {y_key}'!r})\n"
+            f"ax.scatter(data[{x_key!r}], data[{y_key!r}], alpha=0.7, s=25, color='#2563EB')\n"
+            f"ax.set_xlabel({x_key!r})\n"
+            f"ax.set_ylabel({y_key!r})\n"
+            f"ax.set_title({f'Scatter: {x_key} vs {y_key}'!r})\n"
         )
     elif chart_type == "line":
         if x_is_datetime:
@@ -243,36 +246,36 @@ def _build_python_code(
                 f"data = df[[{x_key!r}, {y_key!r}]].dropna().copy()\n"
                 f"data[{x_key!r}] = pd.to_datetime(data[{x_key!r}], errors='coerce')\n"
                 f"data = data.dropna().sort_values({x_key!r}).head(max_points)\n"
-                f"plt.plot(data[{x_key!r}], data[{y_key!r}], linewidth=1.8)\n"
+                f"ax.plot(data[{x_key!r}], data[{y_key!r}], linewidth=1.8, color='#2563EB')\n"
             )
         else:
             body = (
                 f"data = df[[{x_key!r}, {y_key!r}]].dropna().head(max_points)\n"
-                f"plt.plot(data[{x_key!r}], data[{y_key!r}], linewidth=1.8)\n"
+                f"ax.plot(data[{x_key!r}], data[{y_key!r}], linewidth=1.8, color='#2563EB')\n"
             )
         body += (
-            f"plt.xlabel({x_key!r})\n"
-            f"plt.ylabel({y_key!r})\n"
-            f"plt.title({f'Line: {x_key} vs {y_key}'!r})\n"
+            f"ax.set_xlabel({x_key!r})\n"
+            f"ax.set_ylabel({y_key!r})\n"
+            f"ax.set_title({f'Line: {x_key} vs {y_key}'!r})\n"
         )
     elif chart_type == "hist":
         body = (
             f"series = df[{x_key!r}].dropna().head(max_points)\n"
-            "plt.hist(series, bins=20, edgecolor='white')\n"
-            f"plt.xlabel({x_key!r})\n"
-            "plt.ylabel('count')\n"
-            f"plt.title({f'Histogram: {x_key}'!r})\n"
+            "ax.hist(series, bins=20, edgecolor='white', color='#2563EB')\n"
+            f"ax.set_xlabel({x_key!r})\n"
+            "ax.set_ylabel('count')\n"
+            f"ax.set_title({f'Histogram: {x_key}'!r})\n"
         )
     elif chart_type == "bar":
         body = (
             f"data = df[[{x_key!r}, {y_key!r}]].dropna().copy()\n"
             f"data[{x_key!r}] = data[{x_key!r}].astype(str)\n"
             f"grouped = data.groupby({x_key!r}, as_index=False)[{y_key!r}].mean().head(20)\n"
-            f"plt.bar(grouped[{x_key!r}], grouped[{y_key!r}])\n"
-            f"plt.xlabel({x_key!r})\n"
-            f"plt.ylabel({y_key!r})\n"
-            f"plt.title({f'Bar(mean): {x_key} vs {y_key}'!r})\n"
-            "plt.xticks(rotation=45, ha='right')\n"
+            f"ax.bar(grouped[{x_key!r}], grouped[{y_key!r}], color='#2563EB')\n"
+            f"ax.set_xlabel({x_key!r})\n"
+            f"ax.set_ylabel({y_key!r})\n"
+            f"ax.set_title({f'Bar(mean): {x_key} vs {y_key}'!r})\n"
+            "ax.tick_params(axis='x', rotation=45)\n"
         )
     else:
         if x_key:
@@ -286,21 +289,28 @@ def _build_python_code(
                 f"    groups.append(group[{y_key!r}].values)\n"
                 "labels = labels[:20]\n"
                 "groups = groups[:20]\n"
-                "plt.boxplot(groups, labels=labels, showfliers=True)\n"
-                "plt.xticks(rotation=45, ha='right')\n"
-                f"plt.ylabel({y_key!r})\n"
-                f"plt.title({f'Boxplot: {y_key} by {x_key}'!r})\n"
+                "ax.boxplot(groups, labels=labels, showfliers=True)\n"
+                "ax.tick_params(axis='x', rotation=45)\n"
+                f"ax.set_ylabel({y_key!r})\n"
+                f"ax.set_title({f'Boxplot: {y_key} by {x_key}'!r})\n"
             )
         else:
             body = (
                 f"series = df[{y_key!r}].dropna().head(max_points)\n"
-                "plt.boxplot(series.values, showfliers=True)\n"
-                f"plt.ylabel({y_key!r})\n"
-                f"plt.title({f'Boxplot: {y_key}'!r})\n"
+                "ax.boxplot(series.values, showfliers=True)\n"
+                f"ax.set_ylabel({y_key!r})\n"
+                f"ax.set_title({f'Boxplot: {y_key}'!r})\n"
             )
 
     footer = (
+        "fig.patch.set_facecolor('white')\n"
+        "ax.set_facecolor('white')\n"
+        "ax.tick_params(colors='#111827')\n"
+        "ax.xaxis.label.set_color('#111827')\n"
+        "ax.yaxis.label.set_color('#111827')\n"
+        "ax.title.set_color('#111827')\n"
+        "ax.grid(True, color='#E5E7EB', linewidth=0.8, alpha=0.8)\n"
         "plt.tight_layout()\n"
-        "plt.savefig(output_path, dpi=150)\n"
+        "plt.savefig(output_path, dpi=150, facecolor='white', edgecolor='white', transparent=False)\n"
     )
     return header + body + footer

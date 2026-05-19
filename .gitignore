@@ -43,6 +43,7 @@ backend/tests/*
 !backend/tests/test_preprocess_plan_contract.py
 !backend/tests/test_preprocess_workflow_error_handling.py
 !backend/tests/test_visualization_result_contract.py
+!backend/tests/test_visualization_output_contract.py
 backend/tests/**/__pycache__/
 backend/tests/**/*.py[cod]
 

@@ -155,6 +155,7 @@ class VisualizationService:
             "summary": chart_summary,
             "chart": chart_data,
             "chart_data": chart_data,
+            "charts": [chart_data] if chart_data is not None else [],
             "fallback_table": fallback_table,
         }
 
