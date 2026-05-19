@@ -9,6 +9,7 @@ chardet
 python-dotenv
 langchain
 langchain-core
+langchain-openai
 langgraph
 langgraph-checkpoint-sqlite
 langchain-tavily
