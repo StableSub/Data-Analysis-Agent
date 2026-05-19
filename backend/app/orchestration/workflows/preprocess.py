@@ -6,6 +6,7 @@ from typing import Any, Dict
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
+from pydantic import ValidationError
 
 from backend.app.core.trace_logging import set_trace_stage
 from backend.app.modules.planner.service import (
@@ -22,6 +23,32 @@ from backend.app.modules.preprocess.planner import (
 from backend.app.modules.eda.service import EDAService
 from backend.app.modules.preprocess.service import PreprocessService
 from backend.app.orchestration.state import PreprocessGraphState
+
+
+def _build_preprocess_plan_failed_output(exc: ValidationError) -> dict[str, Any]:
+    message = "전처리 계획 형식이 올바르지 않습니다."
+    return {
+        "preprocess_result": {
+            "status": "failed",
+            "summary": message,
+            "applied_ops_count": 0,
+            "error": f"invalid preprocess plan: {exc}",
+            "error_stage": "preprocess_plan",
+        },
+        "output": {
+            "type": "preprocess_failed",
+            "content": message,
+        },
+        "pending_approval": {},
+        "approved_plan": {},
+    }
+
+
+def _route_after_preprocess_planner(state: PreprocessGraphState | dict[str, Any]) -> str:
+    result = state.get("preprocess_result") or {}
+    if result.get("status") == "failed":
+        return "failed"
+    return "approval"
 
 
 def build_preprocess_workflow(
@@ -72,14 +99,19 @@ def build_preprocess_workflow(
                 else []
             )
 
-        plan = build_preprocess_plan(
-            user_input=str(state.get("user_input", "")),
-            source_id=str(state.get("source_id") or ""),
-            dataset_profile=dataset_profile,
-            revision_request=state.get("revision_request"),
-            model_id=state.get("model_id"),
-            default_model=default_model,
-        )
+        try:
+            plan = build_preprocess_plan(
+                user_input=str(state.get("user_input", "")),
+                source_id=str(state.get("source_id") or ""),
+                dataset_profile=dataset_profile,
+                revision_request=state.get("revision_request"),
+                model_id=state.get("model_id"),
+                default_model=default_model,
+            )
+        except ValidationError as exc:
+            failed = _build_preprocess_plan_failed_output(exc)
+            failed["dataset_profile"] = dataset_profile
+            return failed
         return {
             "dataset_profile": dataset_profile,
             "preprocess_plan": plan.model_dump(),
@@ -170,7 +202,10 @@ def build_preprocess_workflow(
             }
         }
 
-    def cancel_node(_: PreprocessGraphState) -> Dict[str, Any]:
+    def cancel_node(state: PreprocessGraphState) -> Dict[str, Any]:
+        return {}
+
+    def failed_node(state: PreprocessGraphState) -> Dict[str, Any]:
         return {}
 
     graph = StateGraph(PreprocessGraphState)
@@ -181,6 +216,7 @@ def build_preprocess_workflow(
     graph.add_node("executor", executor_node)
     graph.add_node("skip", skip_node)
     graph.add_node("cancel", cancel_node)
+    graph.add_node("failed", failed_node)
     graph.add_edge(START, "ingestion_and_profile")
     graph.add_edge("ingestion_and_profile", "preprocess_decision")
     graph.add_conditional_edges(
@@ -191,7 +227,14 @@ def build_preprocess_workflow(
             "skip_preprocess": "skip",
         },
     )
-    graph.add_edge("planner", "approval_gate")
+    graph.add_conditional_edges(
+        "planner",
+        _route_after_preprocess_planner,
+        {
+            "approval": "approval_gate",
+            "failed": "failed",
+        },
+    )
     graph.add_conditional_edges(
         "approval_gate",
         route_after_approval,
@@ -204,4 +247,5 @@ def build_preprocess_workflow(
     graph.add_edge("executor", END)
     graph.add_edge("skip", END)
     graph.add_edge("cancel", END)
+    graph.add_edge("failed", END)
     return graph.compile()

@@ -109,7 +109,7 @@
 
 - `ingestion_and_profile`: target source id의 dataset profile을 만든다.
 - `preprocess_decision`: 질문과 profile로 preprocess 필요 여부를 판단한다.
-- `planner`: preprocess plan/review payload를 만든다.
+- `planner`: preprocess plan/review payload를 만들고, plan validation 실패 시 `preprocess_result.status="failed"`를 만든다.
 - `approval_gate`: `interrupt(payload)`로 approve/revise/cancel 결정을 기다린다.
 - `executor`: 승인된 plan을 적용하고 `preprocess_result`를 만든다.
 - `skip`: preprocess가 필요 없을 때 `status="skipped"` 결과를 만든다.
@@ -126,7 +126,7 @@
 
 - `START` → `ingestion_and_profile` → `preprocess_decision`.
 - decision `run_preprocess` → `planner`, `skip_preprocess` → `skip`.
-- planner → approval gate.
+- planner → approval gate. plan validation 실패 시 `failed` node를 거쳐 END로 종료된다.
 - approval `approve` → `executor`, `revise` → `planner`, `cancel` → `cancel`.
 
 ## RAG workflow: `backend/app/orchestration/workflows/rag.py`

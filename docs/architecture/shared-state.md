@@ -156,6 +156,7 @@
   - `data_qa`
   - `report_answer`
   - `planning_failed`
+  - `preprocess_failed`
   - `analysis_failed`
   - `report_failed`
   - `cancelled`

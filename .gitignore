@@ -39,6 +39,9 @@ backend/tests/*
 !backend/tests/test_architecture_docs.py
 !backend/tests/test_docs_harness.py
 !backend/tests/test_orchestration_evidence_contract.py
+!backend/tests/test_planner_route_accuracy.py
+!backend/tests/test_preprocess_plan_contract.py
+!backend/tests/test_preprocess_workflow_error_handling.py
 backend/tests/**/__pycache__/
 backend/tests/**/*.py[cod]
 

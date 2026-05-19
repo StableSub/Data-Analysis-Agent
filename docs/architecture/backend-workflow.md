@@ -145,6 +145,7 @@ START
 
 - profile을 만들고 preprocess 필요 여부를 판단한다.
 - 필요하면 plan을 만들고 `pending_approval.stage="preprocess"`, `kind="plan_review"`로 interrupt를 건다.
+- plan validation 실패면 `preprocess_result.status="failed"`와 `output.type="preprocess_failed"`로 종료한다.
 - approve면 plan을 적용하고 `preprocess_result`를 만든다.
 - skip이면 `preprocess_result.status="skipped"`를 반환한다.
 - cancel이면 output type `cancelled`로 종료된다.

@@ -18,7 +18,16 @@ PROMPTS = PromptRegistry(
             "지원 연산은 drop_missing, impute, drop_columns, rename_columns, scale, derived_column, parse_datetime, outlier, encode_categorical다. "
             "dataset_profile에 preprocess_recommendations가 있으면 우선 참고하되, 사용자 요청과 데이터 상태에 맞게 조정하라. "
             "전처리가 불필요하면 operations는 빈 배열로 반환하라. "
-            "operations는 op+파라미터로 구성하며 "
+            "operation별 필수 필드는 다음과 같다. "
+            "drop_missing: op, columns, how(any/all). "
+            "impute: op, columns, method(mean/median/mode/value), value. "
+            "drop_columns: op, columns. "
+            "rename_columns: op, rename_from, rename_to. "
+            "scale: op, columns, method(standardize/normalize); 판단이 어렵다면 method는 standardize를 사용하라. "
+            "derived_column: op, name, source_columns, transform_type(log1p/sum/difference/ratio), params. "
+            "parse_datetime: op, columns, format. "
+            "outlier: op, columns, method(zscore/iqr), strategy(drop/clip). "
+            "encode_categorical: op, columns, method(one_hot/label). "
             "planner_comment에는 판단 근거를 1~2문장으로 남겨라."
         ),
         "decision.system": (
