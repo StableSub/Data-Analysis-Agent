@@ -1,12 +1,32 @@
 import uuid
-from typing import Any, AsyncIterator, Dict, Optional
+from datetime import datetime, timezone
+from typing import Any, AsyncIterator, Dict, Optional, cast
 
 from ...core.trace_logging import log_trace, trace_context
 from ...orchestration.client import AgentClient
 from ..datasets.repository import DatasetRepository
-from .models import ChatSession
+from .models import ChatMessage, ChatSession
 from .repository import ChatRepository
-from .schemas import ChatHistoryResponse, PendingApprovalResponse
+from .schemas import ChatHistoryResponse, ChatSessionListResponse, ChatSessionSummary, PendingApprovalResponse
+
+
+def _datetime_min_utc() -> datetime:
+    return datetime.min.replace(tzinfo=timezone.utc)
+
+
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _preview(message: ChatMessage | None) -> str | None:
+    if message is None:
+        return None
+    content = message.content.strip()
+    if len(content) <= 80:
+        return content
+    return f"{content[:77]}..."
 
 
 class ChatService:
@@ -219,6 +239,11 @@ class ChatService:
         messages = self.repository.get_history(session_id)
         return ChatHistoryResponse(session_id=session_id, messages=messages)
 
+    def list_sessions(self, skip: int = 0, limit: int = 20) -> ChatSessionListResponse:
+        summaries = [self._summarize_session(session) for session in self.repository.list_sessions()]
+        summaries.sort(key=lambda item: item.updated_at or _datetime_min_utc(), reverse=True)
+        return ChatSessionListResponse(total=len(summaries), items=summaries[skip : skip + limit])
+
     def delete_session(self, session_id: int) -> bool:
         return self.repository.delete_session(session_id)
 
@@ -230,6 +255,21 @@ class ChatService:
         if session is None:
             session = self.repository.create_session(title=title[:60])
         return session
+
+    @staticmethod
+    def _summarize_session(session: ChatSession) -> ChatSessionSummary:
+        messages = sorted(session.messages, key=lambda message: (message.created_at, message.id))
+        last_message = messages[-1] if messages else None
+        first_user_message = next((message for message in messages if message.role == "user"), None)
+        updated_at = _as_utc(last_message.created_at) if last_message else None
+        title = (session.title or "").strip() or _preview(first_user_message) or "새 채팅"
+        return ChatSessionSummary(
+            id=cast(int, session.id),
+            title=title,
+            updated_at=updated_at,
+            last_message_preview=_preview(last_message),
+            message_count=len(messages),
+        )
 
     @staticmethod
     def _extract_done_error_fields(

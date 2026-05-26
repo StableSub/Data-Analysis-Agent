@@ -36,6 +36,9 @@ class ChatRepository:
             .all()
         )
 
+    def list_sessions(self) -> List[ChatSession]:
+        return self.db.query(ChatSession).all()
+
     def delete_session(self, session_id: int) -> bool:
         session = self.get_session(session_id)
         if not session:

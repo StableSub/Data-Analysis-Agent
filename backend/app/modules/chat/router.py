@@ -1,7 +1,7 @@
 import json
 from typing import Any, AsyncIterator, Dict
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 
 from ...core.trace_logging import get_trace_context
@@ -9,6 +9,7 @@ from .dependencies import get_chat_service
 from .schemas import (
     ChatHistoryResponse,
     ChatRequest,
+    ChatSessionListResponse,
     PendingApprovalResponse,
     ResumeRunRequest,
 )
@@ -67,6 +68,15 @@ async def ask_chat_stream(
             trace_id=request.trace_id,
         )
     )
+
+
+@router.get("/", response_model=ChatSessionListResponse)
+async def list_chats(
+    skip: int = Query(0, ge=0, description="건너뛸 개수 (offset)"),
+    limit: int = Query(20, ge=1, le=100, description="가져올 개수 (page size)"),
+    chat_service: ChatService = Depends(get_chat_service),
+):
+    return chat_service.list_sessions(skip=skip, limit=limit)
 
 @router.post("/{session_id}/runs/{run_id}/resume")
 async def resume_chat_run(

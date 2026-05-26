@@ -38,6 +38,8 @@ backend/tests/*
 !backend/tests/
 !backend/tests/test_architecture_docs.py
 !backend/tests/test_docs_harness.py
+!backend/tests/test_chat_session_list_contract.py
+!backend/tests/test_dataset_list_contract.py
 !backend/tests/test_orchestration_evidence_contract.py
 !backend/tests/test_planner_route_accuracy.py
 !backend/tests/test_preprocess_plan_contract.py

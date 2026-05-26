@@ -24,10 +24,11 @@
 ## 상태와 실행 흐름
 
 - `frontend/src/app/hooks/useAnalysisPipeline.ts`
-  - dataset upload, selected source, chat run, SSE stream, approval resume, 결과 상태를 관리한다.
+  - dataset upload, selected source, server dataset bootstrap, chat run, SSE stream, approval resume, 결과 상태를 관리한다.
   - backend workflow output shape가 바뀌면 이 파일을 먼저 확인한다.
 - `frontend/src/app/hooks/useWorkbenchSessionStore.ts`
   - workbench session을 localStorage에 저장하고 복원한다.
+  - Workbench 초기 진입 시 `GET /chats/` 결과를 local session 목록과 병합한다.
 
 ## 백엔드 API 연결
 
@@ -35,6 +36,7 @@
   - frontend API client와 request/response type이 모여 있다.
   - 기본 API base URL은 `http://localhost:8000`이며 `VITE_API_BASE_URL`로 override할 수 있다.
   - 현재 backend 시각화 경로는 `/visualization`이 아니라 `/vizualization`이다.
+  - Workbench 초기 복원은 `GET /datasets/`와 `GET /chats/`를 함께 호출한다.
 
 ## UI 구성 위치
 

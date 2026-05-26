@@ -143,9 +143,13 @@ class DatasetService:
         return self.repository.create(dataset)
 
     def list_datasets(self, skip: int = 0, limit: int = 20) -> tuple[List[Dataset], int]:
-        items = self.repository.list_page(skip=skip, limit=limit)
-        total = self.repository.count_all()
-        return items, total
+        available_items = [
+            dataset
+            for dataset in self.repository.list_all()
+            if Path(str(dataset.storage_path)).is_file()
+        ]
+        total = len(available_items)
+        return available_items[skip : skip + limit], total
 
     def get_dataset_detail(self, source_id: str) -> Optional[Dataset]:
         return self.repository.get_by_source_id(source_id)

@@ -26,6 +26,9 @@ class DatasetRepository:
             .all()
         )
 
+    def list_all(self) -> List[Dataset]:
+        return self.db.query(Dataset).order_by(Dataset.id.desc()).all()
+
     def count_all(self) -> int:
         return self.db.query(Dataset).count()
 

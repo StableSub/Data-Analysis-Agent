@@ -48,3 +48,16 @@ class PendingApprovalResponse(BaseModel):
 class ChatHistoryResponse(BaseModel):
     session_id: int
     messages: List[ChatMessage]
+
+
+class ChatSessionSummary(BaseModel):
+    id: int
+    title: str
+    updated_at: datetime | None = None
+    last_message_preview: str | None = None
+    message_count: int
+
+
+class ChatSessionListResponse(BaseModel):
+    total: int
+    items: List[ChatSessionSummary]

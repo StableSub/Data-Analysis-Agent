@@ -130,6 +130,19 @@ export interface ChatHistoryResponse {
   messages: ChatHistoryMessage[];
 }
 
+export interface ChatSessionSummary {
+  id: number;
+  title: string;
+  updated_at: string | null;
+  last_message_preview: string | null;
+  message_count: number;
+}
+
+export interface ChatSessionListResponse {
+  total: number;
+  items: ChatSessionSummary[];
+}
+
 export interface RagChunk {
   source_id: string;
   chunk_id: number;
@@ -312,6 +325,18 @@ export function deleteDataset(sourceId: string): Promise<void> {
 /** GET /chats/{session_id}/history */
 export function getChatHistory(sessionId: number): Promise<ChatHistoryResponse> {
   return apiRequest<ChatHistoryResponse>(`/chats/${sessionId}/history`);
+}
+
+/** GET /chats/ */
+export function listChatSessions(
+  skip = 0,
+  limit = 20,
+): Promise<ChatSessionListResponse> {
+  const params = new URLSearchParams({
+    skip: String(skip),
+    limit: String(limit),
+  });
+  return apiRequest<ChatSessionListResponse>(`/chats/?${params.toString()}`);
 }
 
 /** GET /chats/runs/{run_id}/pending-approval */

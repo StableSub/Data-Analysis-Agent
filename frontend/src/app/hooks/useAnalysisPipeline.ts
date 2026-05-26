@@ -179,6 +179,7 @@ export interface UseAnalysisPipelineReturn {
   handleEditInstruction: (text: string) => void;
   handleRetry: () => void;
   retrySelectedPreEda: () => Promise<"ready" | "unavailable" | "noop">;
+  bootstrapServerDatasets: (datasets: DatasetResponse[]) => PipelineSessionContext;
   loadSelectedPreEdaDistribution: (column: string) => Promise<void>;
   applyRecommendedOperation: (
     operation: EdaRecommendedOperation,
@@ -953,6 +954,68 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
       return next;
     });
   }, []);
+
+  const mapServerDataset = useCallback((dataset: DatasetResponse): UploadedDatasetMeta => ({
+    datasetId: dataset.id,
+    sourceId: dataset.source_id,
+    fileName: dataset.filename,
+    uploadedAt: new Date().toISOString(),
+    preEdaProfile: null,
+    preEdaStatus: "unavailable",
+    preEdaWarning: null,
+    recommendationMode: null,
+    preprocessApproved: false,
+  }), []);
+
+  const bootstrapServerDatasets = useCallback((datasets: DatasetResponse[]): PipelineSessionContext => {
+    const serverDatasets = datasets.map((dataset) => mapServerDataset(dataset));
+    const selectedServerSourceId =
+      selectedSourceId && serverDatasets.some((dataset) => dataset.sourceId === selectedSourceId)
+        ? selectedSourceId
+        : serverDatasets[0]?.sourceId ?? null;
+    const selectedServerDataset =
+      serverDatasets.find((dataset) => dataset.sourceId === selectedServerSourceId) ?? null;
+    const nextStateHint: PipelineSessionStateHint =
+      selectedServerSourceId
+        ? "ready"
+        : chatHistory.length > 0 || latestVisualizationResult || chatResponse
+          ? "success"
+          : "empty";
+    const nextContext: PipelineSessionContext = {
+      backendSessionId: sessionId,
+      runId,
+      traceId,
+      fileName: selectedServerDataset?.fileName ?? "",
+      uploadedDatasets: serverDatasets,
+      selectedSourceId: selectedServerSourceId,
+      chatHistory,
+      latestAssistantAnswer: chatResponse?.answer ?? null,
+      latestVisualizationResult,
+      pendingApproval,
+      stateHint: nextStateHint,
+      errorMessage: nextStateHint === "error" ? errorMessage : null,
+    };
+
+    setUploadedDatasets(serverDatasets);
+    setSelectedSourceId(selectedServerSourceId);
+    setFileName(selectedServerDataset?.fileName ?? "");
+    if (state === "empty" && selectedServerSourceId) {
+      setState("ready");
+    }
+    return normalizeRestoredSessionContext(nextContext);
+  }, [
+    chatHistory,
+    chatResponse,
+    errorMessage,
+    latestVisualizationResult,
+    mapServerDataset,
+    pendingApproval,
+    runId,
+    selectedSourceId,
+    sessionId,
+    state,
+    traceId,
+  ]);
 
   const mergePreEdaDistribution = useCallback(
     (
@@ -2719,6 +2782,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
     handleEditInstruction,
     handleRetry,
     retrySelectedPreEda,
+    bootstrapServerDatasets,
     loadSelectedPreEdaDistribution,
     applyRecommendedOperation,
     handleSend,

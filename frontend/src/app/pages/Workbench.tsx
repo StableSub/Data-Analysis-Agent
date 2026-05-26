@@ -31,6 +31,7 @@ import {
   fetchPendingApproval,
   getChatHistory,
   isApiErrorStatus,
+  listChatSessions,
   listDatasets,
   type PendingApprovalPayload,
 } from "../../lib/api";
@@ -176,6 +177,7 @@ export default function Workbench() {
     handleSend,
     applyRecommendedOperation,
     loadSelectedPreEdaDistribution,
+    bootstrapServerDatasets,
     captureSessionContext,
     restoreSessionContext,
     clearForNewDraft,
@@ -189,6 +191,7 @@ export default function Workbench() {
     updateSession,
     updateActiveSession,
     markSessionActivity,
+    mergeServerSessions,
   } = useWorkbenchSessionStore();
 
   const activeSession = sessions.find((item) => item.id === activeSessionId) ?? null;
@@ -409,12 +412,9 @@ export default function Workbench() {
     [],
   );
 
-  const restoreSessionById = useCallback(
-    async (targetSessionId: string) => {
-      const targetSession = sessions.find((item) => item.id === targetSessionId);
-      if (!targetSession) {
-        return;
-      }
+  const restoreSessionItem = useCallback(
+    async (targetSession: WorkbenchSessionItem) => {
+      const targetSessionId = targetSession.id;
       const requestId = ++restoreRequestSeqRef.current;
       const isStaleRestoreRequest = () =>
         restoreRequestSeqRef.current !== requestId || expectedSessionIdRef.current !== targetSessionId;
@@ -521,7 +521,18 @@ export default function Workbench() {
       }
       restoreSessionContext(nextContext);
     },
-    [sessions, reconcileSessionDatasets, updateSession, restoreSessionContext],
+    [reconcileSessionDatasets, updateSession, restoreSessionContext],
+  );
+
+  const restoreSessionById = useCallback(
+    async (targetSessionId: string) => {
+      const targetSession = sessions.find((item) => item.id === targetSessionId);
+      if (!targetSession) {
+        return;
+      }
+      await restoreSessionItem(targetSession);
+    },
+    [sessions, restoreSessionItem],
   );
 
   const handleNewChat = useCallback(() => {
@@ -623,24 +634,66 @@ export default function Workbench() {
     if (initializedRef.current) {
       return;
     }
-    if (sessions.length === 0) {
-      markExpectedSession(null);
-      clearForNewDraft();
-      initializedRef.current = true;
-      return;
-    }
 
-    const initialSessionId = activeSessionId ?? sessions[0]?.id ?? null;
-    if (!initialSessionId) {
-      return;
-    }
-    markExpectedSession(initialSessionId);
-    if (!activeSessionId) {
-      selectSession(initialSessionId);
-    }
-    void restoreSessionById(initialSessionId);
-    initializedRef.current = true;
-  }, [sessions, activeSessionId, clearForNewDraft, selectSession, restoreSessionById, markExpectedSession]);
+    let cancelled = false;
+    void (async () => {
+      let baseContext = captureSessionContext();
+      let nextSessions = sessions;
+      let nextActiveSessionId = activeSessionId;
+
+      const [datasetsResult, chatSessionsResult] = await Promise.allSettled([
+        listDatasets(0, 100),
+        listChatSessions(0, 100),
+      ]);
+      if (cancelled) {
+        return;
+      }
+      initializedRef.current = true;
+
+      if (datasetsResult.status === "fulfilled") {
+        baseContext = bootstrapServerDatasets(datasetsResult.value.items);
+      }
+
+      if (chatSessionsResult.status === "fulfilled") {
+        const merged = mergeServerSessions(chatSessionsResult.value.items, baseContext);
+        nextSessions = merged.sessions;
+        nextActiveSessionId = merged.activeSessionId;
+      }
+
+      const initialSessionId = nextActiveSessionId ?? nextSessions[0]?.id ?? null;
+      const initialSession = initialSessionId
+        ? nextSessions.find((item) => item.id === initialSessionId) ?? null
+        : null;
+
+      if (!initialSession) {
+        markExpectedSession(null);
+        restoreSessionContext(baseContext);
+        initializedRef.current = true;
+        return;
+      }
+
+      markExpectedSession(initialSession.id);
+      if (activeSessionId !== initialSession.id) {
+        selectSession(initialSession.id);
+      }
+      await restoreSessionItem(initialSession);
+      initializedRef.current = true;
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    activeSessionId,
+    bootstrapServerDatasets,
+    captureSessionContext,
+    mergeServerSessions,
+    markExpectedSession,
+    restoreSessionContext,
+    restoreSessionItem,
+    selectSession,
+    sessions,
+  ]);
 
   useEffect(() => {
     if (!initializedRef.current || !activeSessionId) {

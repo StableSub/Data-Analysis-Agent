@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import type { PipelineSessionContext } from "./useAnalysisPipeline";
+import type { ChatSessionSummary } from "../../lib/api";
 
 const STORAGE_KEY = "genui-workbench-sessions-v1";
 
@@ -21,6 +22,11 @@ interface SessionPatch {
   title?: string;
   backendSessionId?: number | null;
   context?: PipelineSessionContext;
+}
+
+interface MergeServerSessionsResult {
+  sessions: WorkbenchSessionItem[];
+  activeSessionId: string | null;
 }
 
 function createSessionId(): string {
@@ -134,6 +140,29 @@ function sortByRecent(items: WorkbenchSessionItem[]): WorkbenchSessionItem[] {
   });
 }
 
+function createServerSessionItem(
+  summary: ChatSessionSummary,
+  baseContext: PipelineSessionContext,
+): WorkbenchSessionItem {
+  const updatedAt = summary.updated_at ?? new Date().toISOString();
+  return {
+    id: `server-${summary.id}`,
+    title: summary.title || summary.last_message_preview || "새 채팅",
+    backendSessionId: summary.id,
+    updatedAt,
+    activityAt: updatedAt,
+    context: {
+      ...baseContext,
+      backendSessionId: summary.id,
+      chatHistory: [],
+      latestAssistantAnswer: null,
+      pendingApproval: null,
+      stateHint: summary.message_count > 0 ? "success" : baseContext.stateHint,
+      errorMessage: null,
+    },
+  };
+}
+
 export function useWorkbenchSessionStore() {
   const initial = loadSessionStore();
   const [sessions, setSessions] = useState<WorkbenchSessionItem[]>(initial.sessions);
@@ -240,6 +269,60 @@ export function useWorkbenchSessionStore() {
     setActiveSessionId((prev) => (prev === sessionId ? null : prev));
   }, []);
 
+  const mergeServerSessions = useCallback(
+    (
+      serverSessions: ChatSessionSummary[],
+      baseContext: PipelineSessionContext,
+    ): MergeServerSessionsResult => {
+      const serverById = new Map(serverSessions.map((item) => [item.id, item]));
+      const existingBackendIds = new Set<number>();
+      const mergedExisting = sessions.map((item) => {
+        if (item.backendSessionId === null) {
+          return item;
+        }
+        const serverSession = serverById.get(item.backendSessionId);
+        if (!serverSession) {
+          return item;
+        }
+        existingBackendIds.add(item.backendSessionId);
+        const updatedAt = serverSession.updated_at ?? item.updatedAt;
+        return {
+          ...item,
+          title: serverSession.title || item.title,
+          updatedAt,
+          activityAt: updatedAt,
+          context: {
+            ...item.context,
+            backendSessionId: serverSession.id,
+            uploadedDatasets:
+              item.context.uploadedDatasets.length > 0
+                ? item.context.uploadedDatasets
+                : baseContext.uploadedDatasets,
+            selectedSourceId: item.context.selectedSourceId ?? baseContext.selectedSourceId,
+            fileName: item.context.fileName || baseContext.fileName,
+            stateHint:
+              item.context.chatHistory.length > 0 || serverSession.message_count > 0
+                ? "success"
+                : item.context.stateHint,
+          },
+        };
+      });
+      const newServerSessions = serverSessions
+        .filter((item) => !existingBackendIds.has(item.id))
+        .map((item) => createServerSessionItem(item, baseContext));
+      const nextSessions = sortByRecent([...mergedExisting, ...newServerSessions]);
+      const nextActiveSessionId =
+        activeSessionId && nextSessions.some((item) => item.id === activeSessionId)
+          ? activeSessionId
+          : nextSessions[0]?.id ?? null;
+
+      setSessions(nextSessions);
+      setActiveSessionId(nextActiveSessionId);
+      return { sessions: nextSessions, activeSessionId: nextActiveSessionId };
+    },
+    [activeSessionId, sessions],
+  );
+
   return {
     sessions,
     activeSessionId,
@@ -250,5 +333,6 @@ export function useWorkbenchSessionStore() {
     updateActiveSession,
     markSessionActivity,
     markActiveSessionActivity,
+    mergeServerSessions,
   };
 }

@@ -10,9 +10,9 @@
 | `backend/app/modules/chat/dependencies.py` | `ChatRepository`, `ChatService` dependency를 만든다. |
 | `backend/app/modules/chat/models.py` | `ChatSession`, `ChatMessage` SQLAlchemy model을 정의한다. |
 | `backend/app/modules/chat/repository.py` | chat session/message 생성, 조회, 삭제 repository다. |
-| `backend/app/modules/chat/router.py` | `APIRouter(prefix="/chats")`로 sync ask, SSE stream, resume, pending approval, history, delete route를 제공한다. |
-| `backend/app/modules/chat/schemas.py` | `ChatRequest`, `ChatResponse`, `ChatThoughtStep`, `PendingApproval`, `ResumeRunRequest`, history/approval response schema를 정의한다. |
-| `backend/app/modules/chat/service.py` | session 생성, user/assistant message 저장, `AgentClient` stream relay, final SSE payload packaging을 담당한다. |
+| `backend/app/modules/chat/router.py` | `APIRouter(prefix="/chats")`로 session list, SSE stream, resume, pending approval, history, delete route를 제공한다. |
+| `backend/app/modules/chat/schemas.py` | `ChatRequest`, `ChatResponse`, `ChatThoughtStep`, `PendingApproval`, `ResumeRunRequest`, session list/history/approval response schema를 정의한다. |
+| `backend/app/modules/chat/service.py` | session 목록 요약, session 생성, user/assistant message 저장, `AgentClient` stream relay, final SSE payload packaging을 담당한다. |
 
 ## `reports/` 파일 카탈로그
 
@@ -36,10 +36,10 @@
 
 ### `backend/app/modules/chat/router.py`
 
-- `POST /chats/`: streaming이 아닌 chat ask API다. 내부적으로 stream을 소비해 final response를 만든다.
+- `GET /chats/`: session summary 목록을 `updated_at` 역순으로 조회한다.
 - `POST /chats/stream`: SSE로 `session`, `thought`, `approval_required`, `chunk`, `done`, `error` event를 낸다.
 - `POST /chats/{session_id}/runs/{run_id}/resume`: approval interrupt 이후 approve/revise/cancel 결정을 resume한다.
-- `GET /chats/{session_id}/runs/{run_id}/pending-approval`: checkpointer snapshot에서 pending approval을 조회한다.
+- `GET /chats/runs/{run_id}/pending-approval`: checkpointer snapshot에서 pending approval을 조회한다.
 - `GET /chats/{session_id}/history`: session history를 조회한다.
 - `DELETE /chats/{session_id}`: session을 삭제한다.
 
@@ -53,7 +53,7 @@ FastAPI route와 SSE formatting을 담당한다. `ask_chat_stream()`과 `resume_
 ### 주요 function
 
 - `_format_sse(event, data)`: `event: ...\ndata: ...\n\n` 형태의 SSE chunk를 만든다.
-- `ask_chat(...)`: `ChatService.ask()`를 호출해 non-stream response를 반환한다.
+- `list_chats(...)`: `ChatService.list_sessions()`를 호출해 session summary 목록을 반환한다.
 - `ask_chat_stream(...)`: `ChatService.ask_stream()` event를 `StreamingResponse`로 감싼다.
 - `resume_chat_run(...)`: `ChatService.resume_run_stream()` event를 `StreamingResponse`로 감싼다.
 - `get_pending_approval(...)`, `get_history(...)`, `delete_chat(...)`: session/run 보조 API다.
@@ -71,7 +71,7 @@ FastAPI route와 SSE formatting을 담당한다. `ask_chat_stream()`과 `resume_
 
 ### 주요 method
 
-- `ask(...)`: `ask_stream()`을 내부 소비해 `ChatResponse`를 만든다. approval이 필요한 경우 answer 없이 pending approval을 포함한다.
+- `list_sessions(...)`: message timestamp 기준 session summary를 만들고 `updated_at` 역순으로 pagination한다.
 - `ask_stream(...)`: session 생성/조회, selected dataset resolve, user message 저장, run id 생성, `AgentClient.astream_with_trace()` 호출을 수행한다.
 - `resume_run_stream(...)`: 기존 run id에 대해 `Command(resume=...)` payload로 workflow를 재개한다.
 - `get_pending_approval(...)`: `AgentClient.get_pending_approval()` 결과를 response schema로 감싼다.

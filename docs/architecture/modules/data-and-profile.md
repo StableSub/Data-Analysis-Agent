@@ -38,7 +38,7 @@
 ### `backend/app/modules/datasets/router.py`
 
 - `POST /datasets/`: dataset file upload.
-- `GET /datasets/`: dataset list.
+- `GET /datasets/`: storage file이 존재하는 dataset list.
 - `GET /datasets/{dataset_id}`: dataset detail.
 - `DELETE /datasets/{source_id}`: source id 기준 dataset 삭제.
 - `GET /datasets/{source_id}/sample`: dataset sample rows 조회.
@@ -60,7 +60,7 @@
 
 ### 역할
 
-`datasets/service.py`는 dataset file의 저장 위치, 파일 읽기, DB metadata 생성을 담당한다.
+`datasets/service.py`는 dataset file의 저장 위치, 파일 읽기, DB metadata 생성을 담당한다. 목록 조회에서는 DB row가 있더라도 `storage_path` 파일이 없는 dataset은 제외한다.
 
 ### 주요 class/function
 
@@ -117,4 +117,5 @@
 - 관찰: `profiling/`은 router가 없는 support module이다. API 목록만 보고 backend 구조를 이해하면 이 계층의 중요도를 놓칠 수 있다.
 - 관찰: `EDAService`는 profile 계산, 통계, 분포, recommendation, AI insight까지 넓은 API 표면을 가진다. route별 정확한 입력/출력은 `backend/app/modules/eda/router.py`와 schema를 함께 확인해야 한다.
 - 리스크: dataset storage path, source id, DB row가 여러 module의 공통 전제다. upload/delete 동작을 변경하면 analysis, rag, preprocess, visualization, report 쪽 path resolution도 함께 확인해야 한다.
+- 리스크: dataset list pagination은 파일 존재 여부 필터링 이후 적용된다. 목록 UX나 API total 값을 바꾸면 누락 파일 처리 테스트도 함께 확인해야 한다.
 - 리스크: profile type inference가 analysis/preprocess/viz 추천에 영향을 주므로, dtype 추론 변경은 UI 표시만이 아니라 AI 계획 품질에도 영향을 줄 수 있다.
