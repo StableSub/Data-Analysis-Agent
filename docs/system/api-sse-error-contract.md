@@ -146,6 +146,7 @@ data: <json>
 ```
 
 - `answer`가 비어 있으면 backend가 `응답을 생성하지 못했습니다.`로 보정한다.
+- `output_type`은 `fast_dataset_answer`, `fast_common_analytics`, `data_qa`, `report_answer` 같은 terminal output type을 전달할 수 있다.
 - `visualization_result`는 status가 `generated`일 때만 포함될 수 있다.
 - `output`은 orchestration 최종 payload를 전달할 때만 포함된다.
 - `status`는 `ChatService`가 최종 payload에서 계산하는 terminal 상태다. 성공은 `success`, 근거 제한은 `limited`/`unanswerable`, 실패/취소는 `failed`/`cancelled`로 표현한다.

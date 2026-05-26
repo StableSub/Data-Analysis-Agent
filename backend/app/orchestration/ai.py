@@ -6,6 +6,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
 from ..core.ai import LLMGateway, PromptRegistry
+from ..modules.profiling.prompt_context import trim_merged_context_fast_path_fields
 
 PROMPTS = PromptRegistry(
     {
@@ -89,6 +90,7 @@ def answer_data_question(
     default_model: str,
 ) -> str:
     llm = LLMGateway(default_model=default_model)
+    prompt_merged_context = trim_merged_context_fast_path_fields(merged_context)
     result = llm.invoke(
         model_id=model_id,
         messages=[
@@ -98,7 +100,7 @@ def answer_data_question(
                     f"question:\n{user_input}\n\n"
                     f"evidence_package:\n{json.dumps(evidence_package, ensure_ascii=False)}\n\n"
                     f"answer_quality:\n{json.dumps(answer_quality, ensure_ascii=False)}\n\n"
-                    f"merged_context:\n{json.dumps(merged_context, ensure_ascii=False)}"
+                    f"merged_context:\n{json.dumps(prompt_merged_context, ensure_ascii=False)}"
                 )
             ),
         ],

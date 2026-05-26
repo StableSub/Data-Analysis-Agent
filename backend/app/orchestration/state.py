@@ -67,7 +67,20 @@ class DatasetContextPayload(TypedDict, total=False):
     group_key_columns: list[str]
     sample_rows: list[Dict[str, Any]]
     missing_rates: Dict[str, float]
+    column_aliases: Dict[str, list[str]]
+    column_value_samples: Dict[str, list[Any]]
     quality_summary: Dict[str, Any]
+
+
+class FastPathResultPayload(TypedDict, total=False):
+    status: Literal["handled", "skipped"]
+    kind: Literal["dataset_answer", "common_analytics"]
+    operation: str
+    metric: str
+    columns: list[str]
+    eligibility_score: float
+    blockers: list[str]
+    reason: str
 
 
 class GuidelineContextPayload(TypedDict, total=False):
@@ -276,6 +289,8 @@ class MainWorkflowState(AgentState, total=False):
     guideline_data_exists: bool
     guideline_result: GuidelineResultPayload
     insight: Dict[str, Any]
+
+    fast_path_result: FastPathResultPayload
 
     final_status: FinalStatus
 
