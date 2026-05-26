@@ -14,6 +14,7 @@ from ..analysis.schemas import (
     QuestionUnderstanding,
 )
 from ..profiling.schemas import DatasetContext
+from ..profiling.prompt_context import trim_fast_path_bulk_context_fields
 from ..profiling.service import DatasetContextService
 from .schemas import PlannerDecision, PlanningResult
 
@@ -202,7 +203,7 @@ class PlannerService:
                         f"user_input:\n{user_input.strip()}\n\n"
                         f"request_context:\n{str(request_context or '').strip()}\n\n"
                         f"source_id:\n{source_id}\n\n"
-                        f"dataset_context:\n{self._to_json(dataset_context.model_dump())}\n\n"
+                        f"dataset_context:\n{self._to_json(trim_fast_path_bulk_context_fields(dataset_context.model_dump()))}\n\n"
                         f"guideline_context:\n{self._to_json(dict(guideline_context or {}))}"
                     )
                 ),

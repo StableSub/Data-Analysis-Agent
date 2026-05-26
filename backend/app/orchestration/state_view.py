@@ -10,6 +10,8 @@ _DISPLAY_COPY = {
     "planning_fallback_rag": "관련 정보를 함께 확인합니다.",
     "planning_general": "질문에 바로 답변하고 있습니다.",
     "planning_dataset": "데이터 기반 흐름을 준비했습니다.",
+    "fast_path_answer": "바로 답변할 수 있는 요청입니다.",
+    "fast_path_skipped": "기존 분석 경로로 진행합니다.",
     "intent_visualization": "시각화를 준비하고 있습니다.",
     "intent_analysis": "계산을 준비하고 있습니다.",
     "intent_report": "리포트를 준비하고 있습니다.",
@@ -268,6 +270,30 @@ def collect_thought_steps(state: Dict[str, Any]) -> list[Dict[str, str]]:
                     phase="intent",
                     message="전처리 요청이 없어 전처리 생략 경로를 준비했습니다.",
                     display_message=_DISPLAY_COPY["intent_skip_preprocess"],
+                )
+            )
+
+    fast_path_result = state.get("fast_path_result")
+    if isinstance(fast_path_result, dict):
+        status = fast_path_result.get("status")
+        if status == "handled":
+            operation = fast_path_result.get("operation")
+            operation_text = operation if isinstance(operation, str) and operation else "dataset_answer"
+            steps.append(
+                make_thought_step(
+                    phase="chat_fast_path",
+                    message=f"chat fast path가 {operation_text} 요청을 처리했습니다.",
+                    display_message=_DISPLAY_COPY["fast_path_answer"],
+                )
+            )
+        elif status == "skipped":
+            reason = fast_path_result.get("reason")
+            reason_text = reason if isinstance(reason, str) and reason else "ineligible"
+            steps.append(
+                make_thought_step(
+                    phase="chat_fast_path",
+                    message=f"chat fast path를 건너뛰었습니다. (reason={reason_text})",
+                    display_message=_DISPLAY_COPY["fast_path_skipped"],
                 )
             )
 

@@ -29,9 +29,10 @@
 | 파일 | 역할 |
 |---|---|
 | `backend/app/modules/profiling/__init__.py` | profiling package marker다. |
+| `backend/app/modules/profiling/ai.py` | LLM으로 컬럼별 자연어 alias 사전을 생성한다. fast path 실행 시점에는 이 alias를 deterministic하게 조회한다. |
 | `backend/app/modules/profiling/dependencies.py` | `DatasetProfileService` dependency builder/getter를 제공한다. |
 | `backend/app/modules/profiling/schemas.py` | `ColumnProfile`, `DatasetProfile`, `ColumnProfileType` schema를 정의한다. |
-| `backend/app/modules/profiling/service.py` | `DatasetProfileService`가 컬럼 타입, 결측, 통계, identifier/group-key 후보를 계산한다. |
+| `backend/app/modules/profiling/service.py` | `DatasetProfileService`가 컬럼 타입, 결측, 통계, identifier/group-key 후보를 계산하고 `DatasetContextService`가 workflow용 context와 column alias cache를 만든다. |
 
 ## Public route 요약
 

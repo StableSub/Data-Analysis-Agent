@@ -83,12 +83,13 @@ FastAPI route와 SSE formatting을 담당한다. `ask_chat_stream()`과 `resume_
 - `thought`: `{phase, message, status}`.
 - `approval_required`: `{session_id, run_id, pending_approval, thought_steps}`.
 - `chunk`: `{delta}`.
-- `done`: `{answer, session_id, run_id, thought_steps, preprocess_result, visualization_result?, output_type?, output?}`.
+- `done`: `{answer, session_id, run_id, trace_id, thought_steps, preprocess_result, status, analysis_result?, visualization_result?, report_result?, output_type?, output?, evidence_package?, answer_quality?}`.
 
 ### 주의점
 
 - `done` payload에는 `preprocess_result` key가 항상 포함되며 값이 `None`일 수 있다.
-- `visualization_result`, `output_type`, `output`은 agent done event에 있을 때만 추가된다.
+- `output_type`은 `fast_dataset_answer`, `fast_common_analytics`, `data_qa`, `report_answer` 같은 terminal output type을 전달할 수 있다.
+- `analysis_result`, `visualization_result`, `report_result`, `output`, `evidence_package`, `answer_quality`는 agent done event에 있을 때만 추가된다.
 - assistant message 저장은 stream이 끝난 뒤 final answer 기준으로 수행된다.
 
 ## Hotspot: `backend/app/modules/reports/service.py`
