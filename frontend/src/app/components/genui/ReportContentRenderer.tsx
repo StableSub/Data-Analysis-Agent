@@ -155,6 +155,76 @@ function renderParagraphLines(text: string, keyPrefix: string) {
   ));
 }
 
+function renderMarkdownParagraph(paragraph: string, keyPrefix: string): React.ReactNode {
+  const lines = paragraph
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  const headingMatch = lines.length === 1 ? lines[0].match(/^(#{1,3})\s+(.+)$/) : null;
+  if (headingMatch) {
+    const level = headingMatch[1].length;
+    const text = headingMatch[2].trim();
+
+    if (level === 1) {
+      return (
+        <h2 key={keyPrefix} className="break-words text-lg font-semibold leading-snug text-[var(--genui-text)] [overflow-wrap:anywhere]">
+          {renderInlineContent(text, `${keyPrefix}-h1`)}
+        </h2>
+      );
+    }
+
+    if (level === 2) {
+      return (
+        <h3 key={keyPrefix} className="mt-3 border-b border-[var(--genui-border)] pb-1 text-sm font-semibold leading-snug text-[var(--genui-text)] [overflow-wrap:anywhere]">
+          {renderInlineContent(text, `${keyPrefix}-h2`)}
+        </h3>
+      );
+    }
+
+    return (
+      <h4 key={keyPrefix} className="mt-2 text-xs font-semibold uppercase tracking-wide text-[var(--genui-muted)] [overflow-wrap:anywhere]">
+        {renderInlineContent(text, `${keyPrefix}-h3`)}
+      </h4>
+    );
+  }
+
+  const bulletItems = lines.map((line) => line.match(/^[-*]\s+(.+)$/)?.[1]?.trim() ?? null);
+  if (bulletItems.length > 0 && bulletItems.every((item): item is string => Boolean(item))) {
+    return (
+      <ul key={keyPrefix} className="my-2 list-disc space-y-1 pl-5 text-sm leading-relaxed text-[var(--genui-text)]">
+        {bulletItems.map((item, index) => (
+          <li key={`${keyPrefix}-bullet-${index}`} className="break-words [overflow-wrap:anywhere]">
+            {renderInlineContent(item, `${keyPrefix}-bullet-${index}`)}
+          </li>
+        ))}
+      </ul>
+    );
+  }
+
+  const numberedItems = lines.map((line) => line.match(/^\d+[.)]\s+(.+)$/)?.[1]?.trim() ?? null);
+  if (numberedItems.length > 0 && numberedItems.every((item): item is string => Boolean(item))) {
+    return (
+      <ol key={keyPrefix} className="my-2 list-decimal space-y-1 pl-5 text-sm leading-relaxed text-[var(--genui-text)]">
+        {numberedItems.map((item, index) => (
+          <li key={`${keyPrefix}-numbered-${index}`} className="break-words [overflow-wrap:anywhere]">
+            {renderInlineContent(item, `${keyPrefix}-numbered-${index}`)}
+          </li>
+        ))}
+      </ol>
+    );
+  }
+
+  return (
+    <p
+      key={keyPrefix}
+      className="whitespace-pre-wrap break-words text-sm leading-relaxed text-[var(--genui-text)] [overflow-wrap:anywhere]"
+    >
+      {renderParagraphLines(paragraph, keyPrefix)}
+    </p>
+  );
+}
+
 export function CodeBlock({ code, language }: CodeBlockProps) {
   const [copied, setCopied] = useState(false);
 
@@ -240,14 +310,9 @@ export function ReportTextContent({
 
         return (
           <div key={`text-${blockIndex}`} className="space-y-2.5">
-            {paragraphs.map((paragraph, paragraphIndex) => (
-              <p
-                key={`paragraph-${blockIndex}-${paragraphIndex}`}
-                className="whitespace-pre-wrap break-words text-sm leading-relaxed text-[var(--genui-text)] [overflow-wrap:anywhere]"
-              >
-                {renderParagraphLines(paragraph, `paragraph-${blockIndex}-${paragraphIndex}`)}
-              </p>
-            ))}
+            {paragraphs.map((paragraph, paragraphIndex) =>
+              renderMarkdownParagraph(paragraph, `paragraph-${blockIndex}-${paragraphIndex}`),
+            )}
           </div>
         );
       })}

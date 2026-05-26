@@ -38,12 +38,14 @@ backend/tests/*
 !backend/tests/
 !backend/tests/test_architecture_docs.py
 !backend/tests/test_docs_harness.py
+!backend/tests/test_frontend_report_markdown_renderer_contract.py
 !backend/tests/test_chat_session_list_contract.py
 !backend/tests/test_dataset_list_contract.py
 !backend/tests/test_orchestration_evidence_contract.py
 !backend/tests/test_planner_route_accuracy.py
 !backend/tests/test_preprocess_plan_contract.py
 !backend/tests/test_preprocess_workflow_error_handling.py
+!backend/tests/test_report_prompt_contract.py
 !backend/tests/test_visualization_result_contract.py
 !backend/tests/test_visualization_output_contract.py
 backend/tests/**/__pycache__/
