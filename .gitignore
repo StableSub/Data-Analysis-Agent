@@ -91,6 +91,7 @@ CLAUDE.md
 # Codex local workspace
 .codex/
 .agents/
+.hermes/
 findings/
 project_docs/
 
@@ -102,9 +103,6 @@ evaluation/raw/
 !evaluation/cases/
 !evaluation/cases/**
 
-# Allow committed task findings when explicitly requested.
-!findings/
-!findings/**
 
 # Allow benchmark/evaluation tests under backend/tests.
 !backend/tests/evaluation/
