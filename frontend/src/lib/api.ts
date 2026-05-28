@@ -123,6 +123,7 @@ export interface ChatHistoryMessage {
   role: string;
   content: string;
   created_at: string;
+  visualization_result?: VisualizationResultPayload | null;
 }
 
 export interface ChatHistoryResponse {

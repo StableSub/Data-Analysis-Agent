@@ -33,6 +33,7 @@ import {
   isApiErrorStatus,
   listChatSessions,
   listDatasets,
+  type ChatHistoryMessage,
   type PendingApprovalPayload,
 } from "../../lib/api";
 import {
@@ -146,6 +147,37 @@ const buildPendingApprovalChanges = (
 };
 
 const ANALYSIS_FAILURE_MESSAGE = "응답을 생성하지 못했습니다.";
+
+const mergeServerHistoryVisualizations = (
+  serverMessages: ChatHistoryMessage[],
+  localMessages: ChatHistoryMessage[],
+): ChatHistoryMessage[] => {
+  const usedLocalIndexes = new Set<number>();
+
+  return serverMessages.map((message) => {
+    if (message.role !== "assistant" || message.visualization_result) {
+      return message;
+    }
+
+    const localIndex = localMessages.findIndex(
+      (candidate, index) =>
+        !usedLocalIndexes.has(index)
+        && candidate.role === "assistant"
+        && candidate.content === message.content
+        && Boolean(candidate.visualization_result),
+    );
+
+    if (localIndex < 0) {
+      return message;
+    }
+
+    usedLocalIndexes.add(localIndex);
+    return {
+      ...message,
+      visualization_result: localMessages[localIndex].visualization_result,
+    };
+  });
+};
 
 // --- MAIN PAGE ---
 
@@ -435,7 +467,7 @@ export default function Workbench() {
           if (isStaleRestoreRequest()) {
             return;
           }
-          const msgs = history.messages ?? [];
+          const msgs = mergeServerHistoryVisualizations(history.messages ?? [], nextContext.chatHistory);
           const latestAssistant = [...msgs]
             .reverse()
             .find((message) => message.role === "assistant");
@@ -1172,17 +1204,34 @@ export default function Workbench() {
                     }
 
                     const isFailedMessage = msg.content.trim() === ANALYSIS_FAILURE_MESSAGE;
+                    const messageVisualization = msg.visualization_result ?? null;
+                    const messageVisualizationChart =
+                      messageVisualization?.chart ?? messageVisualization?.chart_data ?? null;
+                    const hasMessageVisualization =
+                      hasVisualizationArtifact(messageVisualization)
+                      || hasVisualizationChartData(messageVisualization);
+                    const messageVisualizationMeta =
+                      messageVisualizationChart?.chart_type ?? "Chart";
 
                     return (
                       <div key={msg.id} className="flex w-full justify-start">
-                        <AssistantReportMessage
-                          className={assistantChatCardClassName}
-                          variant={isFailedMessage ? "error" : "final"}
-                          title="AI 답변"
-                          timestamp={messageTime}
-                          sections={[{ type: "paragraph", content: msg.content }]}
-                          maxBodyHeight={400}
-                        />
+                        <div className={cn("w-full space-y-4", assistantChatCardClassName)}>
+                          <AssistantReportMessage
+                            variant={isFailedMessage ? "error" : "final"}
+                            title="AI 답변"
+                            timestamp={messageTime}
+                            sections={[{ type: "paragraph", content: msg.content }]}
+                            maxBodyHeight={400}
+                          />
+                          {hasMessageVisualization && messageVisualization && (
+                            <CardShell>
+                              <CardHeader title="시각화 결과" meta={messageVisualizationMeta} />
+                              <CardBody>
+                                <VisualizationResultView visualization={messageVisualization} showCaption={false} />
+                              </CardBody>
+                            </CardShell>
+                          )}
+                        </div>
                       </div>
                     );
                   })}
@@ -1203,7 +1252,7 @@ export default function Workbench() {
                   sections={[{ type: "paragraph", content: "질문을 전송하면 Analysis 결과가 여기에 표시됩니다." }]}
                 />
               )}
-              {hasVisualizationPreview && latestVisualizationResult && (
+              {chatHistory.length === 0 && hasVisualizationPreview && latestVisualizationResult && (
                 <CardShell>
                   <CardHeader title="시각화 결과" meta={visualizationPreviewMeta} />
                   <CardBody>

@@ -1535,6 +1535,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
             });
           }
 
+          const visualizationResult = pickVisualizationResultFromDoneRecord(record);
           if (answer.trim()) {
             setChatHistory((prev) => [
               ...prev,
@@ -1543,11 +1544,11 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
                 role: "assistant",
                 content: answer,
                 created_at: new Date().toISOString(),
+                visualization_result: visualizationResult,
               },
             ]);
           }
 
-          const visualizationResult = pickVisualizationResultFromDoneRecord(record);
           if (visualizationResult) {
             setLatestVisualizationResult(visualizationResult);
           }
@@ -1946,6 +1947,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
       setRunningSubPhase("intake");
       setStreamingAnswer("");
       setChatResponse(null);
+      setLatestVisualizationResult(null);
       setThoughtSteps([]);
       setRunId(null);
       const nextTraceId = createTraceId();
