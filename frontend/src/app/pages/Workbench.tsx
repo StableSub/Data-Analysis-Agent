@@ -247,6 +247,7 @@ export default function Workbench() {
   const [canvasView, setCanvasView] = useState<CanvasView>("current");
   const canvasScrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const chatThreadEndRef = useRef<HTMLDivElement>(null);
   const initializedRef = useRef(false);
   const lastAutoOpenedPreEdaSourceRef = useRef<string | null>(null);
   const restoreRequestSeqRef = useRef(0);
@@ -856,16 +857,36 @@ export default function Workbench() {
   const hasFailedAnalysis =
     latestAssistantContent === ANALYSIS_FAILURE_MESSAGE
     || (chatHistory.length === 0 && state === "error");
+  const shouldKeepChatThreadVisible =
+    chatHistory.some((message) => message.role === "assistant")
+    && (state === "running" || state === "needs-user");
   const effectiveCurrentView: Exclude<CanvasView, "current"> | null =
-    state === "empty" || state === "uploading" || state === "running" || state === "needs-user" || state === "error"
+    state === "empty" || state === "uploading" || state === "error"
       ? null
-      : hasCompletedAnalysis
+      : shouldKeepChatThreadVisible
         ? "deep-eda"
-        : hasCompletedEda
-          ? "pre-eda"
-          : null;
+        : state === "running" || state === "needs-user"
+          ? null
+          : hasCompletedAnalysis
+            ? "deep-eda"
+            : hasCompletedEda
+              ? "pre-eda"
+              : null;
   const displayedCanvasView: Exclude<CanvasView, "current"> | null =
     canvasView === "current" ? effectiveCurrentView : canvasView;
+
+  useEffect(() => {
+    if (canvasView !== "current" || displayedCanvasView !== "deep-eda" || chatHistory.length === 0) {
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      chatThreadEndRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [canvasView, displayedCanvasView, chatHistory.length, state]);
+
   const statusSteps = hasUploadedDatasets
     ? [
         {
@@ -1235,6 +1256,27 @@ export default function Workbench() {
                       </div>
                     );
                   })}
+                  {state === "running" && (
+                    <div className="flex w-full justify-start">
+                      <div className={cn("w-full space-y-4", assistantChatCardClassName)}>
+                        <AssistantReportMessage
+                          variant="streaming"
+                          title={hasDatasetContext ? `Analyzing ${selectedDataset?.fileName || fileName || "Dataset"}` : "질문 처리 중"}
+                          subtitle={hasDatasetContext ? selectedDataset?.fileName || fileName : "AI가 답변을 생성하고 있습니다."}
+                          timestamp="Now"
+                          sections={reportSections}
+                          maxBodyHeight={300}
+                          evidence={evidence}
+                        />
+                        {lastRunningTool && (
+                          <div className="rounded-xl border border-[var(--genui-border)] bg-[var(--genui-panel)] px-4 py-3 shadow-sm">
+                            <ToolCallIndicator status="running" label={lastRunningTool.name} sublabel="현재 질문 범위를 기준으로 계산 중입니다." />
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  <div ref={chatThreadEndRef} />
                 </div>
               ) : reportSections.length > 0 ? (
                 <AssistantReportMessage
