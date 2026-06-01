@@ -169,7 +169,7 @@ class AnalysisPlanDraft(StrictModel):
     sort_by: list[SortSpec] = Field(default_factory=list)
     time_context: TimeContext | None = None
     visualization_hint: VisualizationHint = Field(default_factory=VisualizationHint)
-    ambiguity_status: Literal["clear", "needs_clarification"]
+    ambiguity_status: Literal["clear", "needs_clarification"] = "clear"
     clarification_message: str = ""
 
     @field_validator(
