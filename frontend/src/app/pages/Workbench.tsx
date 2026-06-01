@@ -645,7 +645,7 @@ export default function Workbench() {
   );
 
   const handleSendMessage = useCallback(
-    (value: string) => {
+    (value: string, modelId: string) => {
       const question = value.trim();
       if (!question) {
         return;
@@ -658,7 +658,7 @@ export default function Workbench() {
           : undefined;
       markSessionActivity(targetSession.id, nextTitle ? { title: nextTitle } : undefined);
 
-      handleSend(value);
+      handleSend(value, modelId);
     },
     [ensureActiveSessionForInteraction, markSessionActivity, handleSend],
   );

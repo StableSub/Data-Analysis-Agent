@@ -126,6 +126,7 @@ export interface PipelineSessionContext {
 interface LastQuestionRequest {
   question: string;
   sourceId: string | null;
+  modelId: string | null;
 }
 
 interface ThoughtStep {
@@ -185,7 +186,7 @@ export interface UseAnalysisPipelineReturn {
     operation: EdaRecommendedOperation,
     index: number,
   ) => Promise<"applied" | "failed" | "noop">;
-  handleSend: (message: string) => void;
+  handleSend: (message: string, modelId?: string | null) => void;
   handleCancel: () => void;
   reset: () => void;
   captureSessionContext: () => PipelineSessionContext;
@@ -1931,14 +1932,18 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
   );
 
   const runQuestionStream = useCallback(
-    (question: string, sourceIdOverride?: string | null) => {
+    (question: string, sourceIdOverride?: string | null, modelIdOverride?: string | null) => {
       const requestSourceId = typeof sourceIdOverride === "string"
         ? (sourceIdOverride.trim() || null)
         : selectedSourceId;
+      const requestModelId = typeof modelIdOverride === "string"
+        ? (modelIdOverride.trim() || null)
+        : null;
 
       lastQuestionRef.current = {
         question,
         sourceId: requestSourceId,
+        modelId: requestModelId,
       };
 
       setErrorMessage(null);
@@ -1955,12 +1960,13 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
       setPendingApproval(null);
       completedStagesRef.current = new Set();
 
-      const request: { question: string; session_id?: number; source_id?: string; trace_id: string } = {
+      const request: { question: string; session_id?: number; source_id?: string; model_id?: string; trace_id: string } = {
         question,
         trace_id: nextTraceId,
       };
       if (sessionId !== null) request.session_id = sessionId;
       if (requestSourceId) request.source_id = requestSourceId;
+      if (requestModelId) request.model_id = requestModelId;
 
       const tc = makeToolCall("chat_stream", request);
       addToolCall(tc);
@@ -2141,13 +2147,15 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
   );
 
   const handleSend = useCallback(
-    (message: string) => {
+    (message: string, modelId?: string | null) => {
       const question = message.trim();
       if (!question || pendingApproval || applyingPreEdaSourceId !== null) return;
+      const requestModelId = typeof modelId === "string" ? (modelId.trim() || null) : null;
 
       lastQuestionRef.current = {
         question,
         sourceId: selectedSourceId,
+        modelId: requestModelId,
       };
 
       setChatHistory((prev) => [
@@ -2162,7 +2170,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
 
       setErrorMessage(null);
       setErrorStep(null);
-      runQuestionStream(question, selectedSourceId);
+      runQuestionStream(question, selectedSourceId, requestModelId);
     },
     [applyingPreEdaSourceId, pendingApproval, nextLocalMessageId, selectedSourceId, runQuestionStream],
   );
@@ -2283,7 +2291,11 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
       setState(uploadedDatasets.length > 0 ? "ready" : "empty");
       return;
     }
-    runQuestionStream(lastQuestionRef.current.question, lastQuestionRef.current.sourceId);
+    runQuestionStream(
+      lastQuestionRef.current.question,
+      lastQuestionRef.current.sourceId,
+      lastQuestionRef.current.modelId,
+    );
   }, [runQuestionStream, uploadedDatasets.length]);
 
   const handleCancel = useCallback(() => {

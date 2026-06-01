@@ -14,7 +14,7 @@ import { AttachMenuPopover } from "./AttachMenuPopover";
 interface WorkbenchCommandBarProps {
   status: "idle" | "focused" | "streaming" | "disabled" | "empty";
   placeholder?: string;
-  onSend?: (value: string) => void;
+  onSend?: (value: string, modelId: string) => void;
   onStop?: () => void;
   /** Called when "Upload dataset" is selected from the attach menu */
   onUploadDataset?: () => void;
@@ -22,10 +22,9 @@ interface WorkbenchCommandBarProps {
 }
 
 const MODELS = [
-  { id: "gpt-5", label: "GPT-5" },
-  { id: "gpt-5-mini", label: "GPT-5-mini" },
   { id: "gpt-5-nano", label: "GPT-5-nano" },
-
+  { id: "gpt-5-mini", label: "GPT-5-mini" },
+  { id: "gpt-5", label: "GPT-5" },
 ];
 
 export function WorkbenchCommandBar({ 
@@ -80,8 +79,8 @@ export function WorkbenchCommandBar({
     }
 
     setValue("");
-    onSend?.(nextValue);
-  }, [isComposing, isDisabled, isStreaming, onSend]);
+    onSend?.(nextValue, selectedModel.id);
+  }, [isComposing, isDisabled, isStreaming, onSend, selectedModel.id]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.nativeEvent.isComposing || isComposing || e.keyCode === 229) {
