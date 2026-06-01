@@ -94,7 +94,7 @@ export function AttachMenuPopover({
       {/* Footer hint */}
       <div className="px-4 py-2 border-t border-[var(--genui-border)] bg-[var(--genui-panel)]">
         <p className="text-[10px] text-[var(--genui-muted)]">
-          UTF-8 CSV · Max file size: 200 MB per file
+          UTF-8 CSV or PDF · Max file size: 200 MB per file
         </p>
       </div>
     </div>

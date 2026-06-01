@@ -26,7 +26,7 @@ export interface VisualizationResultPayload {
   chart_data?: VisualizationChartPayload;
   charts?: VisualizationChartPayload[];
   artifact?: VisualizationArtifactPayload;
-  fallback_table?: Record<string, unknown>[];
+  fallback_table?: Record<string, unknown>[] | null;
 }
 
 function parseChartPayload(payload: unknown): VisualizationChartPayload | undefined {

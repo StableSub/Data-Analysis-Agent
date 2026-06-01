@@ -44,6 +44,9 @@ function createEmptyContext(): PipelineSessionContext {
     fileName: "",
     uploadedDatasets: [],
     selectedSourceId: null,
+    uploadedGuidelines: [],
+    selectedGuidelineSourceId: null,
+    guidelinesScopedToSession: true,
     chatHistory: [],
     latestAssistantAnswer: null,
     latestVisualizationResult: null,
@@ -58,6 +61,7 @@ function normalizeContext(value: unknown): PipelineSessionContext {
     return createEmptyContext();
   }
   const context = value as Partial<PipelineSessionContext>;
+  const keepSessionGuidelines = context.guidelinesScopedToSession === true;
   return {
     backendSessionId: typeof context.backendSessionId === "number" ? context.backendSessionId : null,
     runId: typeof context.runId === "string" ? context.runId : null,
@@ -65,6 +69,13 @@ function normalizeContext(value: unknown): PipelineSessionContext {
     fileName: typeof context.fileName === "string" ? context.fileName : "",
     uploadedDatasets: Array.isArray(context.uploadedDatasets) ? context.uploadedDatasets : [],
     selectedSourceId: typeof context.selectedSourceId === "string" ? context.selectedSourceId : null,
+    uploadedGuidelines:
+      keepSessionGuidelines && Array.isArray(context.uploadedGuidelines) ? context.uploadedGuidelines : [],
+    selectedGuidelineSourceId:
+      keepSessionGuidelines && typeof context.selectedGuidelineSourceId === "string"
+        ? context.selectedGuidelineSourceId
+        : null,
+    guidelinesScopedToSession: true,
     chatHistory: Array.isArray(context.chatHistory) ? context.chatHistory : [],
     latestAssistantAnswer:
       typeof context.latestAssistantAnswer === "string" ? context.latestAssistantAnswer : null,
@@ -156,6 +167,9 @@ function createServerSessionItem(
       backendSessionId: summary.id,
       chatHistory: [],
       latestAssistantAnswer: null,
+      uploadedGuidelines: [],
+      selectedGuidelineSourceId: null,
+      guidelinesScopedToSession: true,
       pendingApproval: null,
       stateHint: summary.message_count > 0 ? "success" : baseContext.stateHint,
       errorMessage: null,

@@ -18,6 +18,7 @@ class ChatRequest(BaseModel):
     session_id: Optional[int] = Field(default=None, description="Existing chat session identifier.")
     model_id: Optional[str] = Field(default=None, description="Optional model identifier.")
     source_id: Optional[str] = Field(default=None, description="Optional dataset source identifier.")
+    guideline_source_id: Optional[str] = Field(default=None, description="Optional guideline source identifier.")
     trace_id: Optional[str] = Field(default=None, description="Optional trace identifier for request logging.")
 
 

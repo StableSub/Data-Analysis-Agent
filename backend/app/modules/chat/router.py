@@ -58,6 +58,7 @@ async def ask_chat_stream(
     chat_service: ChatService = Depends(get_chat_service),
 ):
     normalized_source_id = (request.source_id or "").strip() or None
+    normalized_guideline_source_id = (request.guideline_source_id or "").strip() or None
 
     return _stream_response(
         chat_service.ask_stream(
@@ -65,6 +66,7 @@ async def ask_chat_stream(
             session_id=request.session_id,
             model_id=request.model_id,
             source_id=normalized_source_id,
+            guideline_source_id=normalized_guideline_source_id,
             trace_id=request.trace_id,
         )
     )

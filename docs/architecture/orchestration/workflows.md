@@ -39,6 +39,7 @@
 
 - route/status: `no_active_guideline`, `existing`, `created`, `missing`, `retrieved`, `no_evidence`.
 - payload contract: `user_input`, `model_id`, `active_guideline_source_id`, `guideline_index_status`, `guideline_result`, `guideline_data_exists`, `retrieved_chunks`, `retrieved_count`, `evidence_summary`, `status`.
+- `active_guideline_source_id`는 전역 활성 지침서가 아니라 현재 chat 요청에서 선택된 `guideline_source_id`를 기준으로 채워진다. 선택값이 없으면 guideline 검색은 `no_active_guideline`으로 종료된다.
 
 ### Preprocess workflow
 
