@@ -39,6 +39,39 @@ _ANALYTIC_KEYWORDS = (
     "analysis",
 )
 
+_COMPLEX_DATASET_LOOKUP_KEYWORDS = (
+    "삭제",
+    "제거",
+    "버려",
+    "빼야",
+    "제외",
+    "불필요",
+    "전처리",
+    "정제",
+    "학습",
+    "훈련",
+    "모델",
+    "입력",
+    "독립변수",
+    "종속변수",
+    "라벨",
+    "feature",
+    "features",
+    "drop",
+    "remove",
+    "delete",
+    "exclude",
+    "preprocess",
+    "clean",
+    "cleaning",
+    "train",
+    "training",
+    "model",
+    "input",
+    "label",
+    "target",
+)
+
 
 @dataclass(frozen=True)
 class FastDatasetAnswer:
@@ -86,6 +119,9 @@ def _normalize_question(question: str) -> str:
 
 
 def _detect_dataset_lookup_intent(question: str) -> str | None:
+    if _has_complex_dataset_lookup_keyword(question):
+        return None
+
     if _matches_intent(question, "summary"):
         return "summary"
 
@@ -116,6 +152,10 @@ def _detect_dataset_lookup_intent(question: str) -> str | None:
     if _matches_intent(question, "columns"):
         return "columns"
     return None
+
+
+def _has_complex_dataset_lookup_keyword(question: str) -> bool:
+    return any(keyword in question for keyword in _COMPLEX_DATASET_LOOKUP_KEYWORDS)
 
 
 def _matches_intent(question: str, intent: str) -> bool:
