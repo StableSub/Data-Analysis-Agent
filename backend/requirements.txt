@@ -14,4 +14,6 @@ langgraph
 langgraph-checkpoint-sqlite
 langchain-tavily
 sentence-transformers
+huggingface-hub>=0.34.0,<1.0
+tokenizers>=0.22.0,<=0.23.0
 faiss-cpu
