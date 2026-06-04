@@ -80,7 +80,7 @@ def _make_service(agent: AgentClient, *, source_exists: bool = True) -> ChatServ
     class FakeSession:
         def __init__(self):
             self.id = 1
-            self.messages: list = []
+            self.messages: list[FakeMessage] = []
 
     class FakeChatRepository:
         def __init__(self):
@@ -108,10 +108,12 @@ def _make_service(agent: AgentClient, *, source_exists: bool = True) -> ChatServ
         def get_by_source_id(self, source_id):
             return FakeDataset() if source_exists else None
 
+    repository: Any = FakeChatRepository()
+    dataset_repository: Any = FakeDatasetRepository()
     return ChatService(
         agent=agent,
-        repository=FakeChatRepository(),
-        dataset_repository=FakeDatasetRepository(),
+        repository=repository,
+        dataset_repository=dataset_repository,
     )
 
 
@@ -556,11 +558,21 @@ class TestInvalidSourceId:
         assert error["data"]["error_stage"] == "dataset_resolution"
         assert error["data"]["error_message"] == "요청한 데이터셋을 찾을 수 없습니다."
 
-    def test_invalid_source_id_session_event_comes_first(self):
-        """source_id 오류여도 session event 는 먼저 와야 한다."""
+    def test_invalid_source_id_does_not_emit_session_event_without_existing_session(self):
         agent = _make_agent([])
         service = _make_service(agent, source_exists=False)
         events = _collect(
             service.ask_stream(question="매출 평균은?", source_id="nonexistent-id")
         )
-        assert events[0]["event"] == "session"
+        assert [event.get("event") for event in events] == ["error"]
+
+    def test_invalid_source_id_keeps_existing_session_event(self):
+        agent = _make_agent([])
+        service = _make_service(agent, source_exists=False)
+        events = _collect(
+            service.ask_stream(question="매출 평균은?", session_id=1, source_id="nonexistent-id")
+        )
+
+        assert [event.get("event") for event in events] == ["session", "error"]
+        assert events[0]["data"]["session_id"] == 1
+        assert events[1]["data"]["session_id"] == 1

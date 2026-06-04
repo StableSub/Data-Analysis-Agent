@@ -5,7 +5,7 @@ import shutil
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import IO, Any, Iterable, Optional
+from typing import IO, Any, Final, Iterable, Optional
 
 from ..datasets.models import Dataset
 from ..datasets.repository import DatasetRepository
@@ -19,6 +19,15 @@ from .repository import RagRepository
 
 MAX_INDEX_TEXT_CHARS = 200_000
 SUPPORTED_DATASET_RAG_EXTENSIONS = {".csv", ".json", ".txt", ".md", ".pdf"}
+_FILESYSTEM_NAME_MAX_BYTES: Final = 255
+_UUID_HEX_LENGTH: Final = 32
+_TEMP_COMPONENT_OVERHEAD_BYTES: Final = len((".." + ("0" * _UUID_HEX_LENGTH) + ".tmp").encode("utf-8"))
+_BACKUP_COMPONENT_OVERHEAD_BYTES: Final = len("..bak".encode("utf-8"))
+_SOURCE_COMPONENT_MAX_BYTES: Final = _FILESYSTEM_NAME_MAX_BYTES - max(
+    _TEMP_COMPONENT_OVERHEAD_BYTES,
+    _BACKUP_COMPONENT_OVERHEAD_BYTES,
+)
+_HASHED_SOURCE_PREFIX: Final = "source-"
 
 
 @dataclass(frozen=True)
@@ -172,16 +181,29 @@ class _BaseIndexedRagService:
         return chunk_rows, temp_dir
 
     def _source_dir(self, source_id: str) -> Path:
-        return self.storage_dir / source_id
+        return self.storage_dir / self._source_path_component(source_id)
 
     def _index_path(self, source_id: str) -> Path:
         return self._source_dir(source_id) / "index.faiss"
 
     def _temp_dir(self, source_id: str) -> Path:
-        return self.storage_dir / f".{source_id}.{uuid.uuid4().hex}.tmp"
+        source_component = self._source_path_component(source_id)
+        return self.storage_dir / f".{source_component}.{uuid.uuid4().hex}.tmp"
 
     def _backup_dir(self, source_id: str) -> Path:
-        return self.storage_dir / f".{source_id}.bak"
+        return self.storage_dir / f".{self._source_path_component(source_id)}.bak"
+
+    @staticmethod
+    def _source_path_component(source_id: str) -> str:
+        source_id_bytes = source_id.encode("utf-8")
+        if (
+            source_id
+            and Path(source_id).name == source_id
+            and source_id not in {".", ".."}
+            and len(source_id_bytes) <= _SOURCE_COMPONENT_MAX_BYTES
+        ):
+            return source_id
+        return f"{_HASHED_SOURCE_PREFIX}{hashlib.sha256(source_id_bytes).hexdigest()}"
 
     @staticmethod
     def _remove_dir(path: Path) -> None:

@@ -2,6 +2,7 @@ import math
 import numpy as np
 import pandas as pd
 
+from .numeric import numeric_impute_value, numeric_series_or_raise
 from .schemas import PreprocessOperation
 
 
@@ -26,7 +27,10 @@ class PreprocessProcessor:
             if operation.op == "drop_columns":
                 if not operation.columns:
                     raise ValueError("drop_columns requires columns")
-                out = out.drop(columns=operation.columns, errors="ignore")
+                missing_columns = [column for column in operation.columns if column not in out.columns]
+                if missing_columns:
+                    raise ValueError(f"Column not found: {missing_columns[0]}")
+                out = out.drop(columns=operation.columns)
                 continue
 
             if operation.op == "rename_columns":
@@ -36,11 +40,13 @@ class PreprocessProcessor:
                     raise ValueError("rename_columns requires same length for rename_from and rename_to")
                 if not rename_from and not rename_to:
                     raise ValueError("rename_columns requires rename_from and rename_to")
-                mapping = {
-                    old_name: new_name
-                    for old_name, new_name in zip(rename_from, rename_to)
-                    if old_name and new_name
-                }
+                mapping = {}
+                for old_name, new_name in zip(rename_from, rename_to):
+                    if not old_name.strip() or not new_name.strip():
+                        raise ValueError("rename_columns requires non-empty column pairs")
+                    if old_name not in out.columns:
+                        raise ValueError(f"Column not found: {old_name}")
+                    mapping[old_name] = new_name
                 out = out.rename(columns=mapping)
                 continue
 
@@ -53,11 +59,21 @@ class PreprocessProcessor:
                     if column not in out.columns:
                         raise ValueError(f"Column not found: {column}")
                     if operation.method == "mean":
-                        fill_value = self._numeric_impute_value(out[column], method="mean", column=column)
-                        out[column] = out[column].fillna(fill_value)
+                        numeric_series = numeric_series_or_raise(
+                            out[column],
+                            operation="impute.method 'mean'",
+                            column=column,
+                        )
+                        fill_value = numeric_impute_value(out[column], method="mean", column=column)
+                        out[column] = numeric_series.fillna(fill_value)
                     elif operation.method == "median":
-                        fill_value = self._numeric_impute_value(out[column], method="median", column=column)
-                        out[column] = out[column].fillna(fill_value)
+                        numeric_series = numeric_series_or_raise(
+                            out[column],
+                            operation="impute.method 'median'",
+                            column=column,
+                        )
+                        fill_value = numeric_impute_value(out[column], method="median", column=column)
+                        out[column] = numeric_series.fillna(fill_value)
                     elif operation.method == "mode":
                         mode_values = out[column].mode(dropna=True)
                         out[column] = out[column].fillna(
@@ -75,7 +91,7 @@ class PreprocessProcessor:
                 for column in operation.columns:
                     if column not in out.columns:
                         raise ValueError(f"Column not found: {column}")
-                    series = self._numeric_series_or_raise(out[column], operation="scale", column=column)
+                    series = numeric_series_or_raise(out[column], operation="scale", column=column)
                     if operation.method == "standardize":
                         mean = series.mean()
                         std = series.std(ddof=0)
@@ -108,7 +124,7 @@ class PreprocessProcessor:
                 if operation.transform_type == "log1p":
                     if len(source_columns) != 1:
                         raise ValueError("derived_column.log1p requires exactly one source column")
-                    source = self._numeric_series_or_raise(
+                    source = numeric_series_or_raise(
                         out[source_columns[0]],
                         operation="derived_column.log1p",
                         column=source_columns[0],
@@ -121,19 +137,28 @@ class PreprocessProcessor:
                 if operation.transform_type == "sum":
                     if len(source_columns) < 2:
                         raise ValueError("derived_column.sum requires at least two source columns")
-                    source_frame = out[source_columns].apply(pd.to_numeric, errors="coerce")
+                    source_frame = pd.DataFrame(
+                        {
+                            column: numeric_series_or_raise(
+                                out[column],
+                                operation="derived_column.sum",
+                                column=column,
+                            )
+                            for column in source_columns
+                        }
+                    )
                     out[operation.name] = source_frame.sum(axis=1)
                     continue
 
                 if operation.transform_type == "difference":
                     if len(source_columns) != 2:
                         raise ValueError("derived_column.difference requires exactly two source columns")
-                    left = self._numeric_series_or_raise(
+                    left = numeric_series_or_raise(
                         out[source_columns[0]],
                         operation="derived_column.difference",
                         column=source_columns[0],
                     )
-                    right = self._numeric_series_or_raise(
+                    right = numeric_series_or_raise(
                         out[source_columns[1]],
                         operation="derived_column.difference",
                         column=source_columns[1],
@@ -144,12 +169,12 @@ class PreprocessProcessor:
                 if operation.transform_type == "ratio":
                     if len(source_columns) != 2:
                         raise ValueError("derived_column.ratio requires exactly two source columns")
-                    numerator = self._numeric_series_or_raise(
+                    numerator = numeric_series_or_raise(
                         out[source_columns[0]],
                         operation="derived_column.ratio",
                         column=source_columns[0],
                     )
-                    denominator = self._numeric_series_or_raise(
+                    denominator = numeric_series_or_raise(
                         out[source_columns[1]],
                         operation="derived_column.ratio",
                         column=source_columns[1],
@@ -204,7 +229,7 @@ class PreprocessProcessor:
                     if column not in out.columns:
                         raise ValueError(f"Column not found: {column}")
 
-                    series = self._numeric_series_or_raise(out[column], operation="outlier", column=column)
+                    series = numeric_series_or_raise(out[column], operation="outlier", column=column)
                     if operation.method == "zscore":
                         mean = series.mean()
                         std = series.std(ddof=0)
@@ -236,32 +261,3 @@ class PreprocessProcessor:
 
             raise ValueError(f"Unknown operation: {operation.op}")
         return out
-
-    @staticmethod
-    def _numeric_impute_value(series: pd.Series, *, method: str, column: str) -> float:
-        numeric_series = PreprocessProcessor._numeric_series_or_raise(
-            series,
-            operation=f"impute.method '{method}'",
-            column=column,
-        )
-
-        if method == "mean":
-            value = numeric_series.mean()
-        else:
-            value = numeric_series.median()
-
-        if pd.isna(value):
-            raise ValueError(f"impute.method '{method}' requires a numeric column: {column}")
-        return float(value)
-
-    @staticmethod
-    def _numeric_series_or_raise(series: pd.Series, *, operation: str, column: str) -> pd.Series:
-        non_null = series.dropna()
-        if non_null.empty:
-            raise ValueError(f"{operation} requires a numeric column: {column}")
-
-        numeric_series = pd.to_numeric(series, errors="coerce")
-        numeric_ratio = float(numeric_series.dropna().shape[0]) / float(non_null.shape[0])
-        if numeric_ratio < 0.98:
-            raise ValueError(f"{operation} requires a numeric column: {column}")
-        return numeric_series

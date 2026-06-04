@@ -69,7 +69,7 @@ class DatasetReader:
                 nrows=nrows,
                 usecols=usecols,
             )
-        except (UnicodeDecodeError, pd.errors.EmptyDataError, pd.errors.ParserError) as exc:
+        except (UnicodeDecodeError, ValueError, pd.errors.EmptyDataError, pd.errors.ParserError) as exc:
             raise DatasetReadError(DATASET_READ_ERROR_DETAIL) from exc
 
     def read_csv_chunks(
@@ -89,14 +89,14 @@ class DatasetReader:
                 chunksize=chunksize,
                 usecols=usecols,
             )
-        except (UnicodeDecodeError, pd.errors.EmptyDataError, pd.errors.ParserError) as exc:
+        except (UnicodeDecodeError, ValueError, pd.errors.EmptyDataError, pd.errors.ParserError) as exc:
             raise DatasetReadError(DATASET_READ_ERROR_DETAIL) from exc
 
         def iterator() -> Iterator[pd.DataFrame]:
             try:
                 for chunk in reader:
                     yield chunk
-            except (UnicodeDecodeError, pd.errors.EmptyDataError, pd.errors.ParserError) as exc:
+            except (UnicodeDecodeError, ValueError, pd.errors.EmptyDataError, pd.errors.ParserError) as exc:
                 raise DatasetReadError(DATASET_READ_ERROR_DETAIL) from exc
 
         return iterator()

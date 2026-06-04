@@ -24,7 +24,12 @@ import {
 import { cn } from "../../lib/utils";
 import { PipelineBar, type PipelineBarVariant } from "../components/genui/PipelineBar";
 import { useAnalysisPipeline, type PipelineSessionContext } from "../hooks/useAnalysisPipeline";
-import { useWorkbenchSessionStore, type WorkbenchSessionItem } from "../hooks/useWorkbenchSessionStore";
+import {
+  getCanonicalBackendSessionId,
+  getSessionDeletionIds,
+  useWorkbenchSessionStore,
+  type WorkbenchSessionItem,
+} from "../hooks/useWorkbenchSessionStore";
 import {
   deleteChatSession,
   type EdaRecommendedOperation,
@@ -255,6 +260,7 @@ export default function Workbench() {
   const lastAutoOpenedPreEdaSourceRef = useRef<string | null>(null);
   const restoreRequestSeqRef = useRef(0);
   const expectedSessionIdRef = useRef<string | null>(activeSessionId);
+  const [restoringSessionId, setRestoringSessionId] = useState<string | null>(null);
   const [guidelines, setGuidelines] = useState<GuidelineResponse[]>([]);
   const [selectedGuidelineSourceId, setSelectedGuidelineSourceId] = useState<string | null>(null);
   const [guidelineUploadProgress, setGuidelineUploadProgress] = useState<number | null>(null);
@@ -348,6 +354,21 @@ export default function Workbench() {
 
   const markExpectedSession = useCallback((sessionId: string | null) => {
     expectedSessionIdRef.current = sessionId;
+  }, []);
+
+  const beginSessionRestore = useCallback(
+    (sessionId: string) => {
+      markExpectedSession(sessionId);
+      setRestoringSessionId(sessionId);
+    },
+    [markExpectedSession],
+  );
+
+  const finishSessionRestore = useCallback((sessionId: string) => {
+    if (expectedSessionIdRef.current !== sessionId) {
+      return;
+    }
+    setRestoringSessionId((current) => (current === sessionId ? null : current));
   }, []);
 
   const ensureActiveSessionForInteraction = useCallback((): WorkbenchSessionItem => {
@@ -473,9 +494,11 @@ export default function Workbench() {
       nextContext = reconciled.context;
       shouldPersistContext = reconciled.changed;
 
-      if (targetSession.backendSessionId !== null) {
+      const backendSessionId = getCanonicalBackendSessionId(targetSession);
+
+      if (backendSessionId !== null) {
         try {
-          const history = await getChatHistory(targetSession.backendSessionId);
+          const history = await getChatHistory(backendSessionId);
           if (isStaleRestoreRequest()) {
             return;
           }
@@ -519,7 +542,7 @@ export default function Workbench() {
 
           nextContext = {
             ...nextContext,
-            backendSessionId: targetSession.backendSessionId,
+            backendSessionId,
             chatHistory: msgs,
             latestAssistantAnswer,
             pendingApproval: restoredPendingApproval,
@@ -590,6 +613,7 @@ export default function Workbench() {
     saveSessionSnapshot(activeSessionId);
     const nextSession = createSession();
     markExpectedSession(nextSession.id);
+    setRestoringSessionId(null);
     setGuidelines([]);
     setSelectedGuidelineSourceId(null);
     clearForNewDraft();
@@ -601,11 +625,15 @@ export default function Workbench() {
         return;
       }
       saveSessionSnapshot(activeSessionId);
-      markExpectedSession(targetSessionId);
+      beginSessionRestore(targetSessionId);
       selectSession(targetSessionId);
-      await restoreSessionById(targetSessionId);
+      try {
+        await restoreSessionById(targetSessionId);
+      } finally {
+        finishSessionRestore(targetSessionId);
+      }
     },
-    [activeSessionId, saveSessionSnapshot, selectSession, restoreSessionById, markExpectedSession],
+    [activeSessionId, saveSessionSnapshot, beginSessionRestore, selectSession, restoreSessionById, finishSessionRestore],
   );
 
   const handleSessionDelete = useCallback(
@@ -615,27 +643,21 @@ export default function Workbench() {
         return;
       }
 
-      if (targetSession.backendSessionId !== null) {
+      const backendSessionId = getCanonicalBackendSessionId(targetSession);
+      if (backendSessionId !== null) {
         try {
-          await deleteChatSession(targetSession.backendSessionId);
+          await deleteChatSession(backendSessionId);
         } catch (error) {
-          if (isApiErrorStatus(error, 404)) {
-            updateSession(targetSessionId, {
-              backendSessionId: null,
-              context: {
-                ...targetSession.context,
-                backendSessionId: null,
-              },
-            });
-          } else {
+          if (!isApiErrorStatus(error, 404)) {
             toast.error("서버 세션 삭제에 실패했습니다.");
             return;
           }
         }
       }
 
-      const wasActive = targetSessionId === activeSessionId;
-      const remaining = sessions.filter((item) => item.id !== targetSessionId);
+      const deletionIds = getSessionDeletionIds(sessions, targetSessionId);
+      const wasActive = activeSessionId !== null && deletionIds.has(activeSessionId);
+      const remaining = sessions.filter((item) => !deletionIds.has(item.id));
       deleteSessionFromStore(targetSessionId);
 
       if (!wasActive) {
@@ -649,9 +671,13 @@ export default function Workbench() {
       }
 
       const fallbackSession = remaining[0];
-      markExpectedSession(fallbackSession.id);
+      beginSessionRestore(fallbackSession.id);
       selectSession(fallbackSession.id);
-      await restoreSessionById(fallbackSession.id);
+      try {
+        await restoreSessionById(fallbackSession.id);
+      } finally {
+        finishSessionRestore(fallbackSession.id);
+      }
     },
     [
       sessions,
@@ -660,7 +686,8 @@ export default function Workbench() {
       clearForNewDraft,
       selectSession,
       restoreSessionById,
-      markExpectedSession,
+      beginSessionRestore,
+      finishSessionRestore,
     ],
   );
 
@@ -727,11 +754,15 @@ export default function Workbench() {
         return;
       }
 
-      markExpectedSession(initialSession.id);
+      beginSessionRestore(initialSession.id);
       if (activeSessionId !== initialSession.id) {
         selectSession(initialSession.id);
       }
-      await restoreSessionItem(initialSession);
+      try {
+        await restoreSessionItem(initialSession);
+      } finally {
+        finishSessionRestore(initialSession.id);
+      }
       initializedRef.current = true;
     })();
 
@@ -743,7 +774,8 @@ export default function Workbench() {
     bootstrapServerDatasets,
     captureSessionContext,
     mergeServerSessions,
-    markExpectedSession,
+    beginSessionRestore,
+    finishSessionRestore,
     restoreSessionContext,
     restoreSessionItem,
     selectSession,
@@ -751,7 +783,7 @@ export default function Workbench() {
   ]);
 
   useEffect(() => {
-    if (!initializedRef.current || !activeSessionId) {
+    if (!initializedRef.current || !activeSessionId || restoringSessionId !== null) {
       return;
     }
     if (state === "running" || state === "uploading") {
@@ -767,10 +799,10 @@ export default function Workbench() {
       backendSessionId: snapshot.backendSessionId,
       context: snapshot,
     });
-  }, [activeSessionId, state, captureSessionContext, guidelines, selectedGuidelineSourceId, updateActiveSession]);
+  }, [activeSessionId, state, restoringSessionId, captureSessionContext, guidelines, selectedGuidelineSourceId, updateActiveSession]);
 
   useEffect(() => {
-    if (!initializedRef.current || !activeSessionId || sessionId === null) {
+    if (!initializedRef.current || !activeSessionId || sessionId === null || restoringSessionId !== null) {
       return;
     }
     const snapshot = {
@@ -786,7 +818,7 @@ export default function Workbench() {
         backendSessionId: sessionId,
       },
     });
-  }, [activeSessionId, sessionId, captureSessionContext, guidelines, selectedGuidelineSourceId, updateActiveSession]);
+  }, [activeSessionId, sessionId, restoringSessionId, captureSessionContext, guidelines, selectedGuidelineSourceId, updateActiveSession]);
 
   /** Open file picker for real file selection */
   const openFilePicker = useCallback(() => {

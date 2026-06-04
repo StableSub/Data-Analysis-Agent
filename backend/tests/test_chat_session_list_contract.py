@@ -1,4 +1,6 @@
+import asyncio
 from datetime import datetime, timezone
+from typing import Any
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -8,14 +10,19 @@ from backend.app.core.db import Base
 from backend.app.modules.chat.models import ChatMessage, ChatSession
 from backend.app.modules.chat.repository import ChatRepository
 from backend.app.modules.chat.service import ChatService
+from backend.app.modules.datasets.repository import DatasetRepository
+from backend.app.orchestration.client import AgentClient
 
 
-class FakeAgent:
-    pass
+def _make_agent() -> AgentClient:
+    return AgentClient(workflow_runtime_factory=lambda: None)
 
 
-class FakeDatasetRepository:
-    pass
+def _collect_events(stream: Any) -> list[dict[str, Any]]:
+    async def _run() -> list[dict[str, Any]]:
+        return [event async for event in stream]
+
+    return asyncio.run(_run())
 
 
 def _make_session():
@@ -60,9 +67,9 @@ def test_list_sessions_uses_message_timestamps_without_chat_session_timestamp_co
     db.commit()
 
     service = ChatService(
-        agent=FakeAgent(),
+        agent=_make_agent(),
         repository=ChatRepository(db),
-        dataset_repository=FakeDatasetRepository(),
+        dataset_repository=DatasetRepository(db),
     )
 
     response = service.list_sessions()
@@ -103,9 +110,9 @@ def test_list_sessions_paginates_session_summaries() -> None:
     db.commit()
 
     service = ChatService(
-        agent=FakeAgent(),
+        agent=_make_agent(),
         repository=ChatRepository(db),
-        dataset_repository=FakeDatasetRepository(),
+        dataset_repository=DatasetRepository(db),
     )
 
     response = service.list_sessions(skip=1, limit=1)
@@ -113,3 +120,21 @@ def test_list_sessions_paginates_session_summaries() -> None:
     assert response.total == 2
     assert len(response.items) == 1
     assert response.items[0].id == first_session.id
+
+
+def test_invalid_source_id_does_not_create_empty_session() -> None:
+    db = _make_session()
+    service = ChatService(
+        agent=_make_agent(),
+        repository=ChatRepository(db),
+        dataset_repository=DatasetRepository(db),
+    )
+
+    events = _collect_events(
+        service.ask_stream(question="bad dataset question", source_id="missing-source")
+    )
+
+    assert [event["event"] for event in events] == ["error"]
+    assert events[0]["data"]["error_code"] == "invalid_source_id"
+    assert db.query(ChatSession).count() == 0
+    assert db.query(ChatMessage).count() == 0

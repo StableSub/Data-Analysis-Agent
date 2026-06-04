@@ -1,8 +1,11 @@
 from pathlib import Path
 
+from openai import OpenAIError
 import pandas as pd
 
 from .ai import generate_eda_ai_summary
+from .insights import build_deterministic_ai_summary
+from .numeric import finite_float, finite_numeric_frame, finite_numeric_series
 from .schemas import (
     EDAAISummaryResponse,
     EDAColumnTypeItem,
@@ -42,9 +45,7 @@ class EDAUnsupportedRequestError(ValueError):
 
 
 def _safe_float(value: object, ndigits: int = 4) -> float | None:
-    if pd.isna(value):
-        return None
-    return round(float(value), ndigits)
+    return finite_float(value, ndigits=ndigits)
 
 
 def _serialize_label_value(value: object) -> str:
@@ -219,7 +220,7 @@ class EDAService:
 
         series = df[column]
         if inferred_type == "numerical":
-            numeric_series = pd.to_numeric(series, errors="coerce").dropna()
+            numeric_series = finite_numeric_series(series)
             if numeric_series.empty:
                 return EDADistributionResponse(
                     source_id=source_id,
@@ -432,7 +433,7 @@ class EDAService:
         numeric_columns = [column for column in profile.numeric_columns if column in df.columns]
         stats_columns: list[EDAStatsColumn] = []
         for column in numeric_columns:
-            series = pd.to_numeric(df[column], errors="coerce").dropna()
+            series = finite_numeric_series(df[column])
             stats_columns.append(
                 EDAStatsColumn(
                     column=column,
@@ -467,7 +468,7 @@ class EDAService:
         if len(numeric_columns) < 2:
             return EDACorrelationsResponse(source_id=source_id, pairs=[])
 
-        numeric_df = df[numeric_columns].apply(pd.to_numeric, errors="coerce")
+        numeric_df = finite_numeric_frame(df[numeric_columns])
         corr_matrix = numeric_df.corr(method="pearson", numeric_only=True)
         correlation_pairs: list[tuple[float, EDACorrelationItem]] = []
         columns = list(corr_matrix.columns)
@@ -506,7 +507,7 @@ class EDAService:
 
         outlier_columns: list[EDAOutlierColumn] = []
         for column in numeric_columns:
-            series = pd.to_numeric(df[column], errors="coerce").dropna()
+            series = finite_numeric_series(df[column])
             if series.empty:
                 outlier_columns.append(EDAOutlierColumn(column=column))
                 continue
@@ -550,11 +551,14 @@ class EDAService:
         if payload is None:
             return None
 
-        summary_content = generate_eda_ai_summary(
-            payload=payload,
-            model_id=model_id,
-            default_model=self.default_model,
-        )
+        try:
+            summary_content = generate_eda_ai_summary(
+                payload=payload,
+                model_id=model_id,
+                default_model=self.default_model,
+            )
+        except (OpenAIError, RuntimeError, TimeoutError, ConnectionError, ValueError):
+            summary_content = build_deterministic_ai_summary(payload)
         return EDAAISummaryResponse(
             source_id=source_id,
             structure_summary=str(summary_content.get("structure_summary", "")).strip(),

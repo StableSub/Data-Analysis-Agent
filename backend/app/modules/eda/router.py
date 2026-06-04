@@ -21,7 +21,7 @@ router = APIRouter(prefix="/eda", tags=["eda"])
 
 def _raise_dataset_read_http_error(exc: DatasetReadError) -> None:
     raise HTTPException(
-        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         detail=DATASET_READ_ERROR_DETAIL,
     ) from exc
 
@@ -169,7 +169,7 @@ def get_eda_distribution(
         ) from exc
     except EDAUnsupportedRequestError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="지원하지 않는 EDA 요청입니다.",
         ) from exc
     if distribution is None:

@@ -1,9 +1,10 @@
 import os
-import uuid
 from pathlib import Path
 from typing import Any, Dict
 
 import pandas as pd
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+
 from ..datasets.models import Dataset
 from ..datasets.repository import DatasetRepository
 from ..datasets.service import DatasetReader
@@ -25,6 +26,7 @@ from .schemas import (
     ScaleOperation,
     SummaryDiff,
 )
+from .source_naming import build_preprocess_output_target
 
 
 def _safe_float(value: Any, ndigits: int = 4) -> float | None:
@@ -132,25 +134,46 @@ class PreprocessService:
         processed = self.processor.apply_operations(df, operations)
         summary_after = _build_summary(processed)
         summary_diff = _build_diff(summary_before, summary_after)
-        output_path, output_filename = self._build_output_path(input_dataset.storage_path)
-        processed.to_csv(output_path, index=False)
-        output_size = os.path.getsize(output_path)
-
-        output_dataset = self.repository.create(
-            Dataset(
-                filename=output_filename,
-                storage_path=str(output_path),
-                filesize=output_size,
-            )
-        )
+        output_dataset = self._reserve_output_dataset(input_dataset)
+        try:
+            processed.to_csv(output_dataset.storage_path, index=False)
+            output_dataset.filesize = os.path.getsize(output_dataset.storage_path)
+            output_dataset = self.repository.save(output_dataset)
+        except (OSError, SQLAlchemyError):
+            Path(str(output_dataset.storage_path)).unlink(missing_ok=True)
+            self.repository.rollback()
+            try:
+                self.repository.delete(output_dataset)
+            except SQLAlchemyError:
+                self.repository.rollback()
+            raise
         return PreprocessApplyResponse(
             input_source_id=source_id,
             output_source_id=output_dataset.source_id,
-            output_filename=output_filename,
+            output_filename=output_dataset.filename,
             summary_before=summary_before,
             summary_after=summary_after,
             summary_diff=summary_diff,
         )
+
+    def _reserve_output_dataset(self, input_dataset: Dataset) -> Dataset:
+        while True:
+            output_target = build_preprocess_output_target(
+                input_filename=str(input_dataset.filename),
+                input_storage_path=str(input_dataset.storage_path),
+                repository=self.repository,
+            )
+            try:
+                return self.repository.create(
+                    Dataset(
+                        source_id=output_target.source_id,
+                        filename=output_target.filename,
+                        storage_path=str(output_target.storage_path),
+                        filesize=0,
+                    )
+                )
+            except IntegrityError:
+                self.repository.rollback()
 
     def apply_recommendation(
         self,
@@ -269,9 +292,3 @@ class PreprocessService:
                 continue
 
         return operations
-
-    @staticmethod
-    def _build_output_path(source_path: str) -> tuple[Path, str]:
-        source = Path(source_path)
-        output_filename = f"{source.stem}_preprocessed_{uuid.uuid4().hex[:8]}.csv"
-        return source.with_name(output_filename), output_filename

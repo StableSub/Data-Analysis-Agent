@@ -17,6 +17,15 @@ class DatasetRepository:
         self.db.refresh(dataset)
         return dataset
 
+    def save(self, dataset: Dataset) -> Dataset:
+        self.db.add(dataset)
+        self.db.commit()
+        self.db.refresh(dataset)
+        return dataset
+
+    def rollback(self) -> None:
+        self.db.rollback()
+
     def list_page(self, skip: int = 0, limit: int = 20) -> List[Dataset]:
         return (
             self.db.query(Dataset)

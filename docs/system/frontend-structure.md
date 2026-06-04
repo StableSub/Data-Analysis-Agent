@@ -29,12 +29,13 @@
 - `frontend/src/app/hooks/useWorkbenchSessionStore.ts`
   - workbench session을 localStorage에 저장하고 복원한다.
   - Workbench 초기 진입 시 `GET /chats/` 결과를 local session 목록과 병합한다.
+  - session 선택/초기 복원 중에는 autosave를 잠시 막아 복원 전 context가 대상 session에 저장되지 않게 한다.
 
 ## 백엔드 API 연결
 
 - `frontend/src/lib/api.ts`
   - frontend API client와 request/response type이 모여 있다.
-  - 기본 API base URL은 `http://localhost:8000`이며 `VITE_API_BASE_URL`로 override할 수 있다.
+  - 기본 API base URL은 `http://127.0.0.1:8000`이며 `VITE_API_BASE_URL`로 override할 수 있다.
   - 현재 backend 시각화 경로는 `/visualization`이 아니라 `/vizualization`이다.
   - Workbench 초기 복원은 `GET /datasets/`와 `GET /chats/`를 함께 호출한다.
 

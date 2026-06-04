@@ -72,7 +72,7 @@ FastAPI route와 SSE formatting을 담당한다. `ask_chat_stream()`과 `resume_
 ### 주요 method
 
 - `list_sessions(...)`: message timestamp 기준 session summary를 만들고 `updated_at` 역순으로 pagination한다.
-- `ask_stream(...)`: session 생성/조회, selected dataset resolve, user message 저장, run id 생성, `AgentClient.astream_with_trace()` 호출을 수행한다.
+- `ask_stream(...)`: selected dataset resolve, session 생성/조회, user message 저장, run id 생성, `AgentClient.astream_with_trace()` 호출을 수행한다. 존재하지 않는 `source_id`만 있는 새 요청은 빈 session 생성 없이 `invalid_source_id` error event로 끝난다.
 - `resume_run_stream(...)`: 기존 run id에 대해 `Command(resume=...)` payload로 workflow를 재개한다.
 - `get_pending_approval(...)`: `AgentClient.get_pending_approval()` 결과를 response schema로 감싼다.
 - `_relay_agent_events(...)`: agent event를 chat SSE event로 변환하고 final answer를 assistant message로 저장한다.

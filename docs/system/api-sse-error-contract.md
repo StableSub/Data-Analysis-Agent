@@ -39,6 +39,8 @@ data: <json>
 3. `chunk` 반복 **또는** `approval_required`
 4. 승인 없는 경우 최종 `done`
 
+요청한 `source_id`가 존재하지 않고 기존 `session_id`도 없는 경우는 새 빈 세션을 만들지 않고 `error` 이벤트만 반환한다.
+
 ### 승인 후 재개 (`POST /chats/{session_id}/runs/{run_id}/resume`)
 
 기본 순서:
@@ -192,6 +194,7 @@ data: <json>
 - `stage`는 기존 호환 alias이며, 새 클라이언트는 `error_stage`를 우선 사용할 수 있다.
 - workflow 내부 진단은 `workflow_error.diagnostic_message`와 `workflow_error.details`에만 남긴다. SSE에는 `public_error`와 안전한 `message`/`error_message`만 노출하며, Pydantic schema명, 누락 field명, stack trace, file path 같은 내부 진단 문자열은 포함하지 않는다.
 - `evidence_package`, `answer_quality`가 workflow final state 또는 `output`에 있으면 `error` payload에도 보존된다.
+- 존재하지 않는 `source_id`를 새 채팅에서 요청한 경우 `session_id` 없이 `error_code="invalid_source_id"`를 반환할 수 있다.
 - router 단계 예외처럼 workflow 밖에서 발생한 오류는 `message` 중심의 단순 `error` payload로 떨어질 수 있으므로, 프론트엔드는 `message`를 계속 기본 표시값으로 사용한다.
 
 ## HTTP 오류 계약
@@ -213,7 +216,7 @@ data: <json>
 
 `frontend/src/app/hooks/useAnalysisPipeline.ts`는 다음 가정을 둔다.
 
-- `session` 이벤트가 먼저 와서 `session_id`, `run_id`를 세팅한다
+- 정상 실행과 기존 세션 재개에서는 `session` 이벤트가 먼저 와서 `session_id`, `run_id`를 세팅한다
 - `approval_required.pending_approval`은 parse 가능한 객체다
 - `done.answer` 또는 누적 `chunk`로 최종 답을 복원할 수 있다
 - `error.message`는 사용자에게 보여줄 수 있는 문자열이다

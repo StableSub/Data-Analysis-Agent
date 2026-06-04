@@ -90,7 +90,7 @@ preprocess가 필요한지 판단하고, 필요한 경우 user approval에 올�
 
 - `build_dataset_profile(...)`: source dataset profile을 만든다.
 - `apply(...)`: preprocess plan을 적용하고 output source id/path/summary/diff를 반환한다.
-- `_build_output_path(...)`: preprocess output 파일 경로를 만든다.
+- `build_preprocess_output_target(...)`: dataset 표시 filename에서 `output_source_id`와 파일명을 만든다. RAG 저장소는 public `source_id`를 그대로 단축하지 않고, 필요할 때 내부 path component만 bounded hash key로 바꾼다.
 - `_build_summary(...)`, `_build_diff(...)`: 사용자에게 보여줄 변화 요약을 만든다.
 
 ### Visualization result payload contract

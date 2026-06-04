@@ -41,6 +41,12 @@ backend/tests/*
 !backend/tests/test_frontend_report_markdown_renderer_contract.py
 !backend/tests/test_chat_session_list_contract.py
 !backend/tests/test_dataset_list_contract.py
+!backend/tests/test_eda_ai_summary_ux_contract.py
+!backend/tests/test_eda_service_contract.py
+!backend/tests/test_preprocess_processor_contract.py
+!backend/tests/test_preprocess_service_contract.py
+!backend/tests/test_preprocess_source_naming.py
+!backend/tests/test_rag_source_path_contract.py
 !backend/tests/test_orchestration_evidence_contract.py
 !backend/tests/test_planner_route_accuracy.py
 !backend/tests/test_backend_requirements_contract.py

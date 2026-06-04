@@ -2,13 +2,14 @@ from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.sql import func
 
 from ...core.db import Base
+from ..datasets.models import DATASET_SOURCE_ID_MAX_LENGTH
 
 
 class RagSource(Base):
     __tablename__ = "rag_sources"
 
     source_id = Column(
-        String(36),
+        String(DATASET_SOURCE_ID_MAX_LENGTH),
         ForeignKey("datasets.source_id", ondelete="CASCADE"),
         primary_key=True,
     )
@@ -24,7 +25,7 @@ class RagChunk(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     source_id = Column(
-        String(36),
+        String(DATASET_SOURCE_ID_MAX_LENGTH),
         ForeignKey("rag_sources.source_id", ondelete="CASCADE"),
         index=True,
         nullable=False,

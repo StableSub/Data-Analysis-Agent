@@ -28,6 +28,74 @@ interface MergeServerSessionsResult {
   sessions: WorkbenchSessionItem[];
   activeSessionId: string | null;
 }
+export function getCanonicalBackendSessionId(item: WorkbenchSessionItem): number | null {
+  return item.backendSessionId ?? item.context.backendSessionId ?? null;
+}
+
+function syncContextBackendSessionId(
+  context: PipelineSessionContext,
+  backendSessionId: number | null,
+): PipelineSessionContext {
+  if (context.backendSessionId === backendSessionId) {
+    return context;
+  }
+  return {
+    ...context,
+    backendSessionId,
+  };
+}
+
+function normalizeSessionIdentity(item: WorkbenchSessionItem): WorkbenchSessionItem {
+  const backendSessionId = getCanonicalBackendSessionId(item);
+  return {
+    ...item,
+    backendSessionId,
+    context: syncContextBackendSessionId(item.context, backendSessionId),
+  };
+}
+
+export function getSessionDeletionIds(
+  sessions: WorkbenchSessionItem[],
+  targetSessionId: string,
+): Set<string> {
+  const target = sessions.find((item) => item.id === targetSessionId);
+  if (!target) {
+    return new Set();
+  }
+
+  const backendSessionId = getCanonicalBackendSessionId(target);
+  if (backendSessionId === null) {
+    return new Set([targetSessionId]);
+  }
+
+  return new Set(
+    sessions
+      .filter((item) => getCanonicalBackendSessionId(item) === backendSessionId)
+      .map((item) => item.id),
+  );
+}
+
+function dedupeSessionsByCanonicalBackendId(items: WorkbenchSessionItem[]): WorkbenchSessionItem[] {
+  const seenBackendIds = new Set<number>();
+  const deduped: WorkbenchSessionItem[] = [];
+
+  for (const item of sortByRecent(items).map((session) => normalizeSessionIdentity(session))) {
+    const backendSessionId = getCanonicalBackendSessionId(item);
+    if (backendSessionId === null) {
+      deduped.push(item);
+      continue;
+    }
+    if (seenBackendIds.has(backendSessionId)) {
+      continue;
+    }
+    seenBackendIds.add(backendSessionId);
+    deduped.push(item);
+  }
+
+  return deduped;
+}
+
+
 
 function createSessionId(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -100,10 +168,13 @@ function normalizeSession(value: unknown): WorkbenchSessionItem | null {
   if (typeof item.id !== "string" || !item.id) {
     return null;
   }
+  const context = normalizeContext(item.context);
+  const backendSessionId =
+    typeof item.backendSessionId === "number" ? item.backendSessionId : context.backendSessionId;
   return {
     id: item.id,
     title: typeof item.title === "string" && item.title.trim() ? item.title : "새 채팅",
-    backendSessionId: typeof item.backendSessionId === "number" ? item.backendSessionId : null,
+    backendSessionId,
     updatedAt: typeof item.updatedAt === "string" && item.updatedAt ? item.updatedAt : new Date().toISOString(),
     activityAt:
       typeof item.activityAt === "string" && item.activityAt
@@ -111,7 +182,7 @@ function normalizeSession(value: unknown): WorkbenchSessionItem | null {
         : typeof item.updatedAt === "string" && item.updatedAt
           ? item.updatedAt
           : null,
-    context: normalizeContext(item.context),
+    context: syncContextBackendSessionId(context, backendSessionId),
   };
 }
 
@@ -126,9 +197,11 @@ function loadSessionStore(): SessionStorePayload {
   try {
     const parsed = JSON.parse(raw) as Partial<SessionStorePayload>;
     const sessions = Array.isArray(parsed.sessions)
-      ? parsed.sessions
-          .map((item) => normalizeSession(item))
-          .filter((item): item is WorkbenchSessionItem => item !== null)
+      ? dedupeSessionsByCanonicalBackendId(
+          parsed.sessions
+            .map((item) => normalizeSession(item))
+            .filter((item): item is WorkbenchSessionItem => item !== null),
+        )
       : [];
     const activeSessionId =
       typeof parsed.activeSessionId === "string" && sessions.some((item) => item.id === parsed.activeSessionId)
@@ -220,12 +293,12 @@ export function useWorkbenchSessionStore() {
           patch.backendSessionId !== undefined
             ? patch.backendSessionId
             : nextContext.backendSessionId ?? item.backendSessionId;
-        return {
+        return normalizeSessionIdentity({
           ...item,
           title: patch.title !== undefined ? patch.title : item.title,
           backendSessionId: backendSessionId ?? null,
           context: nextContext,
-        };
+        });
       });
     });
   }, []);
@@ -244,14 +317,14 @@ export function useWorkbenchSessionStore() {
             ? patch.backendSessionId
             : nextContext.backendSessionId ?? item.backendSessionId;
 
-        return {
+        return normalizeSessionIdentity({
           ...item,
           title: patch?.title !== undefined ? patch.title : item.title,
           backendSessionId: backendSessionId ?? null,
           context: nextContext,
           updatedAt: now,
           activityAt: now,
-        };
+        });
       });
 
       return sortByRecent(next);
@@ -279,9 +352,17 @@ export function useWorkbenchSessionStore() {
   );
 
   const deleteSession = useCallback((sessionId: string) => {
-    setSessions((prev) => prev.filter((item) => item.id !== sessionId));
-    setActiveSessionId((prev) => (prev === sessionId ? null : prev));
-  }, []);
+    setSessions((prev) => {
+      const deletionIds = getSessionDeletionIds(prev, sessionId);
+      return prev.filter((item) => !deletionIds.has(item.id));
+    });
+    setActiveSessionId((prev) => {
+      if (prev === null) {
+        return null;
+      }
+      return getSessionDeletionIds(sessions, sessionId).has(prev) ? null : prev;
+    });
+  }, [sessions]);
 
   const mergeServerSessions = useCallback(
     (
@@ -290,36 +371,43 @@ export function useWorkbenchSessionStore() {
     ): MergeServerSessionsResult => {
       const serverById = new Map(serverSessions.map((item) => [item.id, item]));
       const existingBackendIds = new Set<number>();
-      const mergedExisting = sessions.map((item) => {
-        if (item.backendSessionId === null) {
-          return item;
+      const mergedExisting = sessions.flatMap((item) => {
+        const backendSessionId = getCanonicalBackendSessionId(item);
+        if (backendSessionId === null) {
+          return [item];
         }
-        const serverSession = serverById.get(item.backendSessionId);
+        if (existingBackendIds.has(backendSessionId)) {
+          return [];
+        }
+        const serverSession = serverById.get(backendSessionId);
         if (!serverSession) {
-          return item;
+          return [];
         }
-        existingBackendIds.add(item.backendSessionId);
+        existingBackendIds.add(backendSessionId);
         const updatedAt = serverSession.updated_at ?? item.updatedAt;
-        return {
-          ...item,
-          title: serverSession.title || item.title,
-          updatedAt,
-          activityAt: updatedAt,
-          context: {
-            ...item.context,
+        return [
+          normalizeSessionIdentity({
+            ...item,
+            title: serverSession.title || item.title,
+            updatedAt,
+            activityAt: updatedAt,
             backendSessionId: serverSession.id,
-            uploadedDatasets:
-              item.context.uploadedDatasets.length > 0
-                ? item.context.uploadedDatasets
-                : baseContext.uploadedDatasets,
-            selectedSourceId: item.context.selectedSourceId ?? baseContext.selectedSourceId,
-            fileName: item.context.fileName || baseContext.fileName,
-            stateHint:
-              item.context.chatHistory.length > 0 || serverSession.message_count > 0
-                ? "success"
-                : item.context.stateHint,
-          },
-        };
+            context: {
+              ...item.context,
+              backendSessionId: serverSession.id,
+              uploadedDatasets:
+                item.context.uploadedDatasets.length > 0
+                  ? item.context.uploadedDatasets
+                  : baseContext.uploadedDatasets,
+              selectedSourceId: item.context.selectedSourceId ?? baseContext.selectedSourceId,
+              fileName: item.context.fileName || baseContext.fileName,
+              stateHint:
+                item.context.chatHistory.length > 0 || serverSession.message_count > 0
+                  ? "success"
+                  : item.context.stateHint,
+            },
+          }),
+        ];
       });
       const newServerSessions = serverSessions
         .filter((item) => !existingBackendIds.has(item.id))

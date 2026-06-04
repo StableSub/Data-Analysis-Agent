@@ -55,41 +55,42 @@ class ChatService:
         trace_id: Optional[str] = None,
     ) -> AsyncIterator[Dict[str, Any]]:
         source_id = (source_id or "").strip() or None
-        session = self._get_or_create_session(session_id=session_id, title=question)
-        # invaild source_id 처리
         if source_id is not None:
             dataset = self.dataset_repository.get_by_source_id(source_id)
             if dataset is None:
-                # source_id 가 잘못됐거나 존재하지 않음 → error event 로 알림
+                session = self._get_session(session_id) if session_id else None
                 run_id = uuid.uuid4().hex
                 active_trace_id = (trace_id or "").strip() or uuid.uuid4().hex
                 with trace_context(
-                    trace_id=active_trace_id, session_id=session.id, run_id=run_id
+                    trace_id=active_trace_id,
+                    session_id=session_id if session is not None else None,
+                    run_id=run_id,
                 ):
+                    event_data: Dict[str, Any] = {
+                        "run_id": run_id,
+                        "trace_id": active_trace_id,
+                    }
+                    if session is not None and session_id is not None:
+                        event_data["session_id"] = session_id
                     log_trace(
                         layer="chat",
                         event="invalid_source_id",
                         payload={
                             "trace_id": active_trace_id,
-                            "session_id": session.id,
+                            "session_id": session_id if session is not None else None,
                             "run_id": run_id,
                             "source_id": source_id,
                         },
                     )
-                    yield {
-                        "event": "session",
-                        "data": {
-                            "session_id": session.id,
-                            "run_id": run_id,
-                            "trace_id": active_trace_id,
-                        },
-                    }
+                    if session is not None:
+                        yield {
+                            "event": "session",
+                            "data": event_data,
+                        }
                     yield {
                         "event": "error",
                         "data": {
-                            "session_id": session.id,
-                            "run_id": run_id,
-                            "trace_id": active_trace_id,
+                            **event_data,
                             "status": "failed",
                             "stage": "dataset_resolution",
                             "error_stage": "dataset_resolution",
@@ -105,6 +106,7 @@ class ChatService:
         else:
             dataset = None
 
+        session = self._get_or_create_session(session_id=session_id, title=question)
         run_id = uuid.uuid4().hex
         active_trace_id = (trace_id or "").strip() or uuid.uuid4().hex
 

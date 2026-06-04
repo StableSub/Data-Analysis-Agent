@@ -50,13 +50,14 @@
 
 `backend/app/modules/chat/service.py`가 session/message와 agent stream relay를 담당한다.
 
-1. `_get_or_create_session()`으로 session을 찾거나 만든다.
-2. `source_id`가 있으면 `DataSourceRepository.get_by_source_id(source_id)`로 selected dataset model을 찾는다.
-3. user message를 `ChatRepository.append_message()`로 저장한다.
-4. `run_id = uuid.uuid4().hex`를 만들고 `session` SSE event를 먼저 보낸다.
-5. `AgentClient.astream_with_trace(session_id, run_id, question, dataset, model_id)`를 호출한다.
-6. `_relay_agent_events()`가 agent event를 chat SSE event로 변환한다.
-7. final answer가 생기면 assistant message를 저장하고 `done` event를 보낸다.
+1. `source_id`가 있으면 `DataSourceRepository.get_by_source_id(source_id)`로 selected dataset model을 찾는다.
+2. 존재하지 않는 `source_id`이고 기존 `session_id`도 없으면 새 빈 session을 만들지 않고 `invalid_source_id` `error` event만 보낸다.
+3. dataset resolve가 끝난 뒤 `_get_or_create_session()`으로 session을 찾거나 만든다.
+4. user message를 `ChatRepository.append_message()`로 저장한다.
+5. `run_id = uuid.uuid4().hex`를 만들고 정상 흐름에서는 `session` SSE event를 먼저 보낸다.
+6. `AgentClient.astream_with_trace(session_id, run_id, question, dataset, model_id)`를 호출한다.
+7. `_relay_agent_events()`가 agent event를 chat SSE event로 변환한다.
+8. final answer가 생기면 assistant message를 저장하고 `done` event를 보낸다.
 
 ## 4. AgentClient initial state and thread config
 
@@ -246,7 +247,7 @@ START
 
 `done.status`는 `ChatService`가 `output_type`, preprocess/analysis/visualization/report result, `answer_quality.status`를 보고 계산한다. 값은 `success`, `limited`, `unanswerable`, `failed`, `cancelled` 중 하나다. 실패/취소 성격이면 `error_stage`, `error_message`, `error_type`, `retryable`이 함께 붙을 수 있다.
 
-SSE `error` data에는 `session_id`, `run_id`, `trace_id`, `thought_steps`, `answer`, `message`, `stage`, `error_code`, `retryable`, `output_type`이 들어간다. workflow error에는 `public_error`가 추가될 수 있고, `output`, `evidence_package`, `answer_quality`가 있으면 top-level error payload에도 유지된다. router-level exception도 사용자 안전 문구를 `message`로 내려주므로 frontend는 `message`를 기본 표시값으로 유지한다.
+SSE `error` data에는 `run_id`, `trace_id`, `thought_steps`, `answer`, `message`, `stage`, `error_code`, `retryable`, `output_type`이 들어간다. session이 확정된 실패에는 `session_id`도 포함된다. workflow error에는 `public_error`가 추가될 수 있고, `output`, `evidence_package`, `answer_quality`가 있으면 top-level error payload에도 유지된다. router-level exception도 사용자 안전 문구를 `message`로 내려주므로 frontend는 `message`를 기본 표시값으로 유지한다.
 
 ## 발견한 문제점 / 확인 필요 사항
 
