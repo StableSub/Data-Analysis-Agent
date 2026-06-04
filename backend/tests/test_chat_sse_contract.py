@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any, AsyncIterator, Dict
 
@@ -9,6 +10,22 @@ import pytest
 
 from backend.app.orchestration.client import AgentClient
 from backend.app.modules.chat.service import ChatService
+
+RAW_STRUCTURED_ERROR = (
+    "1 validation error for QuestionUnderstanding ambiguity_status "
+    "Field required [type=missing, input_value={'analysis_goal': ['raw-private']}] "
+    "https://errors.pydantic.dev/2.12/v/missing"
+)
+FORBIDDEN_PUBLIC_TOKENS = (
+    "QuestionUnderstanding",
+    "ambiguity_status",
+    "Field required",
+    "input_value",
+    "pydantic.dev",
+    "raw-private",
+    "diagnostic_message",
+    "schema_name",
+)
 
 
 # ── 공통 헬퍼 ────────────────────────────────────────────────────────────────
@@ -51,9 +68,14 @@ def _make_service(agent: AgentClient, *, source_exists: bool = True) -> ChatServ
     """ChatService 를 최소 fake repository 로 생성한다."""
 
     class FakeMessage:
+        _next_id = 1
+
         def __init__(self, role, content):
+            self.id = FakeMessage._next_id
+            FakeMessage._next_id += 1
             self.role = role
             self.content = content
+            self.created_at = datetime.now(timezone.utc)
 
     class FakeSession:
         def __init__(self):
@@ -93,6 +115,18 @@ def _make_service(agent: AgentClient, *, source_exists: bool = True) -> ChatServ
     )
 
 
+def _serialized(value: Any) -> str:
+    import json
+
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+
+
+def _assert_sanitized_public_event(value: Any) -> None:
+    text = _serialized(value)
+    for token in FORBIDDEN_PUBLIC_TOKENS:
+        assert token not in text
+
+
 # ── 스냅샷 픽스처 ─────────────────────────────────────────────────────────────
 
 def _success_snapshot(
@@ -127,6 +161,31 @@ def _fail_snapshot(*, error_stage: str = "analysis", execution_status: str = "fa
             "execution_status": execution_status,
             "error_stage": error_stage,
             "error_message": "컬럼을 찾을 수 없습니다.",
+        },
+    }
+
+
+def _workflow_error_snapshot() -> Dict[str, Any]:
+    return {
+        "output": {"type": "planning_failed", "content": RAW_STRUCTURED_ERROR},
+        "final_status": "fail",
+        "workflow_error": {
+            "stage": "question_understanding",
+            "error_code": "structured_output_validation",
+            "source": "llm_structured_output",
+            "output_type": "planning_failed",
+            "retryable": True,
+            "safe_message": "질문을 이해하는 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.",
+            "diagnostic_message": RAW_STRUCTURED_ERROR,
+            "details": {
+                "schema_name": "QuestionUnderstanding",
+                "field_path": "ambiguity_status",
+            },
+        },
+        "analysis_result": {
+            "execution_status": "fail",
+            "error_stage": "question_understanding",
+            "error_message": RAW_STRUCTURED_ERROR,
         },
     }
 
@@ -306,6 +365,39 @@ class TestErrorEventNewlyAdded:
         assert "done" in types
         assert "error" not in types
 
+    def test_workflow_error_event_uses_public_projection_only(self):
+        agent = _make_agent([_workflow_error_snapshot()])
+        events = _collect(agent.astream_with_trace(session_id="1", question="불량률은?"))
+        error = next(e for e in events if e.get("type") == "error")
+
+        assert error["stage"] == "question_understanding"
+        assert error["error_stage"] == "question_understanding"
+        assert error["error_code"] == "structured_output_validation"
+        assert error["output_type"] == "planning_failed"
+        assert error["retryable"] is True
+        assert "public_error" in error
+        assert "workflow_error" not in error
+        _assert_sanitized_public_event(error)
+
+    def test_legacy_error_event_sanitizes_raw_summary_fallback(self):
+        agent = _make_agent(
+            [
+                {
+                    "output": {"type": "planning_failed", "content": RAW_STRUCTURED_ERROR},
+                    "final_status": "fail",
+                    "analysis_error": {
+                        "stage": "question_understanding",
+                        "message": RAW_STRUCTURED_ERROR,
+                    },
+                }
+            ]
+        )
+        events = _collect(agent.astream_with_trace(session_id="1", question="불량률은?"))
+        error = next(e for e in events if e.get("type") == "error")
+
+        assert error["stage"] == "question_understanding"
+        _assert_sanitized_public_event(error)
+
 
 class TestApprovalRequiredPreserved:
     """approval_required event 와 resume 흐름이 기존대로 동작해야 한다."""
@@ -409,6 +501,18 @@ class TestServiceLayerRelay:
         assert events[0]["event"] == "session"
         assert "session_id" in events[0]["data"]
         assert "run_id" in events[0]["data"]
+
+    def test_service_error_relay_and_history_hide_workflow_diagnostics(self):
+        agent = _make_agent([_workflow_error_snapshot()])
+        service = _make_service(agent)
+        events = _collect(service.ask_stream(question="불량률은?", session_id=1))
+        error = next(e for e in events if e.get("event") == "error")
+
+        assert error["data"]["error_code"] == "structured_output_validation"
+        assert error["data"]["error_stage"] == "question_understanding"
+        assert "public_error" in error["data"]
+        _assert_sanitized_public_event(error["data"])
+        _assert_sanitized_public_event(service.get_history(1))
 
 
 class TestInvalidSourceId:

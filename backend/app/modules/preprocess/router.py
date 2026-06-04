@@ -20,11 +20,11 @@ def apply(
     try:
         return service.apply(source_id=req.source_id, operations=req.operations)
     except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        raise HTTPException(status_code=404, detail="데이터셋을 찾을 수 없습니다.") from exc
     except DatasetReadError as exc:
         raise HTTPException(status_code=422, detail=DATASET_READ_ERROR_DETAIL) from exc
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise HTTPException(status_code=400, detail="전처리 요청 형식이 올바르지 않습니다.") from exc
 
 
 @router.post("/apply-recommendation", response_model=PreprocessApplyResponse)
@@ -38,8 +38,8 @@ def apply_recommendation(
             recommendation=req.recommendation,
         )
     except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        raise HTTPException(status_code=404, detail="데이터셋을 찾을 수 없습니다.") from exc
     except DatasetReadError as exc:
         raise HTTPException(status_code=422, detail=DATASET_READ_ERROR_DETAIL) from exc
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise HTTPException(status_code=400, detail="전처리 요청 형식이 올바르지 않습니다.") from exc

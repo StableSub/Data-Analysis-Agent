@@ -93,11 +93,25 @@ export interface ChatResponse {
   pending_approval?: PendingApprovalPayload;
   output_type?: string;
   status?: "success" | "limited" | "unanswerable" | "failed" | "cancelled";
+  stage?: string | null;
+  error_code?: string | null;
   error_stage?: string | null;
   error_message?: string | null;
+  message?: string | null;
   retryable?: boolean;
+  public_error?: PublicErrorPayload;
   evidence_package?: EvidencePackagePayload;
   answer_quality?: AnswerQualityPayload;
+}
+
+export interface PublicErrorPayload {
+  stage: string;
+  error_stage: string;
+  error_code: string;
+  retryable: boolean;
+  message: string;
+  error_message: string;
+  output_type: string;
 }
 
 export interface ThoughtStepPayload {

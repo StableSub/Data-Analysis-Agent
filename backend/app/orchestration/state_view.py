@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
+from .error_contract import public_message_for_stage, to_public_error
+
 _DETAIL_MESSAGE_LIMIT = 180
 _DISPLAY_COPY = {
     "analysis_active": "질문을 이해하고 있습니다.",
@@ -389,16 +391,23 @@ def collect_thought_steps(state: Dict[str, Any]) -> list[Dict[str, str]]:
                     )
                 )
         elif execution_status == "fail":
-            error_message = analysis_result.get("error_message")
-            if isinstance(error_message, str) and error_message.strip():
-                steps.append(
-                    make_thought_step(
-                        phase="analysis",
-                        message=f"분석 단계에서 오류가 발생했습니다: {error_message.strip()}",
-                        status="failed",
-                        display_message=_DISPLAY_COPY["analysis_failed"],
-                    )
+            workflow_error = state.get("workflow_error")
+            if isinstance(workflow_error, dict):
+                public_error = to_public_error(workflow_error)
+                message = str(public_error.get("message") or "").strip()
+            else:
+                error_stage = analysis_result.get("error_stage")
+                message = public_message_for_stage(
+                    str(error_stage or "analysis"),
                 )
+            steps.append(
+                make_thought_step(
+                    phase="analysis",
+                    message=message,
+                    status="failed",
+                    display_message=_DISPLAY_COPY["analysis_failed"],
+                )
+            )
 
     clarification_question = state.get("clarification_question")
     if isinstance(clarification_question, str) and clarification_question.strip():
@@ -563,16 +572,20 @@ def collect_thought_steps(state: Dict[str, Any]) -> list[Dict[str, str]]:
                 )
             )
         elif report_status == "failed":
-            error = report_result.get("error")
-            if isinstance(error, str) and error.strip():
-                steps.append(
-                    make_thought_step(
-                        phase="report",
-                        message=f"리포트 생성에 실패했습니다: {error.strip()}",
-                        status="failed",
-                        display_message=_DISPLAY_COPY["report_failed"],
-                    )
+            workflow_error = state.get("workflow_error")
+            if isinstance(workflow_error, dict):
+                public_error = to_public_error(workflow_error)
+                message = str(public_error.get("message") or "").strip()
+            else:
+                message = public_message_for_stage("report")
+            steps.append(
+                make_thought_step(
+                    phase="report",
+                    message=message,
+                    status="failed",
+                    display_message=_DISPLAY_COPY["report_failed"],
                 )
+            )
 
     revision_request = state.get("revision_request")
     if isinstance(revision_request, dict) and revision_request.get("stage") == "report":

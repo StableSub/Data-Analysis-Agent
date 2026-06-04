@@ -4,6 +4,11 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from ...orchestration.error_contract import (
+    build_failure_output,
+    build_workflow_error_from_exception,
+    public_message_for_stage,
+)
 from .planner import PreprocessPlan
 from .service import PreprocessService
 
@@ -37,15 +42,24 @@ def execute_preprocess_plan(
     try:
         plan = PreprocessPlan.model_validate(approved_plan or preprocess_plan or {})
     except ValidationError as exc:
-        message = "전처리 계획 형식이 올바르지 않습니다."
+        workflow_error = build_workflow_error_from_exception(
+            stage="preprocess_plan",
+            error_code="structured_output_validation",
+            source="preprocess_executor",
+            output_type="preprocess_failed",
+            retryable=True,
+            exc=exc,
+        )
+        message = workflow_error["safe_message"]
         return {
+            "workflow_error": workflow_error,
             "preprocess_result": {
                 "status": "failed",
                 "summary": message,
                 "applied_ops_count": 0,
-                "error": f"invalid operation format: {exc}",
+                "error": message,
             },
-            "output": _build_failed_output(message),
+            "output": build_failure_output(workflow_error),
         }
 
     if not plan.operations:
@@ -59,14 +73,14 @@ def execute_preprocess_plan(
 
     try:
         apply_response = preprocess_service.apply(source_id=str(source_id), operations=plan.operations)
-    except (FileNotFoundError, ValueError) as exc:
-        message = f"전처리 단계에서 오류가 발생했습니다: {exc}"
+    except (FileNotFoundError, ValueError):
+        message = public_message_for_stage("preprocess_plan")
         return {
             "preprocess_result": {
                 "status": "failed",
                 "summary": message,
                 "applied_ops_count": 0,
-                "error": str(exc),
+                "error": message,
             },
             "revision_request": {},
             "approved_plan": {},

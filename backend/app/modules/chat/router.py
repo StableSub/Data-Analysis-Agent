@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 
 from ...core.trace_logging import get_trace_context
+from ...orchestration.error_contract import public_message_for_stage
 from .dependencies import get_chat_service
 from .schemas import (
     ChatHistoryResponse,
@@ -34,14 +35,16 @@ def _stream_response(events: AsyncIterator[Dict[str, Any]]) -> StreamingResponse
                 data = event.get("data")
                 payload = data if isinstance(data, dict) else {"value": data}
                 yield _format_sse(name, payload)
-        except Exception as exc:
+        except Exception:
+            message = public_message_for_stage("server_error")
             yield _format_sse(
                 "error",
                 {
                     "stage": "server_error",
                     "error_code": "server_error",
                     "retryable": True,
-                    "message": str(exc),
+                    "message": message,
+                    "error_message": message,
                     "trace_id": get_trace_context().get("trace_id"),
                 },
             )

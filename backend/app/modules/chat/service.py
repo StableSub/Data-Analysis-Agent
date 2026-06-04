@@ -4,6 +4,7 @@ from typing import Any, AsyncIterator, Dict, Optional, cast
 
 from ...core.trace_logging import log_trace, trace_context
 from ...orchestration.client import AgentClient
+from ...orchestration.error_contract import sanitize_public_payload
 from ..datasets.repository import DatasetRepository
 from .models import ChatMessage, ChatSession
 from .repository import ChatRepository
@@ -304,10 +305,14 @@ class ChatService:
             error_message = error_message or analysis_result.get("error_message")
 
         if not error_message and isinstance(output_payload, dict):
+            public_error = output_payload.get("public_error")
+            if isinstance(public_error, dict):
+                error_stage = error_stage or public_error.get("stage") or public_error.get("error_stage")
+                error_message = public_error.get("message") or public_error.get("error_message")
             output_type = output_payload.get("type")
             output_content = output_payload.get("content")
             if isinstance(output_type, str) and output_type.endswith("_failed"):
-                error_message = output_content
+                error_message = error_message or output_content
 
         return {
             "error_stage": error_stage,
@@ -451,29 +456,40 @@ class ChatService:
                     answer_quality = event_quality
 
             elif event_type == "error":
+                public_event = sanitize_public_payload(event)
                 final_answer = event.get("answer") or "응답을 생성하지 못했습니다."
+                if isinstance(public_event, dict):
+                    final_answer = public_event.get("answer") or final_answer
                 event_error_stage = event.get("error_stage") or event.get("stage") or "unknown"
+                if isinstance(public_event, dict):
+                    event_error_stage = public_event.get("error_stage") or public_event.get("stage") or event_error_stage
                 event_error_message = event.get("error_message")
+                if isinstance(public_event, dict):
+                    event_error_message = public_event.get("error_message") or public_event.get("message") or event_error_message
                 if not isinstance(event_error_message, str) or not event_error_message:
                     event_error_message = final_answer
                 final_steps = event.get("thought_steps")
                 if isinstance(final_steps, list):
-                    thought_steps = [step for step in final_steps if isinstance(step, dict)]
+                    thought_steps = [
+                        step
+                        for step in sanitize_public_payload(final_steps)
+                        if isinstance(step, dict)
+                    ]
                 event_output = event.get("output")
                 if isinstance(event_output, dict):
-                    output_payload = event_output
+                    output_payload = sanitize_public_payload(event_output)
                     output_evidence = event_output.get("evidence_package")
                     if isinstance(output_evidence, dict):
-                        evidence_package = output_evidence
+                        evidence_package = sanitize_public_payload(output_evidence)
                     output_answer_quality = event_output.get("answer_quality")
                     if isinstance(output_answer_quality, dict):
-                        answer_quality = output_answer_quality
+                        answer_quality = sanitize_public_payload(output_answer_quality)
                 event_evidence = event.get("evidence_package")
                 if isinstance(event_evidence, dict):
-                    evidence_package = event_evidence
+                    evidence_package = sanitize_public_payload(event_evidence)
                 event_quality = event.get("answer_quality")
                 if isinstance(event_quality, dict):
-                    answer_quality = event_quality
+                    answer_quality = sanitize_public_payload(event_quality)
 
                 self.repository.append_message(session, "assistant", final_answer)
                 log_trace(
@@ -503,17 +519,42 @@ class ChatService:
                     "stage": event.get("stage") or event_error_stage,
                     "error_stage": event_error_stage,
                     "error_message": event_error_message,
-                    "error_code": event.get("error_code") or "unknown_error",
-                    "retryable": bool(event.get("retryable", False)),
-                    "output_type": event.get("output_type") or "",
+                    "error_code": (
+                        public_event.get("error_code")
+                        if isinstance(public_event, dict)
+                        else event.get("error_code")
+                    ) or "unknown_error",
+                    "retryable": bool(
+                        public_event.get("retryable", False)
+                        if isinstance(public_event, dict)
+                        else event.get("retryable", False)
+                    ),
+                    "output_type": (
+                        public_event.get("output_type")
+                        if isinstance(public_event, dict)
+                        else event.get("output_type")
+                    ) or "",
                 }
+                public_error = (
+                    public_event.get("public_error")
+                    if isinstance(public_event, dict)
+                    else event.get("public_error")
+                )
+                if isinstance(public_error, dict):
+                    error_data["public_error"] = sanitize_public_payload(public_error)
                 if isinstance(output_payload, dict):
                     error_data["output"] = output_payload
                 if isinstance(evidence_package, dict):
                     error_data["evidence_package"] = evidence_package
                 if isinstance(answer_quality, dict):
                     error_data["answer_quality"] = answer_quality
-                yield {"event": "error", "data": error_data}
+                yield {
+                    "event": "error",
+                    "data": sanitize_public_payload(
+                        error_data,
+                        fallback_message=event_error_message,
+                    ),
+                }
                 return
 
         final_answer = "".join(answer_parts).strip()

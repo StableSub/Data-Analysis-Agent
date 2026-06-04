@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 
+from ...orchestration.error_contract import public_message_for_stage, sanitize_public_payload
 from ..results.repository import ResultsRepository
 from .dependencies import get_analysis_service, get_results_repository
 from .schemas import AnalysisRunRequest
@@ -14,7 +15,7 @@ def run_analysis(
     service: AnalysisService = Depends(get_analysis_service),
 ):
     try:
-        return service.run(
+        result = service.run(
             question=request.question,
             source_id=request.source_id,
             session_id=request.session_id,
@@ -22,14 +23,22 @@ def run_analysis(
             guideline_context=request.guideline_context,
             model_id=request.model_id,
         )
+        return sanitize_public_payload(result)
     except FileNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="데이터셋을 찾을 수 없습니다.",
+        ) from exc
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=public_message_for_stage("plan_validation"),
+        ) from exc
     except Exception as exc:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
-        )
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=public_message_for_stage("server_error"),
+        ) from exc
 
 
 @router.get("/results/{analysis_result_id}")
@@ -45,7 +54,7 @@ def get_analysis_result(
         )
 
     result_json = result.result_json if isinstance(result.result_json, dict) else {}
-    return {
+    return sanitize_public_payload({
         "analysis_result_id": result.id,
         "source_id": results_repository.resolve_analysis_result_source_id(result) or "",
         "question": results_repository.resolve_analysis_result_question(result),
@@ -63,4 +72,4 @@ def get_analysis_result(
         "quality_reason": result_json.get("quality_reason"),
         "warnings": result_json.get("warnings", []),
         "created_at": result.created_at,
-    }
+    })

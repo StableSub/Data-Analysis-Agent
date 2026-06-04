@@ -11,6 +11,7 @@ from typing import Any
 import pandas as pd
 from pydantic import ValidationError
 
+from ...orchestration.error_contract import public_message_for_stage
 from .planner import VisualizationPlan
 from .service import VisualizationService
 
@@ -27,10 +28,10 @@ def execute_visualization_plan(
 ) -> dict[str, Any]:
     try:
         plan = VisualizationPlan.model_validate(approved_plan or visualization_plan or {})
-    except ValidationError as exc:
+    except ValidationError:
         return _build_unavailable_result(
             source_id="",
-            summary=f"시각화 계획 형식이 올바르지 않습니다: {exc}",
+            summary=public_message_for_stage("visualization"),
         )
 
     source_id = str(plan.source_id or "")
@@ -107,15 +108,9 @@ def execute_visualization_plan(
             )
 
         if int(run_result.get("returncode", 1)) != 0 or not output_path.exists():
-            stderr_text = str(run_result.get("stderr") or "").strip()
-            error_message = (
-                stderr_text.splitlines()[-1]
-                if stderr_text
-                else "시각화 코드 실행에 실패했습니다."
-            )
             return _build_unavailable_result(
                 source_id=source_id,
-                summary=f"시각화 코드 실행 실패: {error_message}",
+                summary="시각화 코드 실행에 실패했습니다.",
             )
 
         image_base64 = base64.b64encode(output_path.read_bytes()).decode("ascii")

@@ -22,23 +22,33 @@ from backend.app.modules.preprocess.planner import (
 )
 from backend.app.modules.eda.service import EDAService
 from backend.app.modules.preprocess.service import PreprocessService
+from backend.app.orchestration.error_contract import (
+    build_failure_output,
+    build_workflow_error_from_exception,
+)
 from backend.app.orchestration.state import PreprocessGraphState
 
 
 def _build_preprocess_plan_failed_output(exc: ValidationError) -> dict[str, Any]:
-    message = "전처리 계획 형식이 올바르지 않습니다."
+    workflow_error = build_workflow_error_from_exception(
+        stage="preprocess_plan",
+        error_code="structured_output_validation",
+        source="preprocess_plan",
+        output_type="preprocess_failed",
+        retryable=True,
+        exc=exc,
+    )
+    message = workflow_error["safe_message"]
     return {
+        "workflow_error": workflow_error,
         "preprocess_result": {
             "status": "failed",
             "summary": message,
             "applied_ops_count": 0,
-            "error": f"invalid preprocess plan: {exc}",
+            "error": message,
             "error_stage": "preprocess_plan",
         },
-        "output": {
-            "type": "preprocess_failed",
-            "content": message,
-        },
+        "output": build_failure_output(workflow_error),
         "pending_approval": {},
         "approved_plan": {},
     }

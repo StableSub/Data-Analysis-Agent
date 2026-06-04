@@ -17,6 +17,11 @@ from backend.app.core.trace_logging import set_trace_stage
 from backend.app.modules.analysis.schemas import AnalysisExecutionResult
 from backend.app.modules.planner.schemas import PlanningResult
 from backend.app.modules.analysis.service import AnalysisService
+from backend.app.orchestration.error_contract import (
+    build_failure_output as build_public_failure_output,
+    build_workflow_error,
+    build_workflow_error_from_exception,
+)
 from backend.app.orchestration.state import AnalysisGraphState
 from backend.app.orchestration.utils import resolve_target_source_id
 
@@ -38,11 +43,54 @@ def build_analysis_workflow(
                 return dumped
         return None
 
-    def _build_failure_output(message: str) -> Dict[str, Any]:
-        return {
-            "type": "analysis_failed",
-            "content": message,
-        }
+    def _build_analysis_workflow_error(
+        *,
+        stage: str,
+        error_code: str = "analysis_execution_failed",
+        source: str = "analysis_workflow",
+        output_type: str = "analysis_failed",
+        retryable: bool = True,
+        diagnostic_message: str = "",
+        details: Dict[str, Any] | None = None,
+    ) -> Dict[str, Any]:
+        return build_workflow_error(
+            stage=stage,
+            error_code=error_code,
+            source=source,
+            output_type=output_type,
+            retryable=retryable,
+            diagnostic_message=diagnostic_message,
+            details=details,
+        )
+
+    def _build_workflow_error_from_planning_exception(
+        *,
+        exc: Exception,
+        source_id: str | None,
+    ) -> Dict[str, Any]:
+        diagnostic_message = str(exc)
+        if "QuestionUnderstanding" in diagnostic_message:
+            return build_workflow_error_from_exception(
+                stage="question_understanding",
+                error_code="structured_output_validation",
+                source="llm_structured_output",
+                output_type="planning_failed",
+                retryable=True,
+                exc=exc,
+                details={
+                    "schema_name": "QuestionUnderstanding",
+                    "source_id": source_id or "",
+                },
+            )
+        return build_workflow_error_from_exception(
+            stage="plan_validation",
+            error_code="planning_failed",
+            source="analysis_planning",
+            output_type="planning_failed",
+            retryable=True,
+            exc=exc,
+            details={"source_id": source_id or ""},
+        )
 
     def _current_dataset_context(
         state: AnalysisGraphState,
@@ -79,12 +127,20 @@ def build_analysis_workflow(
         question = str(state.get("user_input", "")).strip()
         source_id = resolve_target_source_id(state)
         if not question:
+            workflow_error = _build_analysis_workflow_error(
+                stage="question_understanding",
+                error_code="invalid_question",
+                source="analysis_planning",
+                output_type="planning_failed",
+                retryable=False,
+            )
+            error_message = workflow_error["safe_message"]
             analysis_error = analysis_service.processor.build_error(
                 "question_understanding",
-                "user_input is empty",
+                error_message,
             )
-            error_message = analysis_error.message
             return {
+                "workflow_error": workflow_error,
                 "analysis_error": analysis_error.model_dump(),
                 "analysis_result": AnalysisExecutionResult(
                     execution_status="fail",
@@ -94,7 +150,7 @@ def build_analysis_workflow(
                     quality_reason=analysis_error.message,
                 ).model_dump(),
                 "final_status": "fail",
-                "output": _build_failure_output(error_message),
+                "output": build_public_failure_output(workflow_error),
             }
 
         try:
@@ -132,16 +188,21 @@ def build_analysis_workflow(
                 "final_status": "planning",
             }
         except Exception as exc:
+            workflow_error = _build_workflow_error_from_planning_exception(
+                exc=exc,
+                source_id=source_id,
+            )
+            error_message = workflow_error["safe_message"]
             analysis_error = analysis_service.processor.build_error(
-                "plan_validation",
-                str(exc),
+                str(workflow_error["stage"]),
+                error_message,
                 detail={
                     "source_id": source_id or "",
                     "exception_type": type(exc).__name__,
                 },
             )
-            error_message = analysis_error.message
             return {
+                "workflow_error": workflow_error,
                 "analysis_error": analysis_error.model_dump(),
                 "analysis_result": AnalysisExecutionResult(
                     execution_status="fail",
@@ -151,7 +212,7 @@ def build_analysis_workflow(
                     quality_reason=analysis_error.message,
                 ).model_dump(),
                 "final_status": "fail",
-                "output": _build_failure_output(error_message),
+                "output": build_public_failure_output(workflow_error),
             }
 
     # planning 결과에 따라 execution, clarification 종료, fail 종료를 분기한다.
@@ -177,11 +238,19 @@ def build_analysis_workflow(
         source_id = resolve_target_source_id(state)
         dataset = analysis_service._get_dataset(source_id or "")
         if dataset is None:
+            workflow_error = _build_analysis_workflow_error(
+                stage="sandbox_execution",
+                error_code="dataset_not_found",
+                source="analysis_execution",
+                retryable=False,
+                diagnostic_message=f"dataset not found: {source_id or ''}",
+            )
             analysis_error = analysis_service.processor.build_error(
                 "sandbox_execution",
-                f"dataset not found: {source_id or ''}",
+                workflow_error["safe_message"],
             )
             result = {
+                "workflow_error": workflow_error,
                 "analysis_error": analysis_error.model_dump(),
                 "analysis_result": AnalysisExecutionResult(
                     execution_status="fail",
@@ -216,12 +285,18 @@ def build_analysis_workflow(
         set_trace_stage("analysis_validation")
         result = state.get("analysis_result")
         if not isinstance(result, dict):
+            workflow_error = _build_analysis_workflow_error(
+                stage="result_validation",
+                error_code="analysis_validation_failed",
+                source="analysis_validation",
+            )
+            error_message = workflow_error["safe_message"]
             analysis_error = analysis_service.processor.build_error(
                 "result_validation",
-                "analysis_result is missing",
+                error_message,
             )
-            error_message = analysis_error.message
             output = {
+                "workflow_error": workflow_error,
                 "analysis_error": analysis_error.model_dump(),
                 "analysis_result": AnalysisExecutionResult(
                     execution_status="fail",
@@ -231,7 +306,7 @@ def build_analysis_workflow(
                     quality_reason=analysis_error.message,
                 ).model_dump(),
                 "final_status": "fail",
-                "output": _build_failure_output(error_message),
+                "output": build_public_failure_output(workflow_error),
             }
             return output
 
@@ -243,21 +318,44 @@ def build_analysis_workflow(
             }
 
         if state.get("analysis_error") is None:
+            workflow_error = _build_analysis_workflow_error(
+                stage=execution_result.error_stage or "result_validation",
+                error_code="analysis_validation_failed",
+                source="analysis_validation",
+                diagnostic_message=execution_result.error_message or "",
+            )
             analysis_error = analysis_service.processor.build_error(
                 execution_result.error_stage or "result_validation",
-                execution_result.error_message or "analysis execution failed",
+                workflow_error["safe_message"],
             )
-            error_message = analysis_error.message
             return {
+                "workflow_error": workflow_error,
                 "analysis_error": analysis_error.model_dump(),
                 "final_status": "fail",
-                "output": _build_failure_output(error_message),
+                "output": build_public_failure_output(workflow_error),
             }
         existing_error = state.get("analysis_error") or {}
-        error_message = str(existing_error.get("message") or execution_result.error_message or "analysis execution failed")
+        workflow_error = state.get("workflow_error")
+        if not isinstance(workflow_error, dict):
+            error_stage = str(
+                existing_error.get("stage")
+                or execution_result.error_stage
+                or "result_validation"
+            )
+            workflow_error = _build_analysis_workflow_error(
+                stage=error_stage,
+                error_code="analysis_execution_failed",
+                source="analysis_validation",
+                diagnostic_message=str(
+                    existing_error.get("message")
+                    or execution_result.error_message
+                    or ""
+                ),
+            )
         return {
+            "workflow_error": workflow_error,
             "final_status": "fail",
-            "output": _build_failure_output(error_message),
+            "output": build_public_failure_output(workflow_error),
         }
 
     # validation 결과가 success면 persist로 아니면 바로 종료한다.
@@ -282,15 +380,24 @@ def build_analysis_workflow(
                 "analysis_result_id": result_id,
             }
         except Exception as exc:
+            workflow_error = build_workflow_error_from_exception(
+                stage="persist_result",
+                error_code="analysis_execution_failed",
+                source="analysis_persist",
+                output_type="analysis_failed",
+                retryable=True,
+                exc=exc,
+            )
             analysis_error = analysis_service.processor.build_error(
                 "persist_result",
-                str(exc),
+                workflow_error["safe_message"],
                 detail={"exception_type": type(exc).__name__},
             )
             return {
+                "workflow_error": workflow_error,
                 "analysis_error": analysis_error.model_dump(),
                 "final_status": "fail",
-                "output": _build_failure_output(analysis_error.message),
+                "output": build_public_failure_output(workflow_error),
             }
 
     graph = StateGraph(AnalysisGraphState)

@@ -14,6 +14,11 @@ from langgraph.types import interrupt
 
 from backend.app.core.trace_logging import set_trace_stage
 from backend.app.modules.reports.service import ReportService
+from backend.app.orchestration.error_contract import (
+    build_failure_output,
+    build_workflow_error_from_exception,
+    public_message_for_stage,
+)
 from backend.app.orchestration.state import ReportGraphState
 def _get_report_revision_instruction(state: ReportGraphState) -> str:
     revision_request = state.get("revision_request")
@@ -46,17 +51,24 @@ def _build_failed_report_state(
     *,
     draft: Dict[str, Any] | None,
     error: str,
+    workflow_error: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
-    failed = _build_failed_report_payload(draft=draft, error=error)
+    safe_error = (
+        str(workflow_error.get("safe_message"))
+        if isinstance(workflow_error, dict) and workflow_error.get("safe_message")
+        else public_message_for_stage("report")
+    )
+    failed = _build_failed_report_payload(draft=draft, error=safe_error)
     return {
+        "workflow_error": workflow_error or {},
         "report_draft": failed,
         "report_result": failed,
         "final_status": "fail",
         "pending_approval": {},
         "revision_request": {},
-        "output": {
+        "output": build_failure_output(workflow_error) if workflow_error else {
             "type": "report_failed",
-            "content": "리포트 생성에 실패했습니다.",
+            "content": safe_error,
         },
     }
 
@@ -101,7 +113,19 @@ def build_report_workflow(*, report_service: ReportService, default_model: str =
                 default_model=default_model,
             )
         except Exception as exc:
-            failed = _build_failed_report_state(draft=None, error=str(exc))
+            workflow_error = build_workflow_error_from_exception(
+                stage="report",
+                error_code="report_failed",
+                source="report_draft",
+                output_type="report_failed",
+                retryable=True,
+                exc=exc,
+            )
+            failed = _build_failed_report_state(
+                draft=None,
+                error=workflow_error["safe_message"],
+                workflow_error=workflow_error,
+            )
             failed["report_draft"]["revision_count"] = revision_count
             failed["report_result"]["revision_count"] = revision_count
             return failed
@@ -199,7 +223,19 @@ def build_report_workflow(*, report_service: ReportService, default_model: str =
                 summary_text=report_text,
             )
         except Exception as exc:
-            return _build_failed_report_state(draft=draft, error=str(exc))
+            workflow_error = build_workflow_error_from_exception(
+                stage="report",
+                error_code="report_failed",
+                source="report_finalize",
+                output_type="report_failed",
+                retryable=True,
+                exc=exc,
+            )
+            return _build_failed_report_state(
+                draft=draft,
+                error=workflow_error["safe_message"],
+                workflow_error=workflow_error,
+            )
 
         result = {
             **draft,

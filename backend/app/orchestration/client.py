@@ -10,6 +10,13 @@ from typing import Any, AsyncIterator, Dict
 from langgraph.types import Command
 
 from ..core.trace_logging import log_trace
+from .error_contract import (
+    build_failure_output,
+    public_message_for_stage,
+    sanitize_public_message,
+    sanitize_public_payload,
+    to_public_error,
+)
 from .state_view import build_approval_wait_step, collect_thought_steps, make_thought_step
 
 
@@ -117,31 +124,70 @@ class AgentClient:
             # 실패 분기: error event 전송 후 종료 
             if self._is_failed_state(final_state):
                 summary = self._summarize_snapshot(final_state)
-                error_stage = summary.get("error_stage") or "unknown"
-                error_message = summary.get("error_message")
-                answer = self._extract_answer(final_state)
+                workflow_error = final_state.get("workflow_error")
+                public_error = to_public_error(workflow_error if isinstance(workflow_error, dict) else None)
+                has_workflow_error = isinstance(workflow_error, dict)
+                error_stage = public_error["stage"] if has_workflow_error else summary.get("error_stage") or "unknown"
+                fallback_message = public_error["message"] if has_workflow_error else public_message_for_stage(str(error_stage))
+                error_message = (
+                    public_error["message"]
+                    if has_workflow_error
+                    else sanitize_public_message(
+                        str(summary.get("error_message") or ""),
+                        fallback_message=fallback_message,
+                    )
+                )
+                answer = (
+                    public_error["message"]
+                    if has_workflow_error
+                    else sanitize_public_message(
+                        self._extract_answer(final_state),
+                        fallback_message=fallback_message,
+                    )
+                )
+                output_payload = (
+                    build_failure_output(workflow_error)
+                    if has_workflow_error
+                    else final_state.get("output")
+                )
+                thought_steps = [
+                    step
+                    for step in sanitize_public_payload(
+                        thought_steps,
+                        fallback_message=fallback_message,
+                    )
+                    if isinstance(step, dict)
+                ]
                 error_event: Dict[str, Any] = {
                     "type": "error",
                     "status": "failed",
                     "stage": error_stage,
                     "error_stage": error_stage,
                     "error_message": error_message if isinstance(error_message, str) else answer,
-                    "error_code": self._resolve_error_code(final_state, summary),
-                    "retryable": self._resolve_retryable(final_state, summary),
+                    "error_code": public_error["error_code"] if has_workflow_error else self._resolve_error_code(final_state, summary),
+                    "retryable": public_error["retryable"] if has_workflow_error else self._resolve_retryable(final_state, summary),
                     "answer": answer,
                     "thought_steps": thought_steps,
-                    "output_type": self._extract_output_type(final_state),
+                    "output_type": public_error["output_type"] if has_workflow_error else self._extract_output_type(final_state),
                 }
-                output = final_state.get("output")
-                if isinstance(output, dict):
-                    error_event["output"] = output
+                if has_workflow_error:
+                    error_event["message"] = public_error["message"]
+                    error_event["public_error"] = public_error
+                if isinstance(output_payload, dict):
+                    error_event["output"] = sanitize_public_payload(
+                        output_payload,
+                        fallback_message=fallback_message,
+                    )
                 evidence_package = final_state.get("evidence_package")
                 if isinstance(evidence_package, dict):
-                    error_event["evidence_package"] = evidence_package
+                    error_event["evidence_package"] = sanitize_public_payload(evidence_package)
                 answer_quality = final_state.get("answer_quality")
                 if isinstance(answer_quality, dict):
-                    error_event["answer_quality"] = answer_quality
-                yield error_event
+                    error_event["answer_quality"] = sanitize_public_payload(answer_quality)
+                yield sanitize_public_payload(
+                    error_event,
+                    fallback_message=fallback_message,
+                )
                 return
             
             # 정상 완료 분기 : done event 전송
@@ -306,6 +352,9 @@ class AgentClient:
     @staticmethod
     def _resolve_error_code(state: Dict[str, Any], summary: Dict[str, Any]) -> str:
         """실패 원인을 machine-readable error_code 로 변환한다."""
+        workflow_error = state.get("workflow_error")
+        if isinstance(workflow_error, dict) and isinstance(workflow_error.get("error_code"), str):
+            return str(workflow_error["error_code"])
         output = state.get("output") or {}
         output_type = str(output.get("type") or "")
  
@@ -340,6 +389,9 @@ class AgentClient:
     @staticmethod
     def _resolve_retryable(state: Dict[str, Any], summary: Dict[str, Any]) -> bool:
         """해당 오류가 클라이언트 재시도로 복구 가능한지 판단한다."""
+        workflow_error = state.get("workflow_error")
+        if isinstance(workflow_error, dict) and "retryable" in workflow_error:
+            return bool(workflow_error.get("retryable", False))
         error_code = AgentClient._resolve_error_code(state, summary)
         return error_code in ("planning_failed", "analysis_execution_failed", "analysis_empty_result", "unknown_error",)
  
@@ -357,10 +409,21 @@ class AgentClient:
         error_stage = None
         error_message = None
         error_type = None
+        workflow_error = snapshot.get("workflow_error")
 
-        if isinstance(analysis_error, dict):
+        if isinstance(workflow_error, dict):
+            public_error = to_public_error(workflow_error)
+            error_stage = public_error["stage"]
+            error_message = public_error["message"]
+            details = workflow_error.get("details")
+            if isinstance(details, dict):
+                error_type = details.get("exception_type") or details.get("error_type")
+
+        if not error_stage and isinstance(analysis_error, dict):
             error_stage = analysis_error.get("stage")
+        if not error_message and isinstance(analysis_error, dict):
             error_message = analysis_error.get("message")
+        if isinstance(analysis_error, dict):
             detail = analysis_error.get("detail")
             if isinstance(detail, dict):
                 error_type = detail.get("exception_type") or detail.get("error_type")

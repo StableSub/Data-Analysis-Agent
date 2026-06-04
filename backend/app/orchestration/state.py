@@ -148,8 +148,20 @@ class AnswerQualityPayload(TypedDict, total=False):
 class OutputPayload(TypedDict, total=False):
     type: str
     content: str
+    public_error: Dict[str, Any]
     evidence_package: EvidencePackagePayload
     answer_quality: AnswerQualityPayload
+
+
+class WorkflowErrorPayload(TypedDict, total=False):
+    stage: str
+    error_code: str
+    source: str
+    output_type: str
+    retryable: bool
+    safe_message: str
+    diagnostic_message: str
+    details: Dict[str, Any]
 
 
 class PlanningResultPayload(TypedDict, total=False):
@@ -205,6 +217,7 @@ class AgentState(TypedDict, total=False):
     sandbox_result: Dict[str, Any]
     analysis_result: Dict[str, Any]
     analysis_error: Dict[str, Any]
+    workflow_error: WorkflowErrorPayload
 
 
 class IntakeRouterState(AgentState, total=False):

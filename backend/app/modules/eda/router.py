@@ -165,12 +165,12 @@ def get_eda_distribution(
     except EDAInvalidRequestError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
+            detail="EDA 요청 형식이 올바르지 않습니다.",
         ) from exc
     except EDAUnsupportedRequestError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(exc),
+            detail="지원하지 않는 EDA 요청입니다.",
         ) from exc
     if distribution is None:
         raise HTTPException(

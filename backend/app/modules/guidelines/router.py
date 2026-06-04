@@ -23,7 +23,7 @@ async def upload_guideline(
             content_type=file.content_type,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail="지침서 업로드 요청이 올바르지 않습니다.") from exc
     except RagEmbeddingError as exc:
         raise HTTPException(status_code=500, detail="EMBEDDING_ERROR") from exc
     except Exception as exc:

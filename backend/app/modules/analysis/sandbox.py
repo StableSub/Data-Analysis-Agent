@@ -8,6 +8,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+from pydantic import ValidationError
+
 from .schemas import AnalysisOutputPayload, SandboxExecutionResult
 
 _FORBIDDEN_CALLS = {
@@ -147,11 +149,11 @@ class AnalysisSandbox:
                     stderr=str(exc.stderr or ""),
                 )
             # 기타 실행 예외 처리
-            except Exception as exc:
+            except Exception:
                 return SandboxExecutionResult(
                     ok=False,
                     error_type="runtime",
-                    message=f"failed to execute analysis code: {exc}",
+                    message="analysis execution failed",
                 )
             # 프로세스 종료 코드 검사
             stderr_text = str(completed.stderr or "")
@@ -193,11 +195,11 @@ class AnalysisSandbox:
             # 출력 스키마를 검증한다.
             try:
                 output_payload = AnalysisOutputPayload.model_validate(payload)
-            except Exception as exc:
+            except ValidationError:
                 return SandboxExecutionResult(
                     ok=False,
                     error_type="invalid_json",
-                    message=f"analysis output schema validation failed: {exc}",
+                    message="analysis output schema validation failed",
                     stderr=stderr_text,
                 )
 
@@ -232,6 +234,6 @@ class AnalysisSandbox:
     def _validate_source_code(self, code: str) -> str | None:
         try:
             validate_analysis_source_code(code, require_print=False)
-        except ValueError as exc:
-            return str(exc)
+        except ValueError:
+            return "analysis source validation failed"
         return None

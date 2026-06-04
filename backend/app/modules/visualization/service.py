@@ -3,6 +3,7 @@ from typing import Any, Dict
 
 import pandas as pd
 
+from ...orchestration.error_contract import public_message_for_stage
 from ..analysis.schemas import AnalysisExecutionResult, AnalysisPlan
 from ..datasets.repository import DatasetRepository
 from ..datasets.service import DatasetReader
@@ -104,10 +105,10 @@ class VisualizationService:
             )
         except FileNotFoundError:
             return {"error": "FILE_NOT_FOUND", "message": "파일이 존재하지 않습니다."}
-        except ValueError as exc:
-            return {"error": "INVALID_COLUMN", "message": str(exc)}
-        except Exception as exc:
-            return {"error": "INTERNAL_ERROR", "message": f"데이터 처리 중 오류: {exc}"}
+        except ValueError:
+            return {"error": "INVALID_COLUMN", "message": "요청한 시각화 컬럼이 올바르지 않습니다."}
+        except Exception:
+            return {"error": "INTERNAL_ERROR", "message": public_message_for_stage("visualization")}
 
         if df.empty:
             return {"error": "NO_DATA", "message": "조회된 데이터가 없습니다."}

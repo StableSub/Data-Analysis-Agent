@@ -11,6 +11,7 @@ from ..profiling.service import DatasetContextService
 from ..results.models import AnalysisResult as AnalysisResultModel
 from ..results.repository import ResultsRepository
 from ..visualization.service import VisualizationService
+from ...orchestration.error_contract import public_message_for_stage
 from .processor import AnalysisProcessor
 from .run_service import AnalysisRunService
 from .sandbox import AnalysisSandbox
@@ -216,9 +217,10 @@ class AnalysisService:
                 )
             except Exception as exc:
                 stage = "code_generation" if not generated_code else "code_validation"
+                safe_message = public_message_for_stage(stage)
                 analysis_error = self.processor.build_error(
                     stage,
-                    str(exc),
+                    safe_message,
                     detail={
                         "attempt": attempt + 1,
                         "exception_type": type(exc).__name__,

@@ -30,7 +30,9 @@ def test_preprocess_plan_validation_error_becomes_failed_output() -> None:
     assert result["preprocess_result"]["status"] == "failed"
     assert result["preprocess_result"]["applied_ops_count"] == 0
     assert result["preprocess_result"]["error_stage"] == "preprocess_plan"
-    assert "scale.method" in result["preprocess_result"]["error"]
+    assert "scale.method" not in result["preprocess_result"]["error"]
+    assert "scale.method" in result["workflow_error"]["diagnostic_message"]
+    assert result["workflow_error"]["error_code"] == "structured_output_validation"
     assert result["output"]["type"] == "preprocess_failed"
     assert "전처리 계획 형식" in result["output"]["content"]
     assert result["pending_approval"] == {}

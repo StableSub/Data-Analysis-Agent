@@ -12,6 +12,7 @@ from ..modules.chat_fast_path import (
 from ..modules.datasets.service import DatasetReadError
 from ..modules.planner.service import build_handoff_from_planning_result
 from .ai import answer_data_question, answer_general_question
+from .error_contract import build_failure_output, build_workflow_error_from_exception
 from .evidence import build_evidence_contract
 from .intake_router import build_intake_router_workflow
 from .state import MainWorkflowState
@@ -349,12 +350,18 @@ def build_main_workflow(
                 model_id=state.get("model_id"),
             )
         except Exception as exc:
+            workflow_error = build_workflow_error_from_exception(
+                stage="plan_validation",
+                error_code="planning_failed",
+                source="main_planner",
+                output_type="planning_failed",
+                retryable=True,
+                exc=exc,
+            )
             return {
+                "workflow_error": workflow_error,
                 "final_status": "fail",
-                "output": {
-                    "type": "planning_failed",
-                    "content": str(exc),
-                },
+                "output": build_failure_output(workflow_error),
             }
 
         return {
