@@ -34,7 +34,9 @@ import {
   listChatSessions,
   listDatasets,
   type ChatHistoryMessage,
+  type GuidelineResponse,
   type PendingApprovalPayload,
+  uploadGuidelineFile,
 } from "../../lib/api";
 import {
   hasVisualizationArtifact,
@@ -247,11 +249,15 @@ export default function Workbench() {
   const [canvasView, setCanvasView] = useState<CanvasView>("current");
   const canvasScrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const guidelineFileInputRef = useRef<HTMLInputElement>(null);
   const chatThreadEndRef = useRef<HTMLDivElement>(null);
   const initializedRef = useRef(false);
   const lastAutoOpenedPreEdaSourceRef = useRef<string | null>(null);
   const restoreRequestSeqRef = useRef(0);
   const expectedSessionIdRef = useRef<string | null>(activeSessionId);
+  const [guidelines, setGuidelines] = useState<GuidelineResponse[]>([]);
+  const [selectedGuidelineSourceId, setSelectedGuidelineSourceId] = useState<string | null>(null);
+  const [guidelineUploadProgress, setGuidelineUploadProgress] = useState<number | null>(null);
 
   // Reset canvas view when pipeline state transitions forward
   useEffect(() => {
@@ -326,13 +332,18 @@ export default function Workbench() {
       if (!targetSessionId) {
         return;
       }
-      const snapshot = captureSessionContext();
+      const snapshot = {
+        ...captureSessionContext(),
+        uploadedGuidelines: guidelines,
+        selectedGuidelineSourceId,
+        guidelinesScopedToSession: true,
+      };
       updateSession(targetSessionId, {
         backendSessionId: snapshot.backendSessionId,
         context: snapshot,
       });
     },
-    [captureSessionContext, updateSession],
+    [captureSessionContext, guidelines, selectedGuidelineSourceId, updateSession],
   );
 
   const markExpectedSession = useCallback((sessionId: string | null) => {
@@ -553,6 +564,13 @@ export default function Workbench() {
         return;
       }
       restoreSessionContext(nextContext);
+      const nextGuidelines = nextContext.uploadedGuidelines ?? [];
+      setGuidelines(nextGuidelines);
+      setSelectedGuidelineSourceId(
+        nextGuidelines.some((item) => item.source_id === nextContext.selectedGuidelineSourceId)
+          ? nextContext.selectedGuidelineSourceId
+          : null,
+      );
     },
     [reconcileSessionDatasets, updateSession, restoreSessionContext],
   );
@@ -572,6 +590,8 @@ export default function Workbench() {
     saveSessionSnapshot(activeSessionId);
     const nextSession = createSession();
     markExpectedSession(nextSession.id);
+    setGuidelines([]);
+    setSelectedGuidelineSourceId(null);
     clearForNewDraft();
   }, [activeSessionId, saveSessionSnapshot, createSession, clearForNewDraft, markExpectedSession]);
 
@@ -658,9 +678,9 @@ export default function Workbench() {
           : undefined;
       markSessionActivity(targetSession.id, nextTitle ? { title: nextTitle } : undefined);
 
-      handleSend(value, modelId);
+      handleSend(value, modelId, selectedGuidelineSourceId);
     },
-    [ensureActiveSessionForInteraction, markSessionActivity, handleSend],
+    [ensureActiveSessionForInteraction, markSessionActivity, handleSend, selectedGuidelineSourceId],
   );
 
   useEffect(() => {
@@ -701,6 +721,8 @@ export default function Workbench() {
       if (!initialSession) {
         markExpectedSession(null);
         restoreSessionContext(baseContext);
+        setGuidelines(baseContext.uploadedGuidelines ?? []);
+        setSelectedGuidelineSourceId(baseContext.selectedGuidelineSourceId ?? null);
         initializedRef.current = true;
         return;
       }
@@ -735,18 +757,28 @@ export default function Workbench() {
     if (state === "running" || state === "uploading") {
       return;
     }
-    const snapshot = captureSessionContext();
+    const snapshot = {
+      ...captureSessionContext(),
+      uploadedGuidelines: guidelines,
+      selectedGuidelineSourceId,
+      guidelinesScopedToSession: true,
+    };
     updateActiveSession({
       backendSessionId: snapshot.backendSessionId,
       context: snapshot,
     });
-  }, [activeSessionId, state, captureSessionContext, updateActiveSession]);
+  }, [activeSessionId, state, captureSessionContext, guidelines, selectedGuidelineSourceId, updateActiveSession]);
 
   useEffect(() => {
     if (!initializedRef.current || !activeSessionId || sessionId === null) {
       return;
     }
-    const snapshot = captureSessionContext();
+    const snapshot = {
+      ...captureSessionContext(),
+      uploadedGuidelines: guidelines,
+      selectedGuidelineSourceId,
+      guidelinesScopedToSession: true,
+    };
     updateActiveSession({
       backendSessionId: sessionId,
       context: {
@@ -754,11 +786,15 @@ export default function Workbench() {
         backendSessionId: sessionId,
       },
     });
-  }, [activeSessionId, sessionId, captureSessionContext, updateActiveSession]);
+  }, [activeSessionId, sessionId, captureSessionContext, guidelines, selectedGuidelineSourceId, updateActiveSession]);
 
   /** Open file picker for real file selection */
   const openFilePicker = useCallback(() => {
     fileInputRef.current?.click();
+  }, []);
+
+  const openGuidelineFilePicker = useCallback(() => {
+    guidelineFileInputRef.current?.click();
   }, []);
 
   const handleFileSelected = useCallback(
@@ -773,6 +809,38 @@ export default function Workbench() {
       if (fileInputRef.current) fileInputRef.current.value = "";
     },
     [ensureActiveSessionForInteraction, markSessionActivity, pipeline],
+  );
+
+  const handleGuidelineFileSelected = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) {
+        return;
+      }
+
+      if (!file.name.toLowerCase().endsWith(".pdf")) {
+        toast.error("Guideline은 PDF 파일만 업로드할 수 있습니다.");
+        if (guidelineFileInputRef.current) guidelineFileInputRef.current.value = "";
+        return;
+      }
+
+      const targetSession = ensureActiveSessionForInteraction();
+      markSessionActivity(targetSession.id);
+      setGuidelineUploadProgress(0);
+      try {
+        const uploaded = await uploadGuidelineFile(file, setGuidelineUploadProgress);
+        setGuidelines((prev) => [uploaded, ...prev.filter((item) => item.source_id !== uploaded.source_id)]);
+        setSelectedGuidelineSourceId(uploaded.source_id);
+        toast.success("Guideline을 업로드하고 현재 채팅에 연결했습니다.");
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Guideline 업로드에 실패했습니다.";
+        toast.error(message);
+      } finally {
+        setGuidelineUploadProgress(null);
+        if (guidelineFileInputRef.current) guidelineFileInputRef.current.value = "";
+      }
+    },
+    [ensureActiveSessionForInteraction, markSessionActivity],
   );
 
   /** Handle Dropzone onDrop — if FileList is empty (button click), open picker */
@@ -1049,9 +1117,43 @@ export default function Workbench() {
   const CenterSubHeader = (
     <div className="flex w-full min-w-0 items-center gap-3">
       <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
+        {(guidelines.length > 0 || guidelineUploadProgress !== null) && (
+          <>
+            <span className="text-[11px] font-medium text-[var(--genui-muted)] whitespace-nowrap">Guideline</span>
+            {guidelineUploadProgress !== null ? (
+              <span className="inline-flex h-7 min-w-0 max-w-[210px] items-center rounded-md border border-[var(--genui-border)] bg-[var(--genui-surface)] px-2 text-xs text-[var(--genui-text)]">
+                업로드 중 {guidelineUploadProgress}%
+              </span>
+            ) : (
+              <div className="relative min-w-0 w-full max-w-[210px]">
+                <select
+                  value={selectedGuidelineSourceId ?? ""}
+                  onChange={(event) => setSelectedGuidelineSourceId(event.target.value || null)}
+                  className="h-7 w-full min-w-0 appearance-none rounded-md border border-[var(--genui-border)] bg-[var(--genui-surface)] pl-2 pr-8 text-xs text-[var(--genui-text)] focus:outline-none focus:ring-1 focus:ring-[var(--genui-focus-ring)]"
+                >
+                  <option value="">선택 안 함 (일반 질문)</option>
+                  {guidelines.map((guideline) => (
+                    <option key={guideline.source_id} value={guideline.source_id}>
+                      {guideline.filename}
+                    </option>
+                  ))}
+                </select>
+                <span className="pointer-events-none absolute inset-y-0 right-2 inline-flex items-center text-[var(--genui-muted)]">
+                  <ChevronDown className="w-3.5 h-3.5" />
+                </span>
+              </div>
+            )}
+          </>
+        )}
         {hasUploadedDatasets ? (
           <>
-            <span className="text-[11px] font-medium text-[var(--genui-muted)] whitespace-nowrap">데이터 소스</span>
+            <span
+              className={`text-[11px] font-medium text-[var(--genui-muted)] whitespace-nowrap ${
+                guidelines.length > 0 || guidelineUploadProgress !== null ? "ml-3" : ""
+              }`}
+            >
+              데이터 소스
+            </span>
             <div className="relative min-w-0 w-full max-w-[210px]">
               <select
                 value={selectedSourceId ?? ""}
@@ -1144,6 +1246,13 @@ export default function Workbench() {
         accept=".csv"
         className="hidden"
         onChange={handleFileSelected}
+      />
+      <input
+        ref={guidelineFileInputRef}
+        type="file"
+        accept=".pdf,application/pdf"
+        className="hidden"
+        onChange={handleGuidelineFileSelected}
       />
 
       {state === "empty" && (
@@ -1474,6 +1583,7 @@ export default function Workbench() {
       onSend={handleSendMessage}
       onStop={() => pipeline.handleCancel()}
       onUploadDataset={openFilePicker}
+      onAddFiles={openGuidelineFilePicker}
     />
   );
 

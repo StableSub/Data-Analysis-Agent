@@ -59,6 +59,7 @@
   - `session_id`
   - `model_id`
   - `source_id`
+  - `guideline_source_id`
   - `trace_id`
 - 핵심 응답 형태:
   - SSE 스트림

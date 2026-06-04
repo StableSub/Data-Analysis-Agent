@@ -50,6 +50,7 @@ class ChatService:
         session_id: Optional[int] = None,
         model_id: Optional[str] = None,
         source_id: Optional[str] = None,
+        guideline_source_id: Optional[str] = None,
         trace_id: Optional[str] = None,
     ) -> AsyncIterator[Dict[str, Any]]:
         source_id = (source_id or "").strip() or None
@@ -115,6 +116,7 @@ class ChatService:
                     "session_id": session.id,
                     "run_id": run_id,
                     "source_id": source_id,
+                    "guideline_source_id": guideline_source_id,
                     "question": question,
                     "question_length": len(question),
                     "model_id": model_id,
@@ -148,6 +150,7 @@ class ChatService:
                     question=question,
                     dataset=dataset,
                     model_id=model_id,
+                    guideline_source_id=guideline_source_id,
                 ),
                 session=session,
             ):

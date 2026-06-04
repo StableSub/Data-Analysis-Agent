@@ -54,6 +54,30 @@ export interface DatasetListResponse {
   items: DatasetResponse[];
 }
 
+export interface GuidelineResponse {
+  id: number;
+  source_id: string;
+  guideline_id: string;
+  filename: string;
+  storage_path: string;
+  filesize: number | null;
+  version: number;
+  is_active: boolean;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface GuidelineListResponse {
+  total: number;
+  items: GuidelineResponse[];
+}
+
+export interface GuidelineActivateResponse {
+  source_id: string;
+  is_active: boolean;
+  message: string;
+}
+
 export interface SampleResponse {
   source_id: string;
   columns: string[];
@@ -314,6 +338,25 @@ export function listDatasets(
     limit: String(limit),
   });
   return apiRequest<DatasetListResponse>(`/datasets/?${params.toString()}`);
+}
+
+/** GET /guidelines/ */
+export function listGuidelines(
+  skip = 0,
+  limit = 20,
+): Promise<GuidelineListResponse> {
+  const params = new URLSearchParams({
+    skip: String(skip),
+    limit: String(limit),
+  });
+  return apiRequest<GuidelineListResponse>(`/guidelines/?${params.toString()}`);
+}
+
+/** POST /guidelines/{source_id}/activate */
+export function activateGuideline(sourceId: string): Promise<GuidelineActivateResponse> {
+  return apiRequest<GuidelineActivateResponse>(`/guidelines/${sourceId}/activate`, {
+    method: "POST",
+  });
 }
 
 /** DELETE /datasets/{source_id} */
@@ -778,6 +821,39 @@ export function uploadFile(
 
     xhr.addEventListener("error", () => reject(new Error("네트워크 오류")));
     xhr.addEventListener("abort", () => reject(new Error("업로드 취소됨")));
+
+    const fd = new FormData();
+    fd.append("file", file);
+    xhr.send(fd);
+  });
+}
+
+export function uploadGuidelineFile(
+  file: File,
+  onProgress: (percent: number) => void,
+): Promise<GuidelineResponse> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${API_BASE}/guidelines/upload`);
+
+    xhr.upload.addEventListener("progress", (e) => {
+      if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
+    });
+
+    xhr.addEventListener("load", () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(JSON.parse(xhr.responseText));
+      } else {
+        try {
+          reject(new Error(JSON.parse(xhr.responseText).detail));
+        } catch {
+          reject(new Error(`HTTP ${xhr.status}`));
+        }
+      }
+    });
+
+    xhr.addEventListener("error", () => reject(new Error("네트워크 오류")));
+    xhr.addEventListener("abort", () => reject(new Error("지침서 업로드 취소됨")));
 
     const fd = new FormData();
     fd.append("file", file);

@@ -18,6 +18,8 @@ interface WorkbenchCommandBarProps {
   onStop?: () => void;
   /** Called when "Upload dataset" is selected from the attach menu */
   onUploadDataset?: () => void;
+  /** Called when "Add photos & files" is selected from the attach menu */
+  onAddFiles?: () => void;
   className?: string;
 }
 
@@ -33,6 +35,7 @@ export function WorkbenchCommandBar({
   onSend, 
   onStop,
   onUploadDataset,
+  onAddFiles,
   className
 }: WorkbenchCommandBarProps) {
   const [value, setValue] = useState("");
@@ -190,7 +193,10 @@ export function WorkbenchCommandBar({
                   onUploadDataset?.();
                   setIsAttachMenuOpen(false);
                 }}
-                onAddFiles={() => setIsAttachMenuOpen(false)}
+                onAddFiles={() => {
+                  onAddFiles?.();
+                  setIsAttachMenuOpen(false);
+                }}
               />
             </div>
 

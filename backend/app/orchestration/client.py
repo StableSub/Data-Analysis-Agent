@@ -31,6 +31,7 @@ class AgentClient:
         context: str | None = None,
         dataset: Any | None = None,
         model_id: str | None = None,
+        guideline_source_id: str | None = None,
         resume: Dict[str, Any] | None = None,
     ) -> AsyncIterator[Dict[str, Any]]:
         async with self._runtime() as runtime:
@@ -44,6 +45,7 @@ class AgentClient:
                     context=context,
                     dataset=dataset,
                     model_id=model_id,
+                    guideline_source_id=guideline_source_id,
                 )
                 if early_answer is not None:
                     yield {"type": "chunk", "delta": early_answer}
@@ -227,6 +229,7 @@ class AgentClient:
         context: str | None,
         dataset: Any | None,
         model_id: str | None,
+        guideline_source_id: str | None,
     ) -> tuple[Dict[str, Any], str | None]:
         question_text = (question or "").strip()
         context_text = (context or "").strip()
@@ -239,6 +242,7 @@ class AgentClient:
             "session_id": str(session_id or ""),
             "run_id": str(run_id or ""),
             "model_id": model_id or self.default_model,
+            "active_guideline_source_id": (guideline_source_id or "").strip(),
             # source_id is the dataset this run should actively use.
             "source_id": getattr(dataset, "source_id", None) if dataset is not None else None,
         }

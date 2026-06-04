@@ -58,7 +58,12 @@ def build_guideline_workflow(
         """
         역할: 활성 지침서의 인덱스 존재 여부를 확인하고 필요 시 새로 인덱싱한다.
         """
-        active_guideline = guideline_service.get_active_guideline()
+        selected_source_id = str(state.get("active_guideline_source_id") or "").strip()
+        active_guideline = (
+            guideline_service.get_guideline_by_source_id(selected_source_id)
+            if selected_source_id
+            else None
+        )
         if active_guideline is None:
             guideline_result = {
                 "status": "no_active_guideline",
