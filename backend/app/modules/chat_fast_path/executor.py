@@ -8,6 +8,12 @@ import pandas as pd
 
 from ..datasets.service import DatasetReader
 from .decision import CommonAnalyticsFastPathDecision
+from .label_distribution import (
+    counts_table,
+    pass_or_fail_metrics,
+    pass_or_fail_summary,
+    serialize_value,
+)
 
 
 _TOP_N = 5
@@ -85,7 +91,7 @@ def _execute_basic_metric(
 
     counts = series.dropna().value_counts()
     total = int(counts.sum())
-    table = _counts_table(counts, total=total)
+    table = counts_table(counts, total=total, top_n=_TOP_N)
     if metric == "top":
         top_row = table[0] if table else {}
         return CommonAnalyticsExecutionResult(
@@ -98,13 +104,20 @@ def _execute_basic_metric(
             raw_metrics={"column": column, "metric": metric, "total": total},
         )
 
+    raw_metrics: dict[str, Any] = {"column": column, "metric": metric, "total": total}
+    label_metrics = pass_or_fail_metrics(column=column, table=table, total=total)
+    summary = f"{column} {metric} calculated for top {min(len(table), _TOP_N)} values"
+    if label_metrics is not None:
+        raw_metrics.update(label_metrics)
+        summary = pass_or_fail_summary(label_metrics)
+
     return CommonAnalyticsExecutionResult(
         operation="basic_metric",
         metric=metric,
         columns=[column],
-        summary=f"{column} {metric} calculated for top {min(len(table), _TOP_N)} values",
+        summary=summary,
         table=table,
-        raw_metrics={"column": column, "metric": metric, "total": total},
+        raw_metrics=raw_metrics,
     )
 
 
@@ -148,7 +161,7 @@ def _execute_group_metric(
     values = _apply_group_metric(grouped, metric)
     table = [
         {
-            "group": _serialize_value(group),
+            "group": serialize_value(group),
             metric: _round_float(value),
         }
         for group, value in values.sort_values(ascending=False).head(_TOP_N).items()
@@ -217,20 +230,6 @@ def _numeric_metric(series: pd.Series, metric: str) -> float | None:
     raise ValueError(f"unsupported numeric metric: {metric}")
 
 
-def _counts_table(counts: pd.Series, *, total: int) -> list[dict[str, Any]]:
-    rows = []
-    for value, count in counts.head(_TOP_N).items():
-        count_int = int(count)
-        rows.append(
-            {
-                "value": _serialize_value(value),
-                "count": count_int,
-                "ratio": _round_float(count_int / total) if total else 0.0,
-            }
-        )
-    return rows
-
-
 def _resolve_group_metric_columns(
     *,
     columns: list[str],
@@ -272,16 +271,6 @@ def _round_float(value: object) -> float | None:
 def _format_number(value: object) -> str:
     if value is None:
         return "N/A"
-    return str(value)
-
-
-def _serialize_value(value: object) -> str:
-    if pd.isna(value):
-        return "null"
-    if isinstance(value, pd.Timestamp):
-        return value.isoformat()
-    if hasattr(value, "item"):
-        value = value.item()
     return str(value)
 
 

@@ -43,6 +43,7 @@ backend/tests/*
 !backend/tests/test_dataset_list_contract.py
 !backend/tests/test_eda_ai_summary_ux_contract.py
 !backend/tests/test_eda_service_contract.py
+!backend/tests/test_chat_fast_path_executor.py
 !backend/tests/guideline_first_fakes.py
 !backend/tests/test_guideline_first_clarification.py
 !backend/tests/test_guideline_rag_workflow_contract.py
@@ -54,6 +55,7 @@ backend/tests/*
 !backend/tests/test_planner_route_accuracy.py
 !backend/tests/test_backend_requirements_contract.py
 !backend/tests/test_preprocess_plan_contract.py
+!backend/tests/test_rag_dependencies.py
 !backend/tests/test_preprocess_workflow_error_handling.py
 !backend/tests/test_report_prompt_contract.py
 !backend/tests/test_visualization_result_contract.py

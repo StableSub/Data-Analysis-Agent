@@ -1,7 +1,10 @@
 from functools import lru_cache
 from pathlib import Path
+from typing import Protocol
 
 from fastapi import Depends
+import numpy as np
+from numpy.typing import NDArray
 from sqlalchemy.orm import Session
 
 from ...core.db import get_db
@@ -23,11 +26,43 @@ def _guideline_vector_storage_dir() -> Path:
     return Path(__file__).resolve().parents[4] / "storage" / "guideline_vectors"
 
 
-@lru_cache(maxsize=1)
-def get_embedder():
-    from .infra.embedding import E5Embedder
+class Embedder(Protocol):
+    model_name: str
+    embedding_dim: int
 
-    return E5Embedder()
+    def embed_documents(self, texts: list[str]) -> NDArray[np.float32]:
+        ...
+
+    def embed_query(self, query: str) -> NDArray[np.float32]:
+        ...
+
+
+class LazyEmbedder:
+    def __init__(self, model_name: str = "intfloat/multilingual-e5-small") -> None:
+        self.model_name: str = model_name
+        self._delegate: Embedder | None = None
+
+    @property
+    def embedding_dim(self) -> int:
+        return self._get_delegate().embedding_dim
+
+    def embed_documents(self, texts: list[str]) -> NDArray[np.float32]:
+        return self._get_delegate().embed_documents(texts)
+
+    def embed_query(self, query: str) -> NDArray[np.float32]:
+        return self._get_delegate().embed_query(query)
+
+    def _get_delegate(self) -> Embedder:
+        if self._delegate is None:
+            from .infra.embedding import E5Embedder
+
+            self._delegate = E5Embedder(self.model_name)
+        return self._delegate
+
+
+@lru_cache(maxsize=1)
+def get_embedder() -> LazyEmbedder:
+    return LazyEmbedder()
 
 
 def build_rag_repository(db: Session) -> RagRepository:
@@ -42,11 +77,12 @@ def build_rag_service(
     *,
     repository: RagRepository,
     dataset_repository: DatasetRepository,
-    answer_agent=None,
+    answer_agent: object | None = None,
+    storage_dir: Path | None = None,
 ) -> RagService:
     return RagService(
         repository=repository,
-        storage_dir=_vector_storage_dir(),
+        storage_dir=storage_dir or _vector_storage_dir(),
         embedder=get_embedder(),
         dataset_repository=dataset_repository,
         answer_agent=answer_agent,
@@ -95,10 +131,11 @@ def get_guideline_rag_repository(db: Session = Depends(get_db)) -> GuidelineRagR
 def build_guideline_rag_service(
     *,
     repository: GuidelineRagRepository,
+    storage_dir: Path | None = None,
 ) -> GuidelineRagService:
     return GuidelineRagService(
         repository=repository,
-        storage_dir=_guideline_vector_storage_dir(),
+        storage_dir=storage_dir or _guideline_vector_storage_dir(),
         embedder=get_embedder(),
     )
 
