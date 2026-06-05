@@ -43,6 +43,9 @@ backend/tests/*
 !backend/tests/test_dataset_list_contract.py
 !backend/tests/test_eda_ai_summary_ux_contract.py
 !backend/tests/test_eda_service_contract.py
+!backend/tests/guideline_first_fakes.py
+!backend/tests/test_guideline_first_clarification.py
+!backend/tests/test_guideline_rag_workflow_contract.py
 !backend/tests/test_preprocess_processor_contract.py
 !backend/tests/test_preprocess_service_contract.py
 !backend/tests/test_preprocess_source_naming.py

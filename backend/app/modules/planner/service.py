@@ -16,7 +16,7 @@ from ..analysis.schemas import (
 from ..profiling.schemas import DatasetContext
 from ..profiling.prompt_context import trim_fast_path_bulk_context_fields
 from ..profiling.service import DatasetContextService
-from .schemas import PlannerDecision, PlanningResult
+from .schemas import PlannerDecision, PlanningResult, PlanningRoute
 
 PROMPTS = PromptRegistry(
     {
@@ -41,15 +41,21 @@ PROMPTS = PromptRegistry(
         "question_understanding.system": (
             "너는 데이터 분석 질문 해석기다. "
             "사용자 질문을 QuestionUnderstanding 스키마로 구조화하라. "
-            "질문이 모호하면 ambiguity_status를 needs_clarification으로 설정하고 clarification_message를 작성하라. "
+            "질문이 모호해 보여도 guideline_context.has_evidence가 true이고 "
+            "그 근거에 용어, 컬럼, 지표, 공식 매핑이 있으면 먼저 그 근거로 해석하라. "
+            "guideline_context로도 해소되지 않는 모호성만 needs_clarification으로 설정하고 clarification_message를 작성하라. "
             "metric_keywords와 group_keywords는 실제 컬럼명이 아니라 질문에서 추출한 개념 중심 키워드로 작성하라. "
             "질문에 3월, 2월, 이번 달처럼 상대적으로 해석 가능한 월/기간 표현이 있고 dataset_meta의 시간 범위 안에서 자연스럽게 해석 가능하면 불필요한 clarification을 만들지 마라."
         ),
         "plan_draft.system": (
             "너는 데이터 분석 플래너다. "
-            "입력으로 주어진 질문 해석 결과, 컬럼 grounding 결과, 데이터셋 메타정보를 바탕으로 "
+            "입력으로 주어진 질문 해석 결과, 컬럼 grounding 결과, 데이터셋 메타정보, guideline_context를 바탕으로 "
             "AnalysisPlanDraft 스키마 형식으로만 반환하라. "
-            "질문이 모호하면 ambiguity_status를 needs_clarification으로 설정하라. "
+            "guideline_context.has_evidence가 true이면 먼저 그 근거의 용어, 컬럼, 지표, 공식 매핑을 적용하라. "
+            "guideline_context로도 해소되지 않는 모호성만 ambiguity_status를 needs_clarification으로 설정하라. "
+            "가이드라인이 0/1 indicator에서 1이 결함/불량이라고 정의하고 불량률을 결함 건수/전체 건수로 설명하면, "
+            "그 indicator 컬럼의 avg 또는 rate metric으로 계획하고 positive_value에 1을 넣어라. "
+            "전역 filters로 결함 행만 남겨 전체 분모를 제거하지 마라. "
             "metrics는 반드시 최소 1개 이상 포함하라. "
             "결측치 현황, missing value, missing rate, 전처리 계획 요청에서는 "
             "column, columns, column_name, column_names, column_type, data_type, feature_type 같은 "
@@ -131,6 +137,7 @@ class PlannerService:
         understanding = self._build_question_understanding(
             user_input=user_input,
             dataset_meta=metadata,
+            guideline_context=guideline_context,
             model_id=model_id,
         )
         if understanding.ambiguity_status != "clear":
@@ -153,6 +160,7 @@ class PlannerService:
             question_understanding=understanding,
             column_grounding=column_grounding,
             dataset_meta=metadata,
+            guideline_context=guideline_context,
             model_id=model_id,
         )
         if plan_draft.ambiguity_status != "clear":
@@ -215,6 +223,7 @@ class PlannerService:
         *,
         user_input: str,
         dataset_meta: MetadataSnapshot,
+        guideline_context: Mapping[str, Any] | None,
         model_id: str | None,
     ) -> QuestionUnderstanding:
         return self.llm.invoke_structured(
@@ -225,7 +234,8 @@ class PlannerService:
                 HumanMessage(
                     content=(
                         f"question:\n{user_input.strip()}\n\n"
-                        f"dataset_meta:\n{self._to_json(dataset_meta.model_dump())}"
+                        f"dataset_meta:\n{self._to_json(dataset_meta.model_dump())}\n\n"
+                        f"guideline_context:\n{self._to_json(dict(guideline_context or {}))}"
                     )
                 ),
             ],
@@ -238,6 +248,7 @@ class PlannerService:
         question_understanding: QuestionUnderstanding,
         column_grounding: BaseModel,
         dataset_meta: MetadataSnapshot,
+        guideline_context: Mapping[str, Any] | None,
         model_id: str | None,
     ) -> AnalysisPlanDraft:
         return self.llm.invoke_structured(
@@ -250,7 +261,8 @@ class PlannerService:
                         f"question:\n{user_input.strip()}\n\n"
                         f"question_understanding:\n{self._to_json(question_understanding.model_dump())}\n\n"
                         f"column_grounding:\n{self._to_json(column_grounding.model_dump())}\n\n"
-                        f"dataset_meta:\n{self._to_json(dataset_meta.model_dump())}"
+                        f"dataset_meta:\n{self._to_json(dataset_meta.model_dump())}\n\n"
+                        f"guideline_context:\n{self._to_json(dict(guideline_context or {}))}"
                     )
                 ),
             ],
@@ -269,7 +281,7 @@ class PlannerService:
         return self.dataset_context_service.build_context(source_id)
 
     @staticmethod
-    def _resolve_route(decision: PlannerDecision) -> str:
+    def _resolve_route(decision: PlannerDecision) -> PlanningRoute:
         if decision.is_general_question:
             return "general_question"
         if (

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, Mapping
 
 from .error_contract import public_message_for_stage, to_public_error
+from .guideline_status import is_guideline_absence_status
 
 _DETAIL_MESSAGE_LIMIT = 180
 _DISPLAY_COPY = {
@@ -54,7 +55,7 @@ def _as_dict(value: Any) -> Dict[str, Any] | None:
     return None
 
 
-def build_merged_context(state: Dict[str, Any]) -> Dict[str, Any]:
+def build_merged_context(state: Mapping[str, Any]) -> Dict[str, Any]:
     merged_context: Dict[str, Any] = {"applied_steps": []}
 
     request_context = state.get("request_context")
@@ -507,7 +508,7 @@ def collect_thought_steps(state: Dict[str, Any]) -> list[Dict[str, str]]:
                     message=guideline_summary.strip(),
                     display_message=(
                         _DISPLAY_COPY["guideline_not_used"]
-                        if guideline_status == "no_active_guideline"
+                        if is_guideline_absence_status(str(guideline_status or ""))
                         else _DISPLAY_COPY["guideline_used"]
                     ),
                 )

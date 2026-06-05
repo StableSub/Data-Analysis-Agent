@@ -7,6 +7,7 @@ from .state import (
     EvidencePackagePayload,
     EvidenceWarningPayload,
 )
+from .guideline_status import GUIDELINE_ABSENCE_STATUSES
 
 _DEFAULT_ABSTAIN_REASON = (
     "최종 답변을 만들 수 있는 분석 결과나 검색 근거가 "
@@ -14,8 +15,7 @@ _DEFAULT_ABSTAIN_REASON = (
 )
 _MILD_NO_EVIDENCE_CODES = {
     "rag_no_evidence",
-    "no_evidence",
-    "no_active_guideline",
+    *GUIDELINE_ABSENCE_STATUSES,
 }
 
 
@@ -153,7 +153,7 @@ def build_evidence_contract(
         )
         if guideline_summary:
             evidence_package["guideline_evidence_summary"] = guideline_summary
-        if guideline_status in {"no_evidence", "no_active_guideline"}:
+        if guideline_status in GUIDELINE_ABSENCE_STATUSES:
             _append_warning(
                 warnings,
                 stage="guideline",

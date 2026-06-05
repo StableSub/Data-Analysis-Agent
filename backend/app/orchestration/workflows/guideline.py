@@ -2,7 +2,7 @@
 Guideline 서브그래프.
 
 역할:
-- 활성화된 지침서 인덱스 존재 여부를 확인하고 필요 시 생성한다.
+- 현재 chat 요청에서 선택된 지침서 인덱스 존재 여부를 확인하고 필요 시 생성한다.
 - 질문과 관련된 지침서 컨텍스트를 검색한다.
 - 검색 결과를 근거 요약 형태로 정리한다.
 """
@@ -17,6 +17,11 @@ from pydantic import BaseModel, Field
 
 from ...core.ai import LLMGateway
 from ...core.trace_logging import set_trace_stage
+from ..guideline_status import (
+    GUIDELINE_MISSING,
+    NO_ACTIVE_GUIDELINE,
+    NO_SELECTED_GUIDELINE,
+)
 from ..state import GuidelineGraphState
 from ...modules.guidelines.service import GuidelineService
 from ...modules.rag.service import GuidelineRagService
@@ -33,7 +38,7 @@ def build_guideline_workflow(
     default_model: str = "gpt-5-nano",
 ):
     """
-    역할: 활성 지침서 확인, 검색, 근거 요약 3단계로 구성된 guideline 서브그래프를 생성한다.
+    역할: 선택 지침서 확인, 검색, 근거 요약 3단계로 구성된 guideline 서브그래프를 생성한다.
     입력: guideline 조회용 service, guideline RAG service, 요약용 기본 모델명을 받는다.
     출력: `guideline_result`, `guideline_index_status`를 누적하는 컴파일된 그래프를 반환한다.
     """
@@ -56,28 +61,58 @@ def build_guideline_workflow(
     def ensure_guideline_index_node(state: GuidelineGraphState) -> Dict[str, Any]:
         set_trace_stage("guideline_index")
         """
-        역할: 활성 지침서의 인덱스 존재 여부를 확인하고 필요 시 새로 인덱싱한다.
+        역할: 선택된 지침서의 인덱스 존재 여부를 확인하고 필요 시 새로 인덱싱한다.
         """
+        has_selection_key = "active_guideline_source_id" in state
         selected_source_id = str(state.get("active_guideline_source_id") or "").strip()
-        active_guideline = (
-            guideline_service.get_guideline_by_source_id(selected_source_id)
-            if selected_source_id
-            else None
-        )
-        if active_guideline is None:
+        if not selected_source_id:
+            absence_status = (
+                NO_SELECTED_GUIDELINE if has_selection_key else NO_ACTIVE_GUIDELINE
+            )
+            evidence_summary = (
+                "선택된 지침서가 없어 지침 근거를 확인하지 못했습니다."
+                if has_selection_key
+                else "활성화된 지침서가 없어 지침 근거를 확인하지 못했습니다."
+            )
             guideline_result = {
-                "status": "no_active_guideline",
+                "status": absence_status,
                 "has_evidence": False,
                 "retrieved_chunks": [],
                 "retrieved_count": 0,
-                "evidence_summary": "활성화된 지침서가 없어 지침 근거를 확인하지 못했습니다.",
+                "evidence_summary": evidence_summary,
             }
             return {
                 "active_guideline_source_id": "",
-                "guideline_index_status": {"status": "no_active_guideline"},
+                "guideline_index_status": {"status": absence_status},
                 "guideline_result": guideline_result,
                 "guideline_context": build_guideline_context(
                     active_source_id="",
+                    guideline_result=guideline_result,
+                ),
+                "guideline_data_exists": False,
+            }
+
+        active_guideline = guideline_service.get_guideline_by_source_id(
+            selected_source_id
+        )
+        if active_guideline is None:
+            guideline_result = {
+                "status": GUIDELINE_MISSING,
+                "source_id": selected_source_id,
+                "has_evidence": False,
+                "retrieved_chunks": [],
+                "retrieved_count": 0,
+                "evidence_summary": "선택한 지침서를 찾을 수 없어 지침 근거를 확인하지 못했습니다.",
+            }
+            return {
+                "active_guideline_source_id": selected_source_id,
+                "guideline_index_status": {
+                    "status": GUIDELINE_MISSING,
+                    "source_id": selected_source_id,
+                },
+                "guideline_result": guideline_result,
+                "guideline_context": build_guideline_context(
+                    active_source_id=selected_source_id,
                     guideline_result=guideline_result,
                 ),
                 "guideline_data_exists": False,
@@ -99,7 +134,7 @@ def build_guideline_workflow(
     def retrieve_guideline_context_node(state: GuidelineGraphState) -> Dict[str, Any]:
         set_trace_stage("guideline_retrieve")
         """
-        역할: 사용자 질문으로 활성 지침서 검색을 수행해 컨텍스트와 청크 메타데이터를 구성한다.
+        역할: 사용자 질문으로 선택 지침서 검색을 수행해 컨텍스트와 청크 메타데이터를 구성한다.
         """
         query = str(state.get("user_input", "")).strip()
         index_status = state.get("guideline_index_status")
@@ -145,8 +180,12 @@ def build_guideline_workflow(
             "retrieved_count": len(retrieved_chunks),
             "has_evidence": bool(retrieved_chunks),
             "status": (
-                "no_active_guideline"
-                if status_value == "no_active_guideline"
+                status_value
+                if status_value in {
+                    NO_ACTIVE_GUIDELINE,
+                    NO_SELECTED_GUIDELINE,
+                    GUIDELINE_MISSING,
+                }
                 else ("retrieved" if retrieved_chunks else "no_evidence")
             ),
         }
@@ -173,8 +212,12 @@ def build_guideline_workflow(
             existing_summary = str(guideline_result_dict.get("evidence_summary") or "").strip()
             if existing_summary:
                 no_evidence_summary = existing_summary
-            elif guideline_result_dict.get("status") == "no_active_guideline":
+            elif guideline_result_dict.get("status") == NO_ACTIVE_GUIDELINE:
                 no_evidence_summary = "활성화된 지침서가 없어 지침 근거를 확인하지 못했습니다."
+            elif guideline_result_dict.get("status") == NO_SELECTED_GUIDELINE:
+                no_evidence_summary = "선택된 지침서가 없어 지침 근거를 확인하지 못했습니다."
+            elif guideline_result_dict.get("status") == GUIDELINE_MISSING:
+                no_evidence_summary = "선택한 지침서를 찾을 수 없어 지침 근거를 확인하지 못했습니다."
             else:
                 no_evidence_summary = "관련 지침 근거를 찾지 못했습니다."
             updated_guideline_result = {

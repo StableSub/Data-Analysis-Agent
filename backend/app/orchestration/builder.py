@@ -14,6 +14,7 @@ from ..modules.planner.service import build_handoff_from_planning_result
 from .ai import answer_data_question, answer_general_question
 from .error_contract import build_failure_output, build_workflow_error_from_exception
 from .evidence import build_evidence_contract
+from .guideline_routing import route_after_guideline
 from .intake_router import build_intake_router_workflow
 from .state import MainWorkflowState
 from .state_view import build_merged_context
@@ -150,7 +151,7 @@ def build_main_workflow(
 
     def status_terminal(state: MainWorkflowState) -> Dict[str, Any]:
         set_trace_stage("workflow_terminal")
-        merged_context = build_merged_context(state)
+        merged_context = build_merged_context(dict(state))
         evidence_package, answer_quality = build_evidence_contract(
             state=state,
             merged_context=merged_context,
@@ -199,7 +200,7 @@ def build_main_workflow(
 
     def merge_context_node(state: MainWorkflowState) -> Dict[str, Any]:
         set_trace_stage("merge_context")
-        merged_context = build_merged_context(state)
+        merged_context = build_merged_context(dict(state))
         evidence_package, answer_quality = build_evidence_contract(
             state=state,
             merged_context=merged_context,
@@ -372,12 +373,14 @@ def build_main_workflow(
 
     def data_qa_terminal(state: MainWorkflowState) -> Dict[str, Any]:
         set_trace_stage("data_qa")
-        evidence_package = state.get("evidence_package")
-        if not isinstance(evidence_package, dict):
-            evidence_package = {}
-        answer_quality = state.get("answer_quality")
-        if not isinstance(answer_quality, dict):
-            answer_quality = {}
+        raw_evidence_package = state.get("evidence_package")
+        evidence_package: dict[str, Any] = (
+            dict(raw_evidence_package) if isinstance(raw_evidence_package, dict) else {}
+        )
+        raw_answer_quality = state.get("answer_quality")
+        answer_quality: dict[str, Any] = (
+            dict(raw_answer_quality) if isinstance(raw_answer_quality, dict) else {}
+        )
 
         if answer_quality.get("answerable") is False:
             answer_text = str(
@@ -443,7 +446,7 @@ def build_main_workflow(
 
     def analysis_fail_terminal(state: MainWorkflowState) -> Dict[str, Any]:
         set_trace_stage("analysis_failed")
-        merged_context = build_merged_context(state)
+        merged_context = build_merged_context(dict(state))
         evidence_package, answer_quality = build_evidence_contract(
             state=state,
             merged_context=merged_context,
@@ -489,6 +492,7 @@ def build_main_workflow(
         {
             "general_question": "general_question_terminal",
             "dataset_selected": "dataset_context",
+            "guideline_selected": "guideline_flow",
         },
     )
     graph.add_edge("dataset_context", "chat_fast_path")
@@ -500,7 +504,14 @@ def build_main_workflow(
             "skipped": "guideline_flow",
         },
     )
-    graph.add_edge("guideline_flow", "planner")
+    graph.add_conditional_edges(
+        "guideline_flow",
+        route_after_guideline,
+        {
+            "merge_context": "merge_context",
+            "planner": "planner",
+        },
+    )
     graph.add_conditional_edges(
         "planner",
         route_after_planner,
