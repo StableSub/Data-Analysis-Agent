@@ -21,6 +21,7 @@ import {
   type EdaPreprocessRecommendation,
   type EdaProfileResponse,
   type EdaRecommendedOperation,
+  type EdaSuggestedQuestion,
   type EdaStatsResponse,
   type AnswerQualityPayload,
   type EvidencePackagePayload,
@@ -157,6 +158,7 @@ export interface UseAnalysisPipelineReturn {
   runStatus: RunStatusData | undefined;
   pipelineSteps: PipelineStep[] | undefined;
   evidence: EvidenceFooterProps;
+  chatResponse: ChatResponse | null;
   thoughtSteps: ThoughtStep[];
   chatHistory: ChatHistoryMessage[];
   milestones: HistoryItem[];
@@ -420,6 +422,24 @@ function buildServerSummaryBullets(
   ];
 }
 
+function mapEdaSuggestedQuestions(
+  questions: EdaSuggestedQuestion[] | undefined,
+): PreEdaProfile["suggestedQuestions"] {
+  if (!Array.isArray(questions)) {
+    return [];
+  }
+  return questions
+    .map((item) => ({
+      title: item.title.trim(),
+      question: item.question.trim(),
+      rationale: item.rationale.trim(),
+      category: item.category,
+      priority: item.priority,
+    }))
+    .filter((item) => item.title && item.question && item.rationale)
+    .slice(0, 5);
+}
+
 function getRecommendationWarning(
   recommendation: EdaPreprocessRecommendation | null | undefined,
 ): string | null {
@@ -539,6 +559,7 @@ async function loadServerPreEdaProfile(
         qualitySummary: buildServerQualitySummary(profile, insights),
         summaryBullets: buildServerSummaryBullets(profile, insights),
         datasetOverview: mapEdaDatasetOverview(insights.dataset_overview),
+        suggestedQuestions: mapEdaSuggestedQuestions(insights.suggested_questions),
         serverRecommendation,
       },
       recommendationMode: preprocessRecommendationResponse.generation_mode,
@@ -984,12 +1005,15 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
         : serverDatasets[0]?.sourceId ?? null;
     const selectedServerDataset =
       serverDatasets.find((dataset) => dataset.sourceId === selectedServerSourceId) ?? null;
+    const hasPreviousResult = Boolean(chatHistory.length > 0 || latestVisualizationResult || chatResponse);
     const nextStateHint: PipelineSessionStateHint =
-      selectedServerSourceId
-        ? "ready"
-        : chatHistory.length > 0 || latestVisualizationResult || chatResponse
-          ? "success"
-          : "empty";
+      state === "error"
+        ? "error"
+        : selectedServerSourceId
+          ? "ready"
+          : hasPreviousResult
+            ? "success"
+            : "empty";
     const nextContext: PipelineSessionContext = {
       backendSessionId: sessionId,
       runId,
@@ -2809,6 +2833,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
     runStatus: derivedRunStatus,
     pipelineSteps: derivedPipelineSteps,
     evidence: derivedEvidence,
+    chatResponse,
     thoughtSteps,
     chatHistory,
     milestones,

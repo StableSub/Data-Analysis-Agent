@@ -1,4 +1,8 @@
-import type { EdaDatasetOverview, EdaPreprocessRecommendation } from "../../lib/api";
+import type {
+  EdaDatasetOverview,
+  EdaPreprocessRecommendation,
+  EdaSuggestedQuestion,
+} from "../../lib/api";
 
 export interface NumericSnapshot {
   column: string;
@@ -94,6 +98,14 @@ export interface DatasetOverview {
   matchedTerms: string[];
 }
 
+export interface SuggestedQuestion {
+  title: string;
+  question: string;
+  rationale: string;
+  category: EdaSuggestedQuestion["category"];
+  priority: EdaSuggestedQuestion["priority"];
+}
+
 export interface PreEdaProfile {
   sourceLabel: string;
   uploadedAt: string;
@@ -119,6 +131,7 @@ export interface PreEdaProfile {
   qualitySummary: string;
   summaryBullets: string[];
   datasetOverview: DatasetOverview | null;
+  suggestedQuestions: SuggestedQuestion[];
   serverRecommendation: EdaPreprocessRecommendation | null;
 }
 
@@ -474,6 +487,7 @@ function createFallbackProfile(file: File, uploadedAt: string): PreEdaProfile {
       "업로드 후 질문과 후속 Analysis 흐름은 그대로 진행할 수 있습니다.",
     ],
     datasetOverview: null,
+    suggestedQuestions: [],
     serverRecommendation: null,
   };
 }
@@ -925,6 +939,7 @@ export async function buildPreEdaProfile(file: File): Promise<PreEdaProfile | nu
     qualitySummary,
     summaryBullets,
     datasetOverview: null,
+    suggestedQuestions: [],
     serverRecommendation: null,
   };
 }

@@ -6,6 +6,7 @@ import pandas as pd
 from .ai import generate_eda_ai_summary
 from .guideline_overview import build_dataset_overview, build_guideline_context
 from .insights import build_deterministic_ai_summary
+from .nonexpert_guidance import build_suggested_questions
 from .numeric import finite_float, finite_numeric_frame, finite_numeric_series
 from .schemas import (
     EDAAISummaryResponse,
@@ -587,6 +588,7 @@ class EDAService:
             quality_issues=[str(item) for item in summary_content.get("quality_issues", [])],
             key_insights=[str(item) for item in summary_content.get("key_insights", [])],
             dataset_overview=dataset_overview,
+            suggested_questions=build_suggested_questions(payload),
         )
 
     def _build_prompt_summary(

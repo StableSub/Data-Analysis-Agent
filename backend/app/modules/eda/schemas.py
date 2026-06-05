@@ -131,12 +131,28 @@ class EDADatasetOverview(BaseModel):
     matched_terms: list[str] = Field(default_factory=list)
 
 
+class EDASuggestedQuestion(BaseModel):
+    title: str
+    question: str
+    rationale: str
+    category: Literal[
+        "overview",
+        "quality",
+        "comparison",
+        "trend",
+        "outlier",
+        "visualization",
+    ]
+    priority: Literal["high", "medium", "low"] = "medium"
+
+
 class EDAAISummaryResponse(BaseModel):
     source_id: str
     structure_summary: str = ""
     quality_issues: list[str] = Field(default_factory=list)
     key_insights: list[str] = Field(default_factory=list)
     dataset_overview: EDADatasetOverview | None = None
+    suggested_questions: list[EDASuggestedQuestion] = Field(default_factory=list)
 
 
 class EDAProfileResponse(BaseModel):

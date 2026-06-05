@@ -139,3 +139,33 @@ def test_frontend_mapping_still_consumes_existing_eda_insight_keys() -> None:
     assert "handleSend(value, modelId, selectedGuidelineSourceId)" in workbench_source
     assert "pipeline.startUpload(file, selectedGuidelineSourceId)" in workbench_source
     assert "pipeline.retrySelectedPreEda(selectedGuidelineSourceId)" in workbench_source
+
+
+def test_frontend_surfaces_nonexpert_starters_evidence_and_repair_guidance() -> None:
+    project_root = Path(__file__).resolve().parents[2]
+    api_source = (project_root / "frontend/src/lib/api.ts").read_text(encoding="utf-8")
+    profile_source = (
+        project_root / "frontend/src/app/lib/preEdaProfile.ts"
+    ).read_text(encoding="utf-8")
+    hook_source = (
+        project_root / "frontend/src/app/hooks/useAnalysisPipeline.ts"
+    ).read_text(encoding="utf-8")
+    workbench_source = (
+        project_root / "frontend/src/app/pages/Workbench.tsx"
+    ).read_text(encoding="utf-8")
+    pre_eda_source = (
+        project_root / "frontend/src/app/components/genui/PreEdaBoard.tsx"
+    ).read_text(encoding="utf-8")
+    assistant_source = (
+        project_root / "frontend/src/app/components/genui/AssistantReportMessage.tsx"
+    ).read_text(encoding="utf-8")
+
+    assert "export interface EdaSuggestedQuestion" in api_source
+    assert "suggested_questions: EdaSuggestedQuestion[]" in api_source
+    assert "suggestedQuestions:" in profile_source
+    assert "mapEdaSuggestedQuestions(insights.suggested_questions)" in hook_source
+    assert "onUseSuggestedQuestion" in pre_eda_source
+    assert "처음 질문하기 좋은 항목" in pre_eda_source
+    assert "handleUseSuggestedQuestion" in workbench_source
+    assert "GuidedRepairCard" in assistant_source
+    assert "EvidenceExplainer" in assistant_source

@@ -184,6 +184,102 @@ def test_eda_insights_route_returns_fallback_when_llm_generation_fails(
     assert "dataset_overview" not in body
 
 
+def test_eda_insights_returns_dataset_aware_suggested_questions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _make_repository()
+    _register_dataset(
+        repository,
+        tmp_path,
+        source_id="eda-source",
+        filename="sales.csv",
+        content=(
+            "event_date,region,revenue,orders\n"
+            "2026-01-01,north,100,10\n"
+            "2026-01-02,south,,12\n"
+            "2026-01-03,north,300,15\n"
+            "2026-01-04,south,320,16\n"
+        ),
+    )
+
+    def summarize(**_: object) -> dict[str, object]:
+        return {
+            "structure_summary": "4행 4열의 매출 데이터입니다.",
+            "quality_issues": ["revenue 결측치를 먼저 확인하세요."],
+            "key_insights": ["region별 revenue 차이를 확인할 수 있습니다."],
+        }
+
+    monkeypatch.setattr(
+        eda_service_module,
+        "generate_eda_ai_summary",
+        summarize,
+    )
+    client = _make_eda_client(_make_eda_service(repository))
+
+    response = client.get("/eda/eda-source/insights")
+
+    assert response.status_code == 200
+    suggested_questions = response.json()["suggested_questions"]
+    assert len(suggested_questions) >= 4
+    assert len(suggested_questions) <= 5
+    assert {item["category"] for item in suggested_questions} >= {
+        "quality",
+        "comparison",
+        "trend",
+    }
+    joined_questions = "\n".join(item["question"] for item in suggested_questions)
+    assert "revenue" in joined_questions
+    assert "region" in joined_questions
+    assert "event_date" in joined_questions
+    assert all(item["rationale"].strip() for item in suggested_questions)
+
+
+def test_eda_insights_suggested_questions_skip_identifier_like_numeric_columns(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _make_repository()
+    _register_dataset(
+        repository,
+        tmp_path,
+        source_id="moldset-source",
+        filename="moldset.csv",
+        content=(
+            "Unnamed: 0,PART_FACT_SERIAL,TimeStamp,PART_NAME,PassOrFail,Reason,Injection_Time\n"
+            "1,1001,2026-01-01,A,0,,10.1\n"
+            "2,1002,2026-01-02,A,1,gas,10.3\n"
+            "3,1003,2026-01-03,B,0,,10.2\n"
+            "4,1004,2026-01-04,B,1,scratch,10.8\n"
+        ),
+    )
+
+    def summarize(**_: object) -> dict[str, object]:
+        return {
+            "structure_summary": "4행 7열의 품질 데이터입니다.",
+            "quality_issues": ["Reason 결측치를 먼저 확인하세요."],
+            "key_insights": ["PART_NAME별 PassOrFail 차이를 확인할 수 있습니다."],
+        }
+
+    monkeypatch.setattr(
+        eda_service_module,
+        "generate_eda_ai_summary",
+        summarize,
+    )
+    client = _make_eda_client(_make_eda_service(repository))
+
+    response = client.get("/eda/moldset-source/insights")
+
+    assert response.status_code == 200
+    joined_questions = "\n".join(
+        item["question"] for item in response.json()["suggested_questions"]
+    )
+    assert "Unnamed" not in joined_questions
+    assert "PART_FACT_SERIAL" not in joined_questions
+    assert "PART_NAME" in joined_questions
+    assert "PassOrFail" in joined_questions or "Injection_Time" in joined_questions
+
+
 def test_eda_insights_adds_guideline_dataset_overview_when_guideline_is_selected(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -38,6 +38,7 @@ interface PreEdaBoardProps {
   applyingOperationKey?: string | null;
   onApplyOperation?: (operation: EdaRecommendedOperation, index: number) => void;
   onSelectDistributionColumn?: (column: string) => void;
+  onUseSuggestedQuestion?: (question: string) => void;
   distributionLoadingColumn?: string | null;
   distributionError?: string | null;
 }
@@ -585,6 +586,7 @@ export function PreEdaBoard({
   applyingOperationKey = null,
   onApplyOperation,
   onSelectDistributionColumn,
+  onUseSuggestedQuestion,
   distributionLoadingColumn = null,
   distributionError = null,
 }: PreEdaBoardProps) {
@@ -791,6 +793,34 @@ export function PreEdaBoard({
                 {profile.qualitySummary}
               </p>
             </div>
+
+            {profile.suggestedQuestions.length > 0 ? (
+              <div className="rounded-lg border border-[var(--genui-border)] bg-[var(--genui-panel)] px-3 py-2.5">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="h-3.5 w-3.5 text-[var(--genui-running)]" />
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--genui-muted)]">
+                    처음 질문하기 좋은 항목
+                  </p>
+                </div>
+                <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                  {profile.suggestedQuestions.slice(0, 4).map((item) => (
+                    <button
+                      key={item.question}
+                      type="button"
+                      onClick={() => onUseSuggestedQuestion?.(item.question)}
+                      className="min-h-[72px] rounded-md border border-[var(--genui-border)] bg-[var(--genui-surface)] px-3 py-2 text-left transition-colors hover:border-[var(--genui-running)]/40 hover:bg-[var(--genui-running)]/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--genui-running)]"
+                    >
+                      <span className="block text-[12px] font-semibold leading-tight text-[var(--genui-text)]">
+                        {item.title}
+                      </span>
+                      <span className="mt-1 block text-[11px] leading-snug text-[var(--genui-muted)]">
+                        {item.question}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
           </CardBody>
         </CardShell>
 

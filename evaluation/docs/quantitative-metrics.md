@@ -14,6 +14,7 @@
 - 비율은 소수점 반올림 차이를 고려해 ±0.01%p 이내를 허용한다.
 - 날짜별 집계는 `TimeStamp` 컬럼을 날짜 단위로 변환한 값을 기준으로 한다.
 - 불량 관련 집계는 명시적으로 `PassOrFail=1` 필터를 적용한다.
+- benchmark case manifest는 `evaluation/cases/`의 JSONL 파일에 둔다. 현재 기본 세트는 P0 moldset analysis/preprocess와 P1 unanswerable/scaled dataset 품질 케이스를 포함한다.
 
 ## 요약 표
 

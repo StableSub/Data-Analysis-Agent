@@ -173,6 +173,7 @@
 
 - 역할: 전처리 추천과 AI 기반 요약을 제공한다.
 - 참고: `insights`는 선택 query 파라미터 `guideline_source_id`를 받을 수 있다. 이 값이 있으면 해당 지침서를 우선 사용하고, 값이 없으면 활성 guideline을 조회한다. 읽을 수 있는 지침 근거가 있으면 응답에 `dataset_overview`가 추가되어 데이터 프로파일과 지침서 설명을 함께 요약한다.
+- `GET /eda/{source_id}/insights` 응답은 비전문가가 바로 시작할 수 있도록 `suggested_questions`를 함께 반환한다. 각 항목은 `title`, `question`, `rationale`, `category`, `priority`를 포함하며 기존 `structure_summary`, `quality_issues`, `key_insights`, `dataset_overview` 필드는 유지된다.
 
 ## 분석 API
 

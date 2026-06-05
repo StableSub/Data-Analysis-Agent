@@ -676,12 +676,27 @@ export interface EdaDatasetOverview {
   matched_terms: string[];
 }
 
+export interface EdaSuggestedQuestion {
+  title: string;
+  question: string;
+  rationale: string;
+  category:
+    | "overview"
+    | "quality"
+    | "comparison"
+    | "trend"
+    | "outlier"
+    | "visualization";
+  priority: "high" | "medium" | "low";
+}
+
 export interface EdaInsightResponse {
   source_id: string;
   structure_summary: string;
   quality_issues: string[];
   key_insights: string[];
   dataset_overview?: EdaDatasetOverview | null;
+  suggested_questions: EdaSuggestedQuestion[];
 }
 
 export interface EdaPreprocessRecommendation {

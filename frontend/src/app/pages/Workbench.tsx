@@ -5,7 +5,10 @@ import { Dropzone } from "../components/genui/Dropzone";
 import { WorkbenchLayout } from "../components/genui/WorkbenchLayout";
 import { StatusBadge } from "../components/genui/StatusBadge";
 import { GateBar } from "../components/genui/GateBar";
-import { AssistantReportMessage } from "../components/genui/AssistantReportMessage";
+import {
+  AssistantReportMessage,
+  type RepairGuidance,
+} from "../components/genui/AssistantReportMessage";
 import { ApprovalCard } from "../components/genui/ApprovalCard";
 import { CardBody, CardHeader, CardShell } from "../components/genui/CardShell";
 import { PreEdaBoard } from "../components/genui/PreEdaBoard";
@@ -32,6 +35,7 @@ import {
 } from "../hooks/useWorkbenchSessionStore";
 import {
   deleteChatSession,
+  type ChatResponse,
   type EdaRecommendedOperation,
   fetchPendingApproval,
   getChatHistory,
@@ -155,6 +159,62 @@ const buildPendingApprovalChanges = (
 
 const ANALYSIS_FAILURE_MESSAGE = "응답을 생성하지 못했습니다.";
 
+const buildRepairGuidance = (
+  profile: ReturnType<typeof useAnalysisPipeline>["selectedPreEdaProfile"],
+  response: ChatResponse | null,
+  state: ReturnType<typeof useAnalysisPipeline>["state"],
+): RepairGuidance | undefined => {
+  const outputType = response?.output_type ?? "";
+  const status = response?.status ?? "";
+  const isClarification =
+    outputType === "clarification" || status === "unanswerable" || status === "limited";
+  const isFailure = state === "error" || status === "failed" || outputType.endsWith("_failed");
+
+  if (!isClarification && !isFailure) {
+    return undefined;
+  }
+
+  const metric = profile?.numericColumns[0] ?? profile?.columns[0] ?? "핵심 컬럼";
+  const group = profile?.groupKeyColumns[0] ?? profile?.categoricalColumns[0] ?? null;
+  const missing = profile?.topMissingColumns[0]?.column ?? null;
+  const availableColumns = profile?.columns.slice(0, 6).join(", ") ?? "";
+  const actions: RepairGuidance["actions"] = [];
+
+  if (group) {
+    actions.push({
+      label: "그룹 기준으로 좁히기",
+      description: `${group}별 ${metric} 차이를 먼저 확인합니다.`,
+      prompt: `'${group}'별 '${metric}' 차이를 비교해줘.`,
+    });
+  }
+
+  if (missing) {
+    actions.push({
+      label: "결측치부터 확인",
+      description: `${missing} 값이 빠진 이유와 영향을 먼저 봅니다.`,
+      prompt: `'${missing}' 결측치가 분석 결과에 어떤 영향을 주는지 설명해줘.`,
+    });
+  }
+
+  actions.push({
+    label: "질문 다시 쓰기",
+    description: availableColumns ? `사용 가능 컬럼: ${availableColumns}` : "데이터 구조를 기준으로 다시 시작합니다.",
+    prompt: availableColumns
+      ? `사용 가능한 컬럼(${availableColumns})을 기준으로 답할 수 있는 분석 질문 3개를 추천해줘.`
+      : "이 데이터에서 처음 물어볼 만한 분석 질문 3개를 추천해줘.",
+  });
+
+  return {
+    title: isFailure ? "다시 시도하기 전에 선택하세요" : "질문을 조금 더 구체화하세요",
+    message: response?.error_message ?? (
+      isFailure
+        ? "오류가 난 단계를 줄이거나 컬럼 범위를 좁혀 다시 실행할 수 있습니다."
+        : "분석 기준이나 대상 컬럼을 지정하면 바로 다음 실행으로 이어집니다."
+    ),
+    actions: actions.slice(0, 3),
+  };
+};
+
 const mergeServerHistoryVisualizations = (
   serverMessages: ChatHistoryMessage[],
   localMessages: ChatHistoryMessage[],
@@ -198,6 +258,7 @@ export default function Workbench() {
     reportSections,
     toolCalls,
     evidence,
+    chatResponse,
     pendingApproval,
     latestVisualizationResult,
     selectedPreEdaProfile,
@@ -711,7 +772,7 @@ export default function Workbench() {
   );
 
   const handleSendMessage = useCallback(
-    (value: string, modelId: string) => {
+    (value: string, modelId = "gpt-5-nano") => {
       const question = value.trim();
       if (!question) {
         return;
@@ -727,6 +788,14 @@ export default function Workbench() {
       handleSend(value, modelId, selectedGuidelineSourceId);
     },
     [ensureActiveSessionForInteraction, markSessionActivity, handleSend, selectedGuidelineSourceId],
+  );
+
+  const handleUseSuggestedQuestion = useCallback(
+    (question: string) => {
+      handleSendMessage(question);
+      setCanvasView("deep-eda");
+    },
+    [handleSendMessage],
   );
 
   useEffect(() => {
@@ -991,6 +1060,7 @@ export default function Workbench() {
   const hasFailedAnalysis =
     latestAssistantContent === ANALYSIS_FAILURE_MESSAGE
     || (chatHistory.length === 0 && state === "error");
+  const repairGuidance = buildRepairGuidance(selectedPreEdaProfile, chatResponse, state);
   const shouldKeepChatThreadVisible =
     chatHistory.some((message) => message.role === "assistant")
     && (state === "running" || state === "needs-user");
@@ -1371,6 +1441,7 @@ export default function Workbench() {
                   applyingOperationKey={selectedApplyingPreEdaOperationKey}
                   onApplyOperation={handleApplyRecommendedOperation}
                   onSelectDistributionColumn={loadSelectedPreEdaDistribution}
+                  onUseSuggestedQuestion={handleUseSuggestedQuestion}
                   distributionLoadingColumn={selectedPreEdaDistributionLoadingColumn}
                   distributionError={selectedPreEdaDistributionError}
                 />
@@ -1418,6 +1489,8 @@ export default function Workbench() {
                     }
 
                     const isFailedMessage = msg.content.trim() === ANALYSIS_FAILURE_MESSAGE;
+                    const isLatestAssistantResponse =
+                      chatResponse?.answer.trim() === msg.content.trim();
                     const messageVisualization = msg.visualization_result ?? null;
                     const messageVisualizationChart =
                       messageVisualization?.chart ?? messageVisualization?.chart_data ?? null;
@@ -1436,6 +1509,9 @@ export default function Workbench() {
                             timestamp={messageTime}
                             sections={[{ type: "paragraph", content: msg.content }]}
                             maxBodyHeight={400}
+                            evidence={isLatestAssistantResponse ? evidence : undefined}
+                            repairGuidance={isLatestAssistantResponse ? repairGuidance : undefined}
+                            onRepairAction={handleUseSuggestedQuestion}
                           />
                           {hasMessageVisualization && messageVisualization && (
                             <CardShell>
@@ -1479,6 +1555,8 @@ export default function Workbench() {
                   sections={reportSections}
                   maxBodyHeight={600}
                   evidence={evidence}
+                  repairGuidance={repairGuidance}
+                  onRepairAction={handleUseSuggestedQuestion}
                 />
               ) : (
                 <AssistantReportMessage
@@ -1515,6 +1593,8 @@ export default function Workbench() {
                   sections={reportSections}
                   maxBodyHeight={600}
                   evidence={evidence}
+                  repairGuidance={repairGuidance}
+                  onRepairAction={handleUseSuggestedQuestion}
                 />
               ) : (
                 <AssistantReportMessage
@@ -1543,6 +1623,7 @@ export default function Workbench() {
                   applyingOperationKey={selectedApplyingPreEdaOperationKey}
                   onApplyOperation={handleApplyRecommendedOperation}
                   onSelectDistributionColumn={loadSelectedPreEdaDistribution}
+                  onUseSuggestedQuestion={handleUseSuggestedQuestion}
                   distributionLoadingColumn={selectedPreEdaDistributionLoadingColumn}
                   distributionError={selectedPreEdaDistributionError}
                 />
@@ -1571,6 +1652,8 @@ export default function Workbench() {
                 sections={reportSections}
                 maxBodyHeight={300}
                 evidence={evidence}
+                repairGuidance={repairGuidance}
+                onRepairAction={handleUseSuggestedQuestion}
               />
               {lastRunningTool && (
                 <div className="rounded-xl border border-[var(--genui-border)] bg-[var(--genui-panel)] px-4 py-3 shadow-sm">
@@ -1605,6 +1688,8 @@ export default function Workbench() {
                 sections={reportSections}
                 maxBodyHeight={300}
                 evidence={evidence}
+                repairGuidance={repairGuidance}
+                onRepairAction={handleUseSuggestedQuestion}
               />
             </div>
           )}
@@ -1617,6 +1702,8 @@ export default function Workbench() {
                 title="Analysis Failed"
                 sections={reportSections}
                 evidence={evidence}
+                repairGuidance={repairGuidance}
+                onRepairAction={handleUseSuggestedQuestion}
               />
             </div>
           )}
@@ -1630,6 +1717,8 @@ export default function Workbench() {
                 sections={reportSections}
                 maxBodyHeight={400}
                 evidence={evidence}
+                repairGuidance={repairGuidance}
+                onRepairAction={handleUseSuggestedQuestion}
               />
             </div>
           )}

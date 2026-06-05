@@ -29,6 +29,18 @@ export interface ReportSection {
   language?: string;
 }
 
+export interface GuidedRepairAction {
+  label: string;
+  description: string;
+  prompt: string;
+}
+
+export interface RepairGuidance {
+  title: string;
+  message: string;
+  actions: GuidedRepairAction[];
+}
+
 export interface AssistantReportMessageProps {
   variant?: ReportVariant;
   /** Start collapsed (summary only). Adds Expand/Collapse toggle. */
@@ -63,6 +75,8 @@ export interface AssistantReportMessageProps {
    * Optional: omit for simple streaming cards where context isn't ready.
    */
   evidence?: EvidenceFooterProps;
+  repairGuidance?: RepairGuidance;
+  onRepairAction?: (prompt: string) => void;
   hideFooter?: boolean;
 }
 
@@ -145,6 +159,76 @@ function SkeletonLines() {
   );
 }
 
+function EvidenceExplainer({ evidence }: { evidence: EvidenceFooterProps }) {
+  const rows = [
+    ["데이터", evidence.data ?? "-", "답변에 사용된 데이터셋입니다."],
+    ["범위", evidence.scope ?? "-", "계산에 반영된 컬럼 또는 파일 범위입니다."],
+    ["계산", evidence.compute ?? "-", "답변 가능성, 경고, 실행 시간을 요약합니다."],
+    ["참고", evidence.rag ?? "OFF", "검색된 데이터/가이드 근거 수입니다."],
+  ];
+
+  return (
+    <details className="mt-3 rounded-md border border-[var(--genui-border)] bg-[var(--genui-surface)] px-3 py-2">
+      <summary className="cursor-pointer text-[11px] font-semibold text-[var(--genui-text)]">
+        근거 자세히 보기
+      </summary>
+      <div className="mt-2 grid gap-2 sm:grid-cols-2">
+        {rows.map(([label, value, description]) => (
+          <div key={label} className="rounded border border-[var(--genui-border)] bg-[var(--genui-panel)] px-2.5 py-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--genui-muted)]">
+                {label}
+              </span>
+              <span className="max-w-[9rem] truncate text-[11px] font-semibold text-[var(--genui-text)]">
+                {value}
+              </span>
+            </div>
+            <p className="mt-1 text-[11px] leading-relaxed text-[var(--genui-muted)]">
+              {description}
+            </p>
+          </div>
+        ))}
+      </div>
+    </details>
+  );
+}
+
+function GuidedRepairCard({
+  guidance,
+  onRepairAction,
+}: {
+  guidance: RepairGuidance;
+  onRepairAction?: (prompt: string) => void;
+}) {
+  if (guidance.actions.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="mt-3 rounded-md border border-[var(--genui-needs-user)]/35 bg-[var(--genui-needs-user)]/8 px-3 py-2.5">
+      <p className="text-[12px] font-semibold text-[var(--genui-text)]">{guidance.title}</p>
+      <p className="mt-1 text-[11px] leading-relaxed text-[var(--genui-muted)]">{guidance.message}</p>
+      <div className="mt-2 grid gap-2 sm:grid-cols-2">
+        {guidance.actions.map((action) => (
+          <button
+            key={action.prompt}
+            type="button"
+            onClick={() => onRepairAction?.(action.prompt)}
+            className="min-h-[64px] rounded-md border border-[var(--genui-border)] bg-[var(--genui-surface)] px-3 py-2 text-left transition-colors hover:border-[var(--genui-needs-user)]/50 hover:bg-[var(--genui-needs-user)]/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--genui-needs-user)]"
+          >
+            <span className="block text-[12px] font-semibold text-[var(--genui-text)]">
+              {action.label}
+            </span>
+            <span className="mt-1 block text-[11px] leading-snug text-[var(--genui-muted)]">
+              {action.description}
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /* ─────────────────────────────────────────────
    Main component
 ───────────────────────────────────────────── */
@@ -162,6 +246,8 @@ export function AssistantReportMessage({
   onReviewDetails,
   onRetry,
   evidence,
+  repairGuidance,
+  onRepairAction,
   hideFooter = false,
 }: AssistantReportMessageProps) {
   const [collapsed, setCollapsed] = useState(defaultCollapsed);
@@ -235,9 +321,14 @@ export function AssistantReportMessage({
               </button>
             )}
 
+            {repairGuidance ? (
+              <GuidedRepairCard guidance={repairGuidance} onRepairAction={onRepairAction} />
+            ) : null}
+
             {/* Evidence footer (error state) */}
             {evidence && (
               <div className="mt-3 pt-2.5 border-t border-[var(--genui-border)]">
+                <EvidenceExplainer evidence={evidence} />
                 <EvidenceFooter {...evidence} />
               </div>
             )}
@@ -348,6 +439,12 @@ export function AssistantReportMessage({
 
           {/* Streaming skeleton */}
           {isStreaming && <SkeletonLines />}
+
+          {!isStreaming && evidence ? <EvidenceExplainer evidence={evidence} /> : null}
+
+          {!isStreaming && repairGuidance ? (
+            <GuidedRepairCard guidance={repairGuidance} onRepairAction={onRepairAction} />
+          ) : null}
 
           {/* Collapsed hint */}
           {collapsed && (
