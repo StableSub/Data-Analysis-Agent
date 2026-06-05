@@ -8,7 +8,7 @@
 |---|---|
 | `backend/app/orchestration/workflows/__init__.py` | workflows package marker다. |
 | `backend/app/orchestration/workflows/analysis.py` | 질문 이해 → plan → code generation/execution → validation → persist 흐름을 조립한다. |
-| `backend/app/orchestration/workflows/guideline.py` | active guideline index 확인, retrieval, evidence summary subgraph를 조립한다. |
+| `backend/app/orchestration/workflows/guideline.py` | selected guideline index 확인, retrieval, evidence summary subgraph를 조립한다. |
 | `backend/app/orchestration/workflows/preprocess.py` | ingestion/profile → preprocess decision → plan → approval → execute/skip/cancel 흐름을 조립한다. |
 | `backend/app/orchestration/workflows/rag.py` | dataset RAG index 확인, retrieval, insight synthesis 흐름을 조립한다. |
 | `backend/app/orchestration/workflows/report.py` | report draft → approval → finalize/revise/cancel 흐름을 조립한다. |
@@ -37,9 +37,9 @@
 
 ### Guideline workflow
 
-- route/status: `no_active_guideline`, `existing`, `created`, `missing`, `retrieved`, `no_evidence`.
+- route/status: `no_active_guideline`, `no_selected_guideline`, `guideline_missing`, `existing`, `created`, `missing`, `retrieved`, `no_evidence`.
 - payload contract: `user_input`, `model_id`, `active_guideline_source_id`, `guideline_index_status`, `guideline_result`, `guideline_data_exists`, `retrieved_chunks`, `retrieved_count`, `evidence_summary`, `status`.
-- `active_guideline_source_id`는 전역 활성 지침서가 아니라 현재 chat 요청에서 선택된 `guideline_source_id`를 기준으로 채워진다. 선택값이 없으면 guideline 검색은 `no_active_guideline`으로 종료된다.
+- `active_guideline_source_id`는 전역 활성 지침서가 아니라 현재 chat 요청에서 선택된 `guideline_source_id`를 기준으로 채워진다. state에 선택 key가 없으면 `no_active_guideline`, 선택값이 빈 문자열이면 `no_selected_guideline`, 선택한 source가 조회되지 않으면 `guideline_missing`으로 종료된다.
 
 ### Preprocess workflow
 
@@ -90,7 +90,7 @@
 
 ### Node
 
-- `ensure_guideline_index`: active guideline이 있는지 확인하고 index status를 만든다.
+- `ensure_guideline_index`: 현재 요청에서 선택된 guideline source가 있는지 확인하고 index status를 만든다.
 - `retrieve_guideline_context`: guideline query를 수행해 chunks/context를 만든다.
 - `summarize_guideline_evidence`: retrieved evidence를 요약하거나 no-evidence 상태를 만든다.
 
@@ -101,7 +101,7 @@
 
 ### 주의점
 
-- active guideline이 없으면 `no_active_guideline` 성격의 status로 끝날 수 있다.
+- guideline 선택 key가 없거나 비어 있거나 삭제된 source를 가리키면 각각 `no_active_guideline`, `no_selected_guideline`, `guideline_missing` 상태로 끝난다.
 - guideline evidence가 없다는 것은 workflow 실패와 다르다.
 
 ## Preprocess workflow: `backend/app/orchestration/workflows/preprocess.py`

@@ -107,6 +107,9 @@
 START
   -> intake_flow
      -> general_question_terminal -> END
+     -> guideline_flow
+        -> merge_context
+           -> data_qa_terminal -> END
      -> dataset_context
         -> chat_fast_path
            -> END(fast_dataset_answer)
@@ -177,9 +180,11 @@ START
 
 파일: `backend/app/orchestration/workflows/guideline.py`.
 
-- active guideline source를 확인한다.
+- 현재 chat 요청의 `guideline_source_id`에서 온 `active_guideline_source_id`를 확인한다.
+- dataset 없이 guideline만 선택된 질문은 이 subgraph 이후 planner를 거치지 않고 `merge_context`로 이동한다.
 - guideline index/retrieval을 수행한다.
 - `guideline_result`와 `guideline_index_status`를 main state에 올린다.
+- 선택 key 누락, 빈 선택값, 삭제된 선택값, 검색 근거 없음은 각각 `no_active_guideline`, `no_selected_guideline`, `guideline_missing`, `no_evidence`로 구분한다.
 
 ### Visualization subgraph
 

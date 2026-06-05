@@ -20,17 +20,19 @@
 
 ## 상위 흐름
 
-메인 워크플로우는 질문을 받은 뒤 dataset 선택 여부를 확인한다. dataset이 없으면 intake 단계에서 `general_question`으로 분기한다. dataset이 있으면 `dataset_context` 이후 `chat_fast_path`가 metadata-only 질문과 eligible common analytics 질문을 먼저 처리한다. fast path가 처리하지 않으면 `guideline_flow`를 거쳐 `planner`가 route를 확정하고, 필요에 따라 `preprocess_flow`, `analysis_flow`, `rag_flow`, `visualization_flow`, `merge_context`, `data_qa_terminal`, `report_flow`, `analysis_fail_terminal` 또는 `status_terminal`로 진행한다.
+메인 워크플로우는 질문을 받은 뒤 dataset 선택 여부와 선택된 guideline source 여부를 확인한다. dataset과 guideline이 모두 없으면 intake 단계에서 `general_question`으로 분기한다. dataset은 없지만 선택된 guideline source가 있으면 `guideline_flow`에서 지침 근거를 검색한 뒤 `merge_context`와 `data_qa_terminal`로 진행한다. dataset이 있으면 `dataset_context` 이후 `chat_fast_path`가 metadata-only 질문과 eligible common analytics 질문을 먼저 처리한다. fast path가 처리하지 않으면 `guideline_flow`를 거쳐 `planner`가 route를 확정하고, 필요에 따라 `preprocess_flow`, `analysis_flow`, `rag_flow`, `visualization_flow`, `merge_context`, `data_qa_terminal`, `report_flow`, `analysis_fail_terminal` 또는 `status_terminal`로 진행한다.
 
 ```mermaid
 flowchart TD
     A["START"] --> B["intake_flow"]
     B -->|general_question| C["general_question_terminal"]
     B -->|dataset_selected| D["dataset_context"]
+    B -->|guideline_selected| E["guideline_flow"]
     D --> X["chat_fast_path"]
     X -->|handled| R
     X -->|skipped| E["guideline_flow"]
-    E --> F["planner"]
+    E -->|dataset selected| F["planner"]
+    E -->|guideline only| N["merge_context"]
     F -->|general_question| C
     F -->|fallback_rag| H["rag_flow"]
     F -->|preprocess_required| I["preprocess_flow"]
@@ -63,14 +65,16 @@ flowchart TD
 ### 1. 질문 진입
 
 - workflow는 `START`에서 시작한다.
-- `intake_flow`는 `source_id`가 비어 있는지 여부를 확인한 뒤 no-dataset planner를 태운다.
-- dataset이 없으면 일반 질문 경로로 바로 이동하지 않고, 질문이 dataset 없이 답변 가능한지 먼저 분류한다.
+- `intake_flow`는 `source_id`, `active_guideline_source_id`, 사용자 질문의 guideline 참조 의도를 확인한다.
+- dataset과 guideline 선택값이 모두 없으면 일반 질문 경로로 이동한다.
+- dataset 없이 guideline 확인/업로드 파일/기준/내용을 묻는 질문이면 `guideline_selected` handoff로 guideline 검색 경로에 들어간다.
 - dataset이 있으면 이후 dataset 기반 파이프라인으로 들어간다.
 
 ### 2. intake와 handoff 준비
 
-- `intake_flow`는 `source_id` 존재 여부를 먼저 보고 no-dataset / dataset-selected를 나눈다.
-- no-dataset이면 `general_question` 또는 `clarification`으로 끝난다.
+- `intake_flow`는 `source_id` 존재 여부를 먼저 보고 no-dataset / dataset-selected를 나눈 뒤, no-dataset 상태에서는 guideline 참조 의도와 `active_guideline_source_id`를 확인한다.
+- no-dataset이고 guideline 선택값도 없으면 `general_question`으로 끝난다.
+- no-dataset이지만 질문이 guideline 자체를 언급하거나 선택된 guideline의 파일/내용/기준을 묻는 형태이면 `handoff.next_step = "guideline_selected"`를 반환한다.
 - dataset-selected면 `analyze_intent(...)` 결과를 바탕으로 `handoff.next_step = "data_pipeline"`과 `ask_preprocess`, `ask_analysis`, `ask_visualization`, `ask_report`, `ask_guideline` 플래그를 만든다.
 
 ## Planner 용어 정리
@@ -82,7 +86,7 @@ planner 주변 판단은 아래 위치에 나뉘어 있다.
 - dataset 여부와 coarse handoff: `backend/app/orchestration/intake_router.py`
 - dataset/profile context: `dataset_context` node
 - metadata-only fast answer(컬럼/컬럼 타입/타입별 컬럼/행·열 개수/샘플/shape/결측 요약)와 common analytics fast answer: `chat_fast_path` node
-- active guideline prefetch: `guideline_flow`
+- selected guideline prefetch 또는 guideline-only evidence retrieval: `guideline_flow`
 - main route 판단: `builder.py`의 `planner` node와 `route_after_planner()`
 - 분석 실행 계획 확정: `backend/app/orchestration/workflows/analysis.py`
 - 전처리/시각화/리포트 승인 계획: 각 workflow 내부 planner 또는 draft 단계
@@ -116,8 +120,10 @@ RAG 서브그래프는 선택된 `source_id`에 대해 인덱스 확인, 검색,
 
 ### 6. guideline 경로
 
-- guideline 서브그래프는 활성 guideline이 있을 때만 검색과 evidence summary를 만든다.
-- 현재 브랜치에서는 guideline이 planner 이전 입력이 아니라 analysis/rag 이후의 optional 보조 단계다.
+- guideline 서브그래프는 현재 chat 요청에서 선택된 guideline source가 있을 때 검색과 evidence summary를 만든다.
+- dataset이 있는 질문에서는 planner 이전 prefetch 단계로 동작한다.
+- dataset 없이 guideline만 선택된 질문에서는 planner를 거치지 않고 `merge_context`로 이동해 guideline evidence 기반 `data_qa` 답변을 만든다.
+- 선택값이 비어 있으면 `no_selected_guideline`, 선택한 source가 삭제되었거나 조회되지 않으면 `guideline_missing`, 선택값 자체가 state에 없으면 `no_active_guideline` 상태로 구분한다.
 
 ### 7. visualization 경로
 

@@ -136,6 +136,8 @@
   - `rag_no_evidence`
   - `no_evidence`
   - `no_active_guideline`
+  - `no_selected_guideline`
+  - `guideline_missing`
   - `preprocess_not_applied`
 
 ### `output`

@@ -44,6 +44,8 @@ COMPONENT_STATUS_TERMS = {
     ),
     "guideline.md": (
         "no_active_guideline",
+        "no_selected_guideline",
+        "guideline_missing",
         "existing",
         "created",
         "missing",

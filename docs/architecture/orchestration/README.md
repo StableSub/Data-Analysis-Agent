@@ -18,7 +18,7 @@
 | `backend/app/orchestration/tools/__init__.py` | orchestration tools package marker다. |
 | `backend/app/orchestration/workflows/__init__.py` | workflow wrappers package marker다. |
 | `backend/app/orchestration/workflows/analysis.py` | analysis subgraph를 조립한다. |
-| `backend/app/orchestration/workflows/guideline.py` | active guideline indexing/retrieval/summarization subgraph를 조립한다. |
+| `backend/app/orchestration/workflows/guideline.py` | selected guideline indexing/retrieval/summarization subgraph를 조립한다. |
 | `backend/app/orchestration/workflows/preprocess.py` | preprocess decision/plan/approval/execution subgraph를 조립한다. |
 | `backend/app/orchestration/workflows/rag.py` | dataset RAG indexing/retrieval/insight synthesis subgraph를 조립한다. |
 | `backend/app/orchestration/workflows/report.py` | report draft/approval/finalize subgraph를 조립한다. |
@@ -35,7 +35,7 @@ workflow 전체가 공유하는 state key와 subgraph별 payload contract를 정
 - `HandoffPayload`: `next_step`, `ask_preprocess`, `ask_analysis`, `ask_visualization`, `ask_report`, `ask_guideline` 등 intake route flag.
 - `PreprocessResultPayload`: preprocess 적용/skip/cancel status, output source id, summary/error.
 - `RagResultPayload`: retrieved chunks, context, retrieved count, evidence summary.
-- `GuidelineResultPayload`: active guideline id/filename, retrieved chunks, evidence summary, status.
+- `GuidelineResultPayload`: selected guideline id/filename, retrieved chunks, evidence summary, status.
 - `VisualizationResultPayload`: chart generation status, source id, summary, chart/artifact.
 - `EvidenceWarningPayload`: evidence contract warning의 `stage`, `code`, `message`.
 - `EvidencePackagePayload`: analysis/RAG/guideline/preprocess/visualization 근거와 warning을 최종 답변 직전에 구조화한다.
@@ -97,11 +97,12 @@ main graph의 node, edge, terminal, context merge를 정의한다.
 ### Route summary
 
 - `START` → `intake_flow`.
-- intake 결과 `general_question` → `general_question_terminal`, `data_pipeline` → `preprocess_flow`.
+- intake 결과 `general_question` → `general_question_terminal`, `dataset_selected` → `dataset_context`, `guideline_selected` → `guideline_flow`.
+- guideline-only 경로는 `guideline_flow` 이후 `merge_context`로 바로 이동해 guideline evidence 기반 `data_qa`를 만든다.
 - preprocess 결과 `analysis` → `analysis_flow`, `cancelled`/`failed` → `status_terminal`.
 - analysis 결과 `visualization`/`merge_context`/`clarification`/`analysis_fail_terminal`로 분기한다.
 - rag 결과 `guideline`/`visualization`/`merge_context`로 분기한다.
-- guideline 결과 `visualization` 또는 `merge_context`로 분기한다.
+- dataset-selected guideline 결과는 `planner`로 이동하고, guideline-only 결과는 `merge_context`로 분기한다.
 - visualization 결과 `merge_context` 또는 `cancelled` → `status_terminal`로 분기한다.
 - merge context 이후 `report` → `report_flow`, 그 외 `data_qa` → `data_qa_terminal`.
 - analysis failure는 `analysis_fail_terminal` → `END`로 끝난다.
