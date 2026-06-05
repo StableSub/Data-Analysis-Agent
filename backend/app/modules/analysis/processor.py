@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import ast
 import re
-from typing import Any, Iterable
+from typing import Any, Iterable, Literal
 
 from .sandbox import validate_analysis_source_code
 from .schemas import (
@@ -135,6 +135,7 @@ class AnalysisProcessor:
             self._normalize_metric(metric, metadata, resolved_columns)
             for metric in draft.metrics
         ]
+        self._validate_positive_value_filters(filters=filters, metrics=metrics)
         derived_columns = [
             self._normalize_derived_column(column, metadata, resolved_columns)
             for column in draft.derived_columns
@@ -352,7 +353,7 @@ class AnalysisProcessor:
         *,
         code: str,
         message: str,
-        severity: str = "warning",
+        severity: Literal["info", "warning", "error"] = "warning",
     ) -> AnalysisWarning:
         return AnalysisWarning(code=code, message=message, severity=severity)
 
@@ -482,6 +483,24 @@ class AnalysisProcessor:
 
         return list(dict.fromkeys(required))
 
+    def _validate_positive_value_filters(
+        self,
+        *,
+        filters: list[FilterCondition],
+        metrics: list[MetricSpec],
+    ) -> None:
+        filtered_columns = {condition.column for condition in filters}
+        for metric in metrics:
+            if (
+                metric.positive_value is not None
+                and metric.column
+                and metric.column in filtered_columns
+            ):
+                raise ValueError(
+                    f"metric '{metric.name}' positive value cannot be combined "
+                    f"with filters on '{metric.column}'"
+                )
+
     # 질문 의도에 맞는 결과 형태를 자동으로 정한다.
     def _build_expected_output(
         self,
@@ -499,7 +518,11 @@ class AnalysisProcessor:
         )
 
         if is_scatter_relationship:
-            table_columns = [visualization_hint.x, visualization_hint.y]
+            table_columns = [
+                column
+                for column in (visualization_hint.x, visualization_hint.y)
+                if column is not None
+            ]
             if visualization_hint.series:
                 table_columns.append(visualization_hint.series)
         else:
@@ -607,6 +630,17 @@ class AnalysisProcessor:
             )
         if metric.aggregation != "count" and not normalized_column:
             raise ValueError(f"metric '{metric.name}' requires a source column")
+        if metric.positive_value is not None and not normalized_column:
+            raise ValueError(
+                f"metric '{metric.name}' positive value requires a source column"
+            )
+        if (
+            metric.positive_value is not None
+            and metric.aggregation not in {"avg", "rate"}
+        ):
+            raise ValueError(
+                f"metric '{metric.name}' positive value requires avg or rate aggregation"
+            )
         alias = metric.alias.strip() or metric.name.strip()
         if not alias:
             raise ValueError("metric alias must not be empty")

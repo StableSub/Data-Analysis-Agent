@@ -54,6 +54,7 @@ class MetricSpec(StrictModel):
         "rate",
     ]
     column: str | None = None
+    positive_value: Any | None = None
     alias: str
 
 

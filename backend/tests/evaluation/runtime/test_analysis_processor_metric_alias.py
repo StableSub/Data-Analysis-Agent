@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import pytest
+
 from backend.app.modules.analysis.processor import AnalysisProcessor
 from backend.app.modules.analysis.schemas import (
     AnalysisOutputPayload,
     AnalysisPlanDraft,
+    FilterCondition,
     MetadataSnapshot,
     MetricSpec,
     SandboxExecutionResult,
@@ -59,3 +62,36 @@ def test_metric_alias_used_for_visualization_is_not_treated_as_source_column() -
 
     assert result.execution_status == "success"
     assert result.quality_status == "complete"
+
+
+def test_positive_value_metric_rejects_same_column_filter() -> None:
+    processor = AnalysisProcessor()
+    metadata = MetadataSnapshot(
+        columns=["PART_NAME", "PassOrFail"],
+        numeric_columns=["PassOrFail"],
+        categorical_columns=["PART_NAME"],
+        row_count=2607,
+    )
+    draft = AnalysisPlanDraft(
+        analysis_type="descriptive",
+        objective="제품별 불량률",
+        filters=[FilterCondition(column="PassOrFail", operator="eq", value=1)],
+        group_by=["PART_NAME"],
+        metrics=[
+            MetricSpec(
+                name="defect_rate",
+                aggregation="rate",
+                column="PassOrFail",
+                positive_value=1,
+                alias="defect_rate",
+            )
+        ],
+        visualization_hint=VisualizationHint(preferred_chart="bar"),
+        ambiguity_status="clear",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="positive value cannot be combined with filters",
+    ):
+        processor.validate_and_finalize_plan(draft, metadata)
