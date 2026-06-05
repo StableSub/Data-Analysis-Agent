@@ -6,6 +6,7 @@ from backend.app.modules.analysis.processor import AnalysisProcessor
 from backend.app.modules.analysis.schemas import (
     AnalysisOutputPayload,
     AnalysisPlanDraft,
+    DerivedColumnSpec,
     FilterCondition,
     MetadataSnapshot,
     MetricSpec,
@@ -155,3 +156,110 @@ def test_indicator_sum_metric_positive_value_is_normalized() -> None:
     assert {"PART_NO", "PART_NAME", "EQUIP_NAME", "PassOrFail", "TimeStamp"} <= set(
         plan.used_columns
     )
+
+
+def test_daily_defect_time_series_accepts_derived_metric_without_group_by() -> None:
+    processor = AnalysisProcessor()
+    metadata = MetadataSnapshot(
+        columns=["TimeStamp", "PassOrFail"],
+        numeric_columns=["PassOrFail"],
+        datetime_columns=["TimeStamp"],
+        categorical_columns=[],
+        row_count=2607,
+    )
+    draft = AnalysisPlanDraft(
+        analysis_type="daily_defect_time_series",
+        objective=(
+            "Compute daily defect counts from TimeStamp; defect defined as "
+            "PassOrFail != 1."
+        ),
+        metrics=[
+            MetricSpec(
+                name="daily_defect_count",
+                aggregation="sum",
+                column="defect_flag",
+                alias="daily_defect_count",
+            ),
+            MetricSpec(
+                name="daily_defect_rate",
+                aggregation="rate",
+                column="defect_flag",
+                positive_value=1,
+                alias="daily_defect_rate",
+            ),
+        ],
+        derived_columns=[
+            DerivedColumnSpec(
+                name="defect_flag",
+                expression_type="arithmetic",
+                source_columns=["PassOrFail"],
+                params={
+                    "operator": "!=",
+                    "value": 1,
+                    "true_value": 1,
+                    "false_value": 0,
+                },
+            )
+        ],
+        sort_by=[SortSpec(column="TimeStamp", direction="asc")],
+        time_context=TimeContext(
+            time_column="TimeStamp",
+            range_type="none",
+            grain="day",
+        ),
+        visualization_hint=VisualizationHint(preferred_chart="none"),
+        ambiguity_status="clear",
+    )
+
+    plan = processor.validate_and_finalize_plan(draft, metadata)
+
+    assert plan.group_by == []
+    assert plan.required_columns == ["PassOrFail", "TimeStamp"]
+    assert plan.metrics[0].column == "defect_flag"
+    assert plan.metrics[1].column == "defect_flag"
+    assert plan.visualization_hint.x == "date"
+    assert plan.visualization_hint.y == "daily_defect_count"
+    assert plan.expected_output.expected_table_columns == [
+        "date",
+        "daily_defect_count",
+        "daily_defect_rate",
+    ]
+
+
+def test_metric_column_still_rejects_missing_derived_column() -> None:
+    processor = AnalysisProcessor()
+    metadata = MetadataSnapshot(
+        columns=["TimeStamp", "PassOrFail"],
+        numeric_columns=["PassOrFail"],
+        datetime_columns=["TimeStamp"],
+        row_count=2607,
+    )
+    draft = AnalysisPlanDraft(
+        analysis_type="daily_defect_time_series",
+        objective="Compute daily defect counts from TimeStamp.",
+        metrics=[
+            MetricSpec(
+                name="daily_defect_count",
+                aggregation="sum",
+                column="missing_defect_flag",
+                alias="daily_defect_count",
+            )
+        ],
+        derived_columns=[
+            DerivedColumnSpec(
+                name="defect_flag",
+                expression_type="arithmetic",
+                source_columns=["PassOrFail"],
+                params={"operator": "!=", "value": 1},
+            )
+        ],
+        time_context=TimeContext(
+            time_column="TimeStamp",
+            range_type="none",
+            grain="day",
+        ),
+        ambiguity_status="clear",
+    )
+
+    with pytest.raises(ValueError, match="missing_defect_flag"):
+        processor.validate_and_finalize_plan(draft, metadata)

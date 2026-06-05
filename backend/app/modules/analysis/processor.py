@@ -34,6 +34,10 @@ _TIME_AXIS_BY_GRAIN = {
     "quarter": "quarter",
     "year": "year",
 }
+_PRELOADED_IMPORT_ALIASES = {
+    "json": "json",
+    "pandas": "pd",
+}
 _IDENTIFIER_RE = re.compile(r"[^a-zA-Z0-9_]+")
 _SYNTHETIC_DIMENSION_TOKENS = {
     "column",
@@ -47,6 +51,70 @@ _SYNTHETIC_DIMENSION_TOKENS = {
 _NORMALIZED_SYNTHETIC_DIMENSION_TOKENS = {
     _IDENTIFIER_RE.sub("", token.lower()) for token in _SYNTHETIC_DIMENSION_TOKENS
 }
+
+
+def _rewrite_preloaded_import_aliases(*, tree: ast.Module, original_code: str) -> str:
+    alias_map: dict[str, str] = {}
+    import_assignment_ids: set[int] = set()
+    for statement in tree.body:
+        if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
+            continue
+        target = statement.targets[0]
+        if not isinstance(target, ast.Name):
+            continue
+        preloaded_name = _preloaded_import_name(statement.value)
+        if preloaded_name is None:
+            continue
+        alias_map[target.id] = preloaded_name
+        import_assignment_ids.add(id(statement))
+
+    if not alias_map:
+        return original_code
+
+    rewritten = _PreloadedImportAliasRewriter(
+        alias_map=alias_map,
+        import_assignment_ids=import_assignment_ids,
+    ).visit(tree)
+    ast.fix_missing_locations(rewritten)
+    return ast.unparse(rewritten)
+
+
+def _preloaded_import_name(value: ast.AST) -> str | None:
+    if not isinstance(value, ast.Call):
+        return None
+    if not isinstance(value.func, ast.Name) or value.func.id != "__import__":
+        return None
+    if len(value.args) != 1 or value.keywords:
+        return None
+    module_arg = value.args[0]
+    if not isinstance(module_arg, ast.Constant) or not isinstance(
+        module_arg.value,
+        str,
+    ):
+        return None
+    return _PRELOADED_IMPORT_ALIASES.get(module_arg.value)
+
+
+class _PreloadedImportAliasRewriter(ast.NodeTransformer):
+    def __init__(
+        self,
+        *,
+        alias_map: dict[str, str],
+        import_assignment_ids: set[int],
+    ) -> None:
+        self._alias_map = alias_map
+        self._import_assignment_ids = import_assignment_ids
+
+    def visit_Assign(self, node: ast.Assign) -> ast.AST | None:
+        if id(node) in self._import_assignment_ids:
+            return None
+        return self.generic_visit(node)
+
+    def visit_Name(self, node: ast.Name) -> ast.AST:
+        replacement = self._alias_map.get(node.id)
+        if replacement is None or not isinstance(node.ctx, ast.Load):
+            return node
+        return ast.copy_location(ast.Name(id=replacement, ctx=node.ctx), node)
 
 
 # 분석 계획과 실행 결과를 검증 및 정규화
@@ -122,6 +190,22 @@ class AnalysisProcessor:
         resolved_columns = grounding.resolved_columns if grounding else {}
         derived_names = {column.name for column in draft.derived_columns}
 
+        time_context = self._normalize_time_context(
+            draft.time_context,
+            metadata,
+            resolved_columns,
+        )
+        time_axis_column = self._time_axis_output_column(time_context)
+        time_axis_grouping_aliases = {
+            self._normalize_identifier(column)
+            for column in (
+                time_axis_column,
+                time_context.time_column if time_context else None,
+                time_context.grain if time_context else None,
+            )
+            if column and time_axis_column
+        }
+
         # 필터, 그룹, metric, 시간 조건을 각각 정규화한다.
         filters = [
             self._normalize_filter(condition, metadata, resolved_columns, derived_names)
@@ -130,9 +214,10 @@ class AnalysisProcessor:
         group_by = [
             self._resolve_column_name(column, metadata, resolved_columns, derived_names)
             for column in draft.group_by
+            if self._normalize_identifier(column) not in time_axis_grouping_aliases
         ]
         metrics = [
-            self._normalize_metric(metric, metadata, resolved_columns)
+            self._normalize_metric(metric, metadata, resolved_columns, derived_names)
             for metric in draft.metrics
         ]
         self._validate_positive_value_filters(filters=filters, metrics=metrics)
@@ -141,14 +226,16 @@ class AnalysisProcessor:
             for column in draft.derived_columns
         ]
         sort_by = [
-            self._normalize_sort(sort_spec, metadata, metrics, group_by, derived_names)
+            self._normalize_sort(
+                sort_spec,
+                metadata,
+                metrics,
+                group_by,
+                derived_names,
+                time_axis_column,
+            )
             for sort_spec in draft.sort_by
         ]
-        time_context = self._normalize_time_context(
-            draft.time_context,
-            metadata,
-            resolved_columns,
-        )
 
         visualization_hint = self._build_visualization_hint(
             draft=draft,
@@ -212,6 +299,7 @@ class AnalysisProcessor:
         except SyntaxError as exc:
             raise ValueError(f"generated code is not valid python: {exc}") from exc
 
+        code = _rewrite_preloaded_import_aliases(tree=tree, original_code=code)
         validate_analysis_source_code(code, require_print=True)
 
         # 결과 JSON 출력을 위한 필수 키가 코드에 포함되어 있는지 확인한다.
@@ -227,6 +315,14 @@ class AnalysisProcessor:
                 raise ValueError(
                     f"generated code does not reference required column: {required_column}"
                 )
+
+        if plan.time_context and plan.time_context.time_column:
+            time_column = plan.time_context.time_column
+            code = (
+                f"df[{time_column!r}] = pd.to_datetime("
+                f"df[{time_column!r}], errors='coerce')\n"
+                f"{code}"
+            )
 
         return code
 
@@ -622,11 +718,12 @@ class AnalysisProcessor:
         metric: MetricSpec,
         metadata: MetadataSnapshot,
         resolved_columns: dict[str, str],
+        derived_names: set[str],
     ) -> MetricSpec:
         normalized_column = None
         if metric.column:
             normalized_column = self._resolve_column_name(
-                metric.column, metadata, resolved_columns, set()
+                metric.column, metadata, resolved_columns, derived_names
             )
         normalized_positive_value = metric.positive_value
         if (
@@ -696,6 +793,7 @@ class AnalysisProcessor:
         metrics: list[MetricSpec],
         group_by: list[str],
         derived_names: set[str],
+        time_axis_column: str | None,
     ) -> SortSpec:
         sortable_columns = {
             *metadata.columns,
@@ -703,6 +801,8 @@ class AnalysisProcessor:
             *(metric.alias for metric in metrics),
             *derived_names,
         }
+        if time_axis_column:
+            sortable_columns.add(time_axis_column)
         if sort_spec.column not in sortable_columns:
             raise ValueError(f"sort column is not available: {sort_spec.column}")
         return sort_spec
