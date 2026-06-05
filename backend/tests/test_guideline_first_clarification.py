@@ -12,6 +12,7 @@ from backend.tests.guideline_first_fakes import (
     NoopRagService,
     PlannerMustNotRun,
     PlannerMustNotRunWithContext,
+    TraceShapedDefectRatePlannerLLM,
     dataset_context,
     guideline,
     guideline_chunk,
@@ -168,6 +169,31 @@ def test_guideline_context_resolves_defect_rate_before_clarification() -> None:
     assert result.analysis_plan.metrics[0].positive_value == 1
     assert result.analysis_plan.metrics[0].aggregation == "rate"
     assert {"PART_NAME", "PassOrFail"} <= set(result.analysis_plan.used_columns)
+
+
+def test_guideline_defect_rate_trace_plan_survives_metric_normalization() -> None:
+    result = planner_service(TraceShapedDefectRatePlannerLLM()).plan(
+        user_input="제품별 불량률을 분석해줘",
+        request_context=None,
+        source_id="dataset-source",
+        dataset_context=dataset_context(),
+        guideline_context=guideline_context_payload(),
+        model_id="test-model",
+    )
+
+    assert result.needs_clarification is False
+    assert result.analysis_plan is not None
+    assert result.guideline_context_used is True
+    assert result.analysis_plan.group_by == ["PART_NO", "PART_NAME", "EQUIP_NAME"]
+    defective_count = next(
+        metric
+        for metric in result.analysis_plan.metrics
+        if metric.alias == "defective_count"
+    )
+    assert defective_count.aggregation == "sum"
+    assert defective_count.column == "PassOrFail"
+    assert defective_count.positive_value is None
+    assert "분석 계획을 확인" not in result.clarification_question
 
 
 def test_guideline_analysis_request_with_dataset_still_reaches_planner() -> None:

@@ -105,6 +105,10 @@ def test_eda_summary_prompt_requires_plain_meaning_and_next_action() -> None:
         '"structure_summary"',
         '"quality_issues"',
         '"key_insights"',
+        '"guideline_context"',
+        '"dataset_overview"',
+        '"summary"',
+        '"key_points"',
         "나머지 2개 키",
     ):
         assert phrase in prompt
@@ -117,11 +121,21 @@ def test_frontend_mapping_still_consumes_existing_eda_insight_keys() -> None:
     hook_source = (
         project_root / "frontend/src/app/hooks/useAnalysisPipeline.ts"
     ).read_text(encoding="utf-8")
+    workbench_source = (
+        project_root / "frontend/src/app/pages/Workbench.tsx"
+    ).read_text(encoding="utf-8")
 
     assert "export interface EdaInsightResponse" in api_source
     assert "structure_summary: string" in api_source
     assert "quality_issues: string[]" in api_source
     assert "key_insights: string[]" in api_source
+    assert "dataset_overview?: EdaDatasetOverview | null" in api_source
     assert "insight.structure_summary" in hook_source
     assert "insight.quality_issues" in hook_source
     assert "insight.key_insights" in hook_source
+    assert "mapEdaDatasetOverview(insights.dataset_overview)" in hook_source
+    assert "fetchEdaInsights(sourceId, guidelineSourceId)" in hook_source
+    assert "request.guideline_source_id = requestGuidelineSourceId" in hook_source
+    assert "handleSend(value, modelId, selectedGuidelineSourceId)" in workbench_source
+    assert "pipeline.startUpload(file, selectedGuidelineSourceId)" in workbench_source
+    assert "pipeline.retrySelectedPreEda(selectedGuidelineSourceId)" in workbench_source

@@ -1,5 +1,7 @@
 from pathlib import Path
 import math
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from fastapi import FastAPI
@@ -9,6 +11,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from backend.app.core.db import Base
+from backend.app.modules.chat import models as _chat_models
 from backend.app.modules.datasets.models import Dataset
 from backend.app.modules.datasets.repository import DatasetRepository
 from backend.app.modules.datasets.service import DatasetReadError, DatasetReader
@@ -16,10 +19,12 @@ from backend.app.modules.eda import service as eda_service_module
 from backend.app.modules.eda.dependencies import get_eda_service
 from backend.app.modules.eda.router import router as eda_router
 from backend.app.modules.eda.service import EDAService
+from backend.app.modules.guidelines.dependencies import get_guideline_service
 from backend.app.modules.profiling.service import DatasetProfileService
 
 
 def _make_repository() -> DatasetRepository:
+    assert _chat_models.ChatSession.__tablename__ == "chat_sessions"
     engine = create_engine(
         "sqlite:///:memory:",
         connect_args={"check_same_thread": False},
@@ -59,10 +64,16 @@ def _register_dataset(
     )
 
 
-def _make_eda_client(service: EDAService) -> TestClient:
+def _make_eda_client(
+    service: EDAService,
+    *,
+    guideline_service: object | None = None,
+) -> TestClient:
     app = FastAPI()
     app.include_router(eda_router)
     app.dependency_overrides[get_eda_service] = lambda: service
+    if guideline_service is not None:
+        app.dependency_overrides[get_guideline_service] = lambda: guideline_service
     return TestClient(app, raise_server_exceptions=False)
 
 
@@ -170,6 +181,156 @@ def test_eda_insights_route_returns_fallback_when_llm_generation_fails(
     assert "3행" in body["structure_summary"]
     assert body["quality_issues"]
     assert body["key_insights"]
+    assert "dataset_overview" not in body
+
+
+def test_eda_insights_adds_guideline_dataset_overview_when_guideline_is_selected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _make_repository()
+    _register_dataset(
+        repository,
+        tmp_path,
+        source_id="moldset-source",
+        filename="moldset_quality.csv",
+        content=(
+            "PART_NO,PART_NAME,PassOrFail,Defect_Code\n"
+            "P-001,Bracket,1,\n"
+            "P-002,Housing,0,SHORT\n"
+            "P-001,Bracket,1,\n"
+        ),
+    )
+    guideline_path = tmp_path / "moldset-guide.txt"
+    guideline_path.write_text(
+        "Moldset 품질 데이터는 제품별 금형 검사 결과를 기록한 데이터입니다.\n"
+        "PART_NO는 제품 식별자, PART_NAME은 제품명, PassOrFail은 검사 판정 컬럼입니다.\n"
+        "Defect_Code는 불량 원인을 담으며 제품별 불량률 계산에 함께 사용합니다.\n",
+        encoding="utf-8",
+    )
+    guideline = SimpleNamespace(
+        source_id="guideline-source",
+        guideline_id="guide_moldset",
+        filename="moldset-guide.pdf",
+        storage_path=str(guideline_path),
+    )
+
+    class FakeGuidelineService:
+        def get_guideline_by_source_id(self, source_id: str) -> Any:
+            return guideline if source_id == guideline.source_id else None
+
+    captured_payload: dict[str, Any] = {}
+
+    def summarize(**kwargs: object) -> dict[str, object]:
+        payload = kwargs["payload"]
+        assert isinstance(payload, dict)
+        captured_payload.update(payload)
+        return {
+            "structure_summary": "3행 4열의 금형 검사 데이터입니다.",
+            "quality_issues": [],
+            "key_insights": ["PassOrFail 판정과 Defect_Code를 함께 확인하세요."],
+            "dataset_overview": {
+                "summary": "제품별 금형 검사 결과를 담은 Moldset 품질 데이터입니다.",
+                "key_points": [
+                    "PART_NO는 제품 식별자입니다.",
+                    "PassOrFail은 검사 판정 컬럼입니다.",
+                ],
+            },
+        }
+
+    monkeypatch.setattr(
+        eda_service_module,
+        "generate_eda_ai_summary",
+        summarize,
+    )
+
+    client = _make_eda_client(
+        _make_eda_service(repository),
+        guideline_service=FakeGuidelineService(),
+    )
+
+    response = client.get(
+        "/eda/moldset-source/insights",
+        params={"guideline_source_id": "guideline-source"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["source_id"] == "moldset-source"
+    assert body["dataset_overview"]["guideline_source_id"] == "guideline-source"
+    assert body["dataset_overview"]["guideline_filename"] == "moldset-guide.pdf"
+    assert "제품별 금형 검사 결과" in body["dataset_overview"]["summary"]
+    assert body["dataset_overview"]["key_points"]
+    assert "guideline_context" in captured_payload
+    assert "PART_NO" in str(captured_payload["guideline_context"])
+
+
+def test_eda_insights_uses_active_guideline_when_no_guideline_is_selected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _make_repository()
+    _register_dataset(
+        repository,
+        tmp_path,
+        source_id="moldset-source",
+        filename="moldset_quality.csv",
+        content=(
+            "PART_NO,PART_NAME,PassOrFail\n"
+            "P-001,Bracket,1\n"
+            "P-002,Housing,0\n"
+        ),
+    )
+    guideline_path = tmp_path / "active-moldset-guide.txt"
+    guideline_path.write_text(
+        "PART_NAME은 제품명이고 PassOrFail 컬럼에서 1은 불량입니다.\n",
+        encoding="utf-8",
+    )
+    active_guideline = SimpleNamespace(
+        source_id="active-guideline",
+        guideline_id="guide_active",
+        filename="active-guide.pdf",
+        storage_path=str(guideline_path),
+    )
+
+    class FakeGuidelineService:
+        def get_active_guideline(self) -> Any:
+            return active_guideline
+
+        def get_guideline_by_source_id(self, source_id: str) -> Any:
+            return active_guideline if source_id == active_guideline.source_id else None
+
+    captured_payload: dict[str, Any] = {}
+
+    def summarize(**kwargs: object) -> dict[str, object]:
+        payload = kwargs["payload"]
+        assert isinstance(payload, dict)
+        captured_payload.update(payload)
+        return {
+            "structure_summary": "2행 3열의 금형 검사 데이터입니다.",
+            "quality_issues": [],
+            "key_insights": ["PassOrFail 판정을 확인하세요."],
+        }
+
+    monkeypatch.setattr(
+        eda_service_module,
+        "generate_eda_ai_summary",
+        summarize,
+    )
+
+    client = _make_eda_client(
+        _make_eda_service(repository),
+        guideline_service=FakeGuidelineService(),
+    )
+
+    response = client.get("/eda/moldset-source/insights")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["dataset_overview"]["guideline_source_id"] == "active-guideline"
+    assert body["dataset_overview"]["guideline_filename"] == "active-guide.pdf"
+    assert "guideline_context" in captured_payload
+    assert "PassOrFail" in str(captured_payload["guideline_context"])
 
 
 def test_eda_routes_return_contract_for_valid_dataset(

@@ -9,7 +9,7 @@ Guideline 서브그래프.
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, Mapping
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
@@ -31,6 +31,103 @@ class GuidelineSynthesisPayload(BaseModel):
     evidence_summary: str = Field(...)
 
 
+def _build_semantic_glossary(
+    *,
+    guideline_result: Mapping[str, Any],
+    dataset_context: Mapping[str, Any] | None,
+) -> Dict[str, Any]:
+    columns = _coerce_dataset_columns(dataset_context)
+    text = _semantic_source_text(guideline_result)
+    if not text.strip() or not columns:
+        return {}
+
+    glossary: Dict[str, Any] = {}
+    product_columns = _product_columns_from_guideline(text=text, columns=columns)
+    if product_columns:
+        glossary["product"] = {
+            "columns": product_columns,
+            "source": "guideline",
+        }
+
+    defect_indicator = _defect_indicator_from_guideline(text=text, columns=columns)
+    if defect_indicator:
+        glossary["defect_indicator"] = defect_indicator
+        defect_column = str(defect_indicator["column"])
+        defect_value = int(defect_indicator["defect_value"])
+        glossary["defect_rate"] = {
+            "metric": "defect_rate",
+            "column": defect_column,
+            "positive_value": defect_value,
+            "formula": f"count({defect_column} == {defect_value}) / count(*)",
+            "source": "guideline",
+        }
+
+    return glossary
+
+
+def _coerce_dataset_columns(dataset_context: Mapping[str, Any] | None) -> list[str]:
+    if dataset_context is None:
+        return []
+    raw_columns = dataset_context.get("columns")
+    if not isinstance(raw_columns, list):
+        return []
+    columns: list[str] = []
+    for raw_column in raw_columns:
+        column = str(raw_column).strip()
+        if column and column not in columns:
+            columns.append(column)
+    return columns
+
+
+def _semantic_source_text(guideline_result: Mapping[str, Any]) -> str:
+    parts: list[str] = []
+    for key in ("evidence_summary", "context"):
+        value = str(guideline_result.get(key) or "").strip()
+        if value:
+            parts.append(value)
+    raw_chunks = guideline_result.get("retrieved_chunks")
+    if isinstance(raw_chunks, list):
+        for raw_chunk in raw_chunks:
+            if not isinstance(raw_chunk, Mapping):
+                continue
+            content = str(raw_chunk.get("content") or "").strip()
+            if content:
+                parts.append(content)
+    return "\n".join(parts)
+
+
+def _product_columns_from_guideline(*, text: str, columns: list[str]) -> list[str]:
+    normalized_text = text.lower()
+    candidates = [
+        ("PART_NAME", ("part_name", "제품명", "제품 이름", "product name")),
+        ("PART_NO", ("part_no", "제품 식별", "제품 번호", "product id", "part no")),
+    ]
+    product_columns: list[str] = []
+    for column, terms in candidates:
+        if column not in columns:
+            continue
+        if any(term in normalized_text for term in terms) or "제품" in text:
+            product_columns.append(column)
+    return product_columns
+
+
+def _defect_indicator_from_guideline(*, text: str, columns: list[str]) -> Dict[str, Any]:
+    if "PassOrFail" not in columns or "PassOrFail" not in text:
+        return {}
+    normalized_text = text.lower()
+    if "불량" not in text and "defect" not in normalized_text:
+        return {}
+    if "1" not in text:
+        return {}
+    indicator: Dict[str, Any] = {
+        "column": "PassOrFail",
+        "defect_value": 1,
+    }
+    if "0" in text and ("정상" in text or "pass" in normalized_text):
+        indicator["pass_value"] = 0
+    return indicator
+
+
 def build_guideline_workflow(
     *,
     guideline_service: GuidelineService,
@@ -46,8 +143,9 @@ def build_guideline_workflow(
         *,
         active_source_id: str,
         guideline_result: Dict[str, Any],
+        dataset_context: Mapping[str, Any] | None = None,
     ) -> Dict[str, Any]:
-        return {
+        context: Dict[str, Any] = {
             "guideline_source_id": active_source_id or str(guideline_result.get("source_id") or ""),
             "guideline_id": str(guideline_result.get("guideline_id") or ""),
             "filename": str(guideline_result.get("filename") or ""),
@@ -57,6 +155,13 @@ def build_guideline_workflow(
             "has_evidence": bool(guideline_result.get("has_evidence", False)),
             "evidence_summary": str(guideline_result.get("evidence_summary") or ""),
         }
+        semantic_glossary = _build_semantic_glossary(
+            guideline_result=guideline_result,
+            dataset_context=dataset_context,
+        )
+        if semantic_glossary:
+            context["semantic_glossary"] = semantic_glossary
+        return context
 
     def ensure_guideline_index_node(state: GuidelineGraphState) -> Dict[str, Any]:
         set_trace_stage("guideline_index")
@@ -65,7 +170,41 @@ def build_guideline_workflow(
         """
         has_selection_key = "active_guideline_source_id" in state
         selected_source_id = str(state.get("active_guideline_source_id") or "").strip()
-        if not selected_source_id:
+        active_guideline = None
+        selection_source = "selected" if selected_source_id else "active"
+        if selected_source_id:
+            active_guideline = guideline_service.get_guideline_by_source_id(
+                selected_source_id
+            )
+            if active_guideline is None:
+                guideline_result = {
+                    "status": GUIDELINE_MISSING,
+                    "source_id": selected_source_id,
+                    "has_evidence": False,
+                    "retrieved_chunks": [],
+                    "retrieved_count": 0,
+                    "evidence_summary": "선택한 지침서를 찾을 수 없어 지침 근거를 확인하지 못했습니다.",
+                    "selection_source": "selected",
+                }
+                return {
+                    "active_guideline_source_id": selected_source_id,
+                    "guideline_index_status": {
+                        "status": GUIDELINE_MISSING,
+                        "source_id": selected_source_id,
+                        "selection_source": "selected",
+                    },
+                    "guideline_result": guideline_result,
+                    "guideline_context": build_guideline_context(
+                        active_source_id=selected_source_id,
+                        guideline_result=guideline_result,
+                        dataset_context=state.get("dataset_context"),
+                    ),
+                    "guideline_data_exists": False,
+                }
+        else:
+            active_guideline = guideline_service.get_active_guideline()
+
+        if active_guideline is None:
             absence_status = (
                 NO_SELECTED_GUIDELINE if has_selection_key else NO_ACTIVE_GUIDELINE
             )
@@ -80,40 +219,19 @@ def build_guideline_workflow(
                 "retrieved_chunks": [],
                 "retrieved_count": 0,
                 "evidence_summary": evidence_summary,
+                "selection_source": selection_source,
             }
             return {
                 "active_guideline_source_id": "",
-                "guideline_index_status": {"status": absence_status},
+                "guideline_index_status": {
+                    "status": absence_status,
+                    "selection_source": selection_source,
+                },
                 "guideline_result": guideline_result,
                 "guideline_context": build_guideline_context(
                     active_source_id="",
                     guideline_result=guideline_result,
-                ),
-                "guideline_data_exists": False,
-            }
-
-        active_guideline = guideline_service.get_guideline_by_source_id(
-            selected_source_id
-        )
-        if active_guideline is None:
-            guideline_result = {
-                "status": GUIDELINE_MISSING,
-                "source_id": selected_source_id,
-                "has_evidence": False,
-                "retrieved_chunks": [],
-                "retrieved_count": 0,
-                "evidence_summary": "선택한 지침서를 찾을 수 없어 지침 근거를 확인하지 못했습니다.",
-            }
-            return {
-                "active_guideline_source_id": selected_source_id,
-                "guideline_index_status": {
-                    "status": GUIDELINE_MISSING,
-                    "source_id": selected_source_id,
-                },
-                "guideline_result": guideline_result,
-                "guideline_context": build_guideline_context(
-                    active_source_id=selected_source_id,
-                    guideline_result=guideline_result,
+                    dataset_context=state.get("dataset_context"),
                 ),
                 "guideline_data_exists": False,
             }
@@ -128,6 +246,7 @@ def build_guideline_workflow(
                 "source_id": source_id,
                 "guideline_id": active_guideline.guideline_id,
                 "filename": active_guideline.filename,
+                "selection_source": selection_source,
             },
         }
 
@@ -179,6 +298,11 @@ def build_guideline_workflow(
             "context": context,
             "retrieved_count": len(retrieved_chunks),
             "has_evidence": bool(retrieved_chunks),
+            "selection_source": (
+                index_status.get("selection_source")
+                if isinstance(index_status, dict)
+                else ""
+            ),
             "status": (
                 status_value
                 if status_value in {
@@ -196,6 +320,7 @@ def build_guideline_workflow(
             "guideline_context": build_guideline_context(
                 active_source_id=active_source_id,
                 guideline_result=guideline_result,
+                dataset_context=state.get("dataset_context"),
             ),
             "guideline_data_exists": bool(retrieved_chunks),
         }
@@ -231,6 +356,7 @@ def build_guideline_workflow(
                 "guideline_context": build_guideline_context(
                     active_source_id=str(state.get("active_guideline_source_id") or ""),
                     guideline_result=updated_guideline_result,
+                    dataset_context=state.get("dataset_context"),
                 ),
             }
 
@@ -266,6 +392,7 @@ def build_guideline_workflow(
             "guideline_context": build_guideline_context(
                 active_source_id=str(state.get("active_guideline_source_id") or ""),
                 guideline_result=updated_guideline_result,
+                dataset_context=state.get("dataset_context"),
             ),
         }
 

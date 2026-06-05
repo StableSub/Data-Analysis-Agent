@@ -106,7 +106,9 @@ class GuidelineAwarePlannerLLM:
         model_id: str | None,
         messages: list[Any],
     ) -> Any:
-        prompt = "\n\n".join(str(getattr(message, "content", "")) for message in messages)
+        prompt = "\n\n".join(
+            str(getattr(message, "content", "")) for message in messages
+        )
         self.prompts.append(prompt)
         if schema is PlannerDecision:
             return PlannerDecision(
@@ -118,6 +120,69 @@ class GuidelineAwarePlannerLLM:
             return _understanding_for_prompt(prompt)
         if schema is AnalysisPlanDraft:
             return _plan_draft_for_prompt(prompt)
+        raise AssertionError(f"unexpected schema: {schema}")
+
+
+class TraceShapedDefectRatePlannerLLM(GuidelineAwarePlannerLLM):
+    def invoke_structured(
+        self,
+        *,
+        schema: type[Any],
+        model_id: str | None,
+        messages: list[Any],
+    ) -> Any:
+        prompt = "\n\n".join(
+            str(getattr(message, "content", "")) for message in messages
+        )
+        self.prompts.append(prompt)
+        if schema is PlannerDecision:
+            return PlannerDecision(
+                ask_analysis=True,
+                guideline_context_used=True,
+            )
+        if schema is QuestionUnderstanding:
+            return QuestionUnderstanding(
+                analysis_goal=[
+                    "Compute product-wise defect rate",
+                    "Group by product identifiers",
+                ],
+                metric_keywords=[
+                    "defect_rate",
+                    "defective_count",
+                    "total_count",
+                ],
+                group_keywords=["PART_NO", "PART_NAME", "EQUIP_NAME"],
+                ambiguity_status="clear",
+            )
+        if schema is AnalysisPlanDraft:
+            return AnalysisPlanDraft(
+                analysis_type="defect_rate_by_group",
+                objective="제품별 불량률을 계산합니다. PassOrFail=1은 불량입니다.",
+                group_by=["PART_NO", "PART_NAME", "EQUIP_NAME"],
+                metrics=[
+                    MetricSpec(
+                        name="defect_rate",
+                        aggregation="rate",
+                        column="PassOrFail",
+                        positive_value=1,
+                        alias="defect_rate",
+                    ),
+                    MetricSpec(
+                        name="defective_count",
+                        aggregation="sum",
+                        column="PassOrFail",
+                        positive_value=1,
+                        alias="defective_count",
+                    ),
+                    MetricSpec(
+                        name="total_count",
+                        aggregation="count",
+                        alias="total_count",
+                    ),
+                ],
+                visualization_hint=VisualizationHint(preferred_chart="none"),
+                ambiguity_status="clear",
+            )
         raise AssertionError(f"unexpected schema: {schema}")
 
 
@@ -145,16 +210,41 @@ def dataset_context() -> DatasetContext:
         available=True,
         row_count_total=4,
         row_count_sample=4,
-        column_count=2,
-        columns=["PART_NAME", "PassOrFail"],
-        dtypes={"PART_NAME": "object", "PassOrFail": "int64"},
+        column_count=4,
+        columns=["PART_NO", "PART_NAME", "EQUIP_NAME", "PassOrFail"],
+        dtypes={
+            "PART_NO": "object",
+            "PART_NAME": "object",
+            "EQUIP_NAME": "object",
+            "PassOrFail": "int64",
+        },
         numeric_columns=["PassOrFail"],
-        categorical_columns=["PART_NAME"],
+        categorical_columns=["PART_NO", "PART_NAME", "EQUIP_NAME"],
         sample_rows=[
-            {"PART_NAME": "A", "PassOrFail": 1},
-            {"PART_NAME": "A", "PassOrFail": 0},
-            {"PART_NAME": "B", "PassOrFail": 1},
-            {"PART_NAME": "B", "PassOrFail": 0},
+            {
+                "PART_NO": "P1",
+                "PART_NAME": "A",
+                "EQUIP_NAME": "E1",
+                "PassOrFail": 1,
+            },
+            {
+                "PART_NO": "P1",
+                "PART_NAME": "A",
+                "EQUIP_NAME": "E1",
+                "PassOrFail": 0,
+            },
+            {
+                "PART_NO": "P2",
+                "PART_NAME": "B",
+                "EQUIP_NAME": "E2",
+                "PassOrFail": 1,
+            },
+            {
+                "PART_NO": "P2",
+                "PART_NAME": "B",
+                "EQUIP_NAME": "E2",
+                "PassOrFail": 0,
+            },
         ],
     )
 

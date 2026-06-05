@@ -120,10 +120,12 @@ RAG 서브그래프는 선택된 `source_id`에 대해 인덱스 확인, 검색,
 
 ### 6. guideline 경로
 
-- guideline 서브그래프는 현재 chat 요청에서 선택된 guideline source가 있을 때 검색과 evidence summary를 만든다.
+- guideline 서브그래프는 현재 chat 요청의 선택 guideline source를 우선 사용하고, 선택값이 없으면 활성 guideline을 조회한 뒤 검색과 evidence summary를 만든다.
 - dataset이 있는 질문에서는 planner 이전 prefetch 단계로 동작한다.
 - dataset 없이 guideline만 선택된 질문에서는 planner를 거치지 않고 `merge_context`로 이동해 guideline evidence 기반 `data_qa` 답변을 만든다.
-- 선택값이 비어 있으면 `no_selected_guideline`, 선택한 source가 삭제되었거나 조회되지 않으면 `guideline_missing`, 선택값 자체가 state에 없으면 `no_active_guideline` 상태로 구분한다.
+- 선택 source가 있으면 active guideline보다 우선한다. 선택 source가 삭제되었거나 조회되지 않으면 `guideline_missing`으로 끝나며 active guideline으로 우회하지 않는다.
+- 선택 source가 없고 활성 guideline도 없으면 state에 선택 key가 있을 때 `no_selected_guideline`, 선택 key 자체가 없을 때 `no_active_guideline` 상태로 구분한다.
+- 검색된 지침 근거와 dataset columns에서 `semantic_glossary`를 만들어 제품 컬럼, 불량 indicator, 불량률 공식을 planner grounding에 먼저 전달한다.
 
 ### 7. visualization 경로
 

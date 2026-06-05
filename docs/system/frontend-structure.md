@@ -25,6 +25,7 @@
 
 - `frontend/src/app/hooks/useAnalysisPipeline.ts`
   - dataset upload, selected source, server dataset bootstrap, chat run, SSE stream, approval resume, 결과 상태를 관리한다.
+  - Pre-EDA insights와 chat stream 조회 시 현재 선택된 `guideline_source_id`를 전달해 backend의 selected guideline > active guideline > none 계약에 맞춘다. EDA 응답에 `dataset_overview`가 있으면 Workbench EDA 요약에 표시한다.
   - backend workflow output shape가 바뀌면 이 파일을 먼저 확인한다.
 - `frontend/src/app/hooks/useWorkbenchSessionStore.ts`
   - workbench session을 localStorage에 저장하고 복원한다.

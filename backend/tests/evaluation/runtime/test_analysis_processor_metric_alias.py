@@ -10,6 +10,8 @@ from backend.app.modules.analysis.schemas import (
     MetadataSnapshot,
     MetricSpec,
     SandboxExecutionResult,
+    SortSpec,
+    TimeContext,
     VisualizationHint,
 )
 
@@ -95,3 +97,61 @@ def test_positive_value_metric_rejects_same_column_filter() -> None:
         match="positive value cannot be combined with filters",
     ):
         processor.validate_and_finalize_plan(draft, metadata)
+
+
+def test_indicator_sum_metric_positive_value_is_normalized() -> None:
+    processor = AnalysisProcessor()
+    metadata = MetadataSnapshot(
+        columns=["TimeStamp", "PART_NO", "PART_NAME", "EQUIP_NAME", "PassOrFail"],
+        numeric_columns=["PassOrFail"],
+        datetime_columns=["TimeStamp"],
+        categorical_columns=["PART_NO", "PART_NAME", "EQUIP_NAME"],
+        row_count=2607,
+    )
+    draft = AnalysisPlanDraft(
+        analysis_type="defect_rate_by_group",
+        objective="제품별 불량률과 불량 건수를 계산합니다.",
+        group_by=["PART_NO", "PART_NAME", "EQUIP_NAME"],
+        metrics=[
+            MetricSpec(
+                name="defect_rate",
+                aggregation="rate",
+                column="PassOrFail",
+                positive_value=1,
+                alias="defect_rate",
+            ),
+            MetricSpec(
+                name="defective_count",
+                aggregation="sum",
+                column="PassOrFail",
+                positive_value=1,
+                alias="defective_count",
+            ),
+            MetricSpec(
+                name="total_count",
+                aggregation="count",
+                column=None,
+                alias="total_count",
+            ),
+        ],
+        sort_by=[SortSpec(column="defect_rate", direction="desc")],
+        time_context=TimeContext(
+            time_column="TimeStamp",
+            range_type="none",
+            grain="month",
+        ),
+        visualization_hint=VisualizationHint(preferred_chart="none"),
+        ambiguity_status="clear",
+    )
+
+    plan = processor.validate_and_finalize_plan(draft, metadata)
+
+    defective_count = next(
+        metric for metric in plan.metrics if metric.alias == "defective_count"
+    )
+    assert defective_count.aggregation == "sum"
+    assert defective_count.column == "PassOrFail"
+    assert defective_count.positive_value is None
+    assert {"PART_NO", "PART_NAME", "EQUIP_NAME", "PassOrFail", "TimeStamp"} <= set(
+        plan.used_columns
+    )

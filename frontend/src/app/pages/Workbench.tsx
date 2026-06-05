@@ -317,7 +317,7 @@ export default function Workbench() {
   );
 
   const handleRetryPreEda = useCallback(async () => {
-    const result = await pipeline.retrySelectedPreEda();
+    const result = await pipeline.retrySelectedPreEda(selectedGuidelineSourceId);
     if (result === "ready") {
       toast.success("Pre-EDA 정보를 다시 불러왔습니다.");
       return;
@@ -325,7 +325,26 @@ export default function Workbench() {
     if (result === "unavailable") {
       toast.error("Pre-EDA 정보를 다시 불러오지 못했습니다.");
     }
-  }, [pipeline]);
+  }, [pipeline, selectedGuidelineSourceId]);
+
+  const handleGuidelineSelectionChange = useCallback(
+    async (event: React.ChangeEvent<HTMLSelectElement>) => {
+      const nextGuidelineSourceId = event.target.value || null;
+      setSelectedGuidelineSourceId(nextGuidelineSourceId);
+      if (!selectedSourceId || state !== "ready") {
+        return;
+      }
+      const result = await pipeline.retrySelectedPreEda(nextGuidelineSourceId);
+      if (result === "ready") {
+        toast.success(
+          nextGuidelineSourceId
+            ? "Guideline 기준으로 EDA 요약을 갱신했습니다."
+            : "Guideline 요약을 제거하고 기본 EDA로 갱신했습니다.",
+        );
+      }
+    },
+    [pipeline, selectedSourceId, state],
+  );
 
   const formatElapsed = (s: number) => {
     const m = Math.floor(s / 60).toString().padStart(2, "0");
@@ -835,12 +854,12 @@ export default function Workbench() {
       if (file) {
         const targetSession = ensureActiveSessionForInteraction();
         markSessionActivity(targetSession.id);
-        pipeline.startUpload(file);
+        pipeline.startUpload(file, selectedGuidelineSourceId);
       }
       // Reset so the same file can be re-selected
       if (fileInputRef.current) fileInputRef.current.value = "";
     },
-    [ensureActiveSessionForInteraction, markSessionActivity, pipeline],
+    [ensureActiveSessionForInteraction, markSessionActivity, pipeline, selectedGuidelineSourceId],
   );
 
   const handleGuidelineFileSelected = useCallback(
@@ -863,7 +882,14 @@ export default function Workbench() {
         const uploaded = await uploadGuidelineFile(file, setGuidelineUploadProgress);
         setGuidelines((prev) => [uploaded, ...prev.filter((item) => item.source_id !== uploaded.source_id)]);
         setSelectedGuidelineSourceId(uploaded.source_id);
-        toast.success("Guideline을 업로드하고 현재 채팅에 연결했습니다.");
+        const refreshResult = selectedSourceId
+          ? await pipeline.retrySelectedPreEda(uploaded.source_id)
+          : "noop";
+        toast.success(
+          refreshResult === "ready"
+            ? "Guideline을 업로드하고 EDA 요약을 갱신했습니다."
+            : "Guideline을 업로드하고 현재 채팅에 연결했습니다.",
+        );
       } catch (error) {
         const message = error instanceof Error ? error.message : "Guideline 업로드에 실패했습니다.";
         toast.error(message);
@@ -872,7 +898,7 @@ export default function Workbench() {
         if (guidelineFileInputRef.current) guidelineFileInputRef.current.value = "";
       }
     },
-    [ensureActiveSessionForInteraction, markSessionActivity],
+    [ensureActiveSessionForInteraction, markSessionActivity, pipeline, selectedSourceId],
   );
 
   /** Handle Dropzone onDrop — if FileList is empty (button click), open picker */
@@ -882,12 +908,12 @@ export default function Workbench() {
       if (file) {
         const targetSession = ensureActiveSessionForInteraction();
         markSessionActivity(targetSession.id);
-        pipeline.startUpload(file);
+        pipeline.startUpload(file, selectedGuidelineSourceId);
       } else {
         openFilePicker();
       }
     },
-    [ensureActiveSessionForInteraction, markSessionActivity, pipeline, openFilePicker],
+    [ensureActiveSessionForInteraction, markSessionActivity, pipeline, openFilePicker, selectedGuidelineSourceId],
   );
 
   const formatSessionUpdatedAt = (value: string | null | undefined) => {
@@ -1020,15 +1046,33 @@ export default function Workbench() {
       ]
     : [];
 
+  const selectedDatasetOverview = selectedPreEdaProfile?.datasetOverview ?? null;
   const preEdaSummarySections = [
     {
       type: "paragraph" as const,
       content:
-        selectedPreEdaProfile?.qualitySummary
+        selectedDatasetOverview?.summary
+          ?? selectedPreEdaProfile?.qualitySummary
           ?? (hasDatasetContext
             ? `${currentDatasetLabel}이(가) 현재 source로 선택되어 있습니다. 질문 전에 구조와 품질 맥락을 먼저 확인하고, 이후 질문이 들어오면 Analysis로 이어집니다.`
             : "데이터 업로드는 완료됐지만 아직 source가 선택되지 않았습니다. 상단에서 source를 고르면 해당 데이터 기준으로 질문을 이어갈 수 있습니다."),
     },
+    ...(selectedDatasetOverview?.keyPoints.length
+      ? [
+          {
+            type: "checklist" as const,
+            items: selectedDatasetOverview.keyPoints,
+          },
+        ]
+      : []),
+    ...(selectedDatasetOverview && selectedPreEdaProfile?.qualitySummary
+      ? [
+          {
+            type: "paragraph" as const,
+            content: selectedPreEdaProfile.qualitySummary,
+          },
+        ]
+      : []),
     {
       type: "checklist" as const,
       items:
@@ -1168,7 +1212,7 @@ export default function Workbench() {
               <div className="relative min-w-0 w-full max-w-[210px]">
                 <select
                   value={selectedGuidelineSourceId ?? ""}
-                  onChange={(event) => setSelectedGuidelineSourceId(event.target.value || null)}
+                  onChange={handleGuidelineSelectionChange}
                   className="h-7 w-full min-w-0 appearance-none rounded-md border border-[var(--genui-border)] bg-[var(--genui-surface)] pl-2 pr-8 text-xs text-[var(--genui-text)] focus:outline-none focus:ring-1 focus:ring-[var(--genui-focus-ring)]"
                 >
                   <option value="">선택 안 함 (일반 질문)</option>

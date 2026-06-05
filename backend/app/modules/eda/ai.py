@@ -28,9 +28,12 @@ PROMPTS = PromptRegistry(
             "전문 용어는 그대로 나열하지 말고, 필요한 경우 무엇을 의미하는지 함께 설명하라. "
             "각 항목은 사용자가 다음에 무엇을 보면 되는지 또는 어떤 다음 행동을 하면 되는지 포함하라. "
             "반드시 한국어로 작성하고, 반드시 JSON 객체만 반환하라. "
-            '키는 "structure_summary", "quality_issues", "key_insights"만 사용하라. '
+            '기본 키는 "structure_summary", "quality_issues", "key_insights"만 사용하라. '
+            '입력에 "guideline_context"가 있으면 "dataset_overview"도 추가하라. '
             '"structure_summary"는 문자열 하나, 나머지 2개 키는 문자열 배열이어야 한다. '
+            '"dataset_overview"는 "summary" 문자열과 "key_points" 문자열 배열만 포함하라. '
             "각 배열은 1~3개 항목으로 간결하게 작성하라. "
+            "dataset_overview는 데이터 프로파일과 지침서 근거를 함께 보고 이 데이터가 무엇인지 쉽게 설명하라. "
             "원본 데이터 행을 추측하지 말고 제공된 통계/요약만 근거로 사용하라. "
             "가능하면 수치를 직접 인용하되 내부 구현, LLM, fallback 같은 시스템 사정은 말하지 마라."
         ),
@@ -66,6 +69,7 @@ def _parse_summary_content(content: str) -> dict[str, Any]:
         "structure_summary": str(parsed.get("structure_summary", "")).strip(),
         "quality_issues": _coerce_string_list(parsed.get("quality_issues")),
         "key_insights": _coerce_string_list(parsed.get("key_insights")),
+        "dataset_overview": _coerce_dataset_overview(parsed.get("dataset_overview")),
     }
 
 
@@ -76,6 +80,21 @@ def _coerce_string_list(value: Any) -> list[str]:
         return [str(item).strip() for item in value if str(item).strip()]
     text = str(value).strip()
     return [text] if text else []
+
+
+def _coerce_dataset_overview(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+
+    summary = str(value.get("summary", "")).strip()
+    key_points = _coerce_string_list(value.get("key_points"))
+    if not summary and not key_points:
+        return None
+
+    return {
+        "summary": summary,
+        "key_points": key_points,
+    }
 
 
 def _parse_summary_sections(content: str) -> dict[str, Any]:

@@ -110,17 +110,17 @@
 
 ### 역할
 
-`GuidelineService`는 guideline PDF upload/list/active/delete use case를 담당한다. RAG indexing 자체는 `GuidelineRagService`가 담당하지만, chat 실행 시 사용할 guideline source 선택값은 `active_guideline_source_id`로 orchestration state에 실린다.
+`GuidelineService`는 guideline PDF upload/list/active/delete use case를 담당한다. RAG indexing 자체는 `GuidelineRagService`가 담당하지만, chat 실행 시 사용할 guideline source 선택값은 `active_guideline_source_id`로 orchestration state에 실린다. 요청에 선택 guideline source가 있으면 그 값을 우선 사용하고, 없으면 `GuidelineService.get_active_guideline()`으로 활성 guideline을 조회한다.
 
 ### 연결 관계
 
 - `backend/app/modules/guidelines/router.py`가 public upload/list/activate/delete API로 사용한다.
-- `backend/app/orchestration/workflows/guideline.py`는 현재 chat 요청에서 선택된 guideline source를 확인한 뒤 guideline RAG context를 만든다. dataset 없이 guideline만 선택된 질문도 이 경로에서 근거를 검색한다.
+- `backend/app/orchestration/workflows/guideline.py`는 현재 chat 요청에서 선택된 guideline source 또는 활성 guideline source를 확인한 뒤 guideline RAG context와 `semantic_glossary`를 만든다. dataset 없이 guideline만 선택된 질문도 이 경로에서 근거를 검색한다.
 
 ## 발견한 문제점 / 확인 필요 사항
 
 - 관찰: dataset RAG와 guideline RAG는 같은 `rag/` module 아래 있지만 repository/model/storage path가 분리되어 있다. 문서나 코드에서 둘을 같은 source namespace로 단순화하면 실제 동작과 다르다.
 - 관찰: `backend/app/orchestration/workflows/guideline.py`는 workflow 내부에서 guideline repository/service를 조립하고 guideline RAG service의 내부 index path 성격 method에 의존하는 부분이 있다. 이는 orchestration-module 경계 확인이 필요한 지점이다.
 - 리스크: RAG 검색 결과가 없을 때도 no-evidence summary가 정상 output으로 흘러간다. 후속 answer 생성에서 “근거 없음”과 “실패”를 구분해야 한다.
-- 리스크: guideline 선택값 없음(`no_selected_guideline`)과 삭제/누락된 선택값(`guideline_missing`)은 사용자 조치가 다르므로 같은 상태로 합치면 안 된다.
+- 리스크: 활성 guideline 없음(`no_active_guideline`/`no_selected_guideline`)과 삭제/누락된 선택값(`guideline_missing`)은 사용자 조치가 다르므로 같은 상태로 합치면 안 된다.
 - 리스크: vector index 파일과 DB row가 불일치하면 검색 결과 신뢰도가 낮아질 수 있다. delete/re-index 관련 변경은 storage와 repository를 동시에 확인해야 한다.

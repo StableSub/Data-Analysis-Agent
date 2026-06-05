@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 from backend.app.modules.planner.schemas import PlanningResult
 from backend.app.modules.rag.service import RetrievedChunk
@@ -13,11 +13,17 @@ from backend.app.orchestration.workflows.guideline import build_guideline_workfl
 
 
 class _FakeGuidelineService:
-    def __init__(self, guidelines: dict[str, SimpleNamespace] | None = None) -> None:
+    def __init__(
+        self,
+        guidelines: dict[str, SimpleNamespace] | None = None,
+        *,
+        active: SimpleNamespace | None = None,
+    ) -> None:
         self._guidelines = guidelines or {}
+        self._active = active
 
     def get_active_guideline(self) -> SimpleNamespace | None:
-        return None
+        return self._active
 
     def get_guideline_by_source_id(self, source_id: str) -> SimpleNamespace | None:
         return self._guidelines.get(source_id)
@@ -26,6 +32,7 @@ class _FakeGuidelineService:
 class _FakeGuidelineRagService:
     def __init__(self, *, retrieved: list[RetrievedChunk] | None = None) -> None:
         self._retrieved = retrieved or []
+        self.queries: list[str] = []
 
     def ensure_index_for_guideline(self, guideline: SimpleNamespace) -> dict[str, str]:
         return {"status": "existing", "source_id": str(guideline.source_id)}
@@ -37,6 +44,7 @@ class _FakeGuidelineRagService:
         source_id: str,
         top_k: int,
     ) -> list[RetrievedChunk]:
+        self.queries.append(source_id)
         return self._retrieved[:top_k]
 
     def build_context(self, retrieved: list[RetrievedChunk]) -> str:
@@ -147,13 +155,67 @@ def test_guideline_selected_without_dataset_reaches_guideline_evidence(
     assert "guideline" in captured["merged_context"]["applied_steps"]
 
 
-def test_guideline_blank_selection_is_no_selected_guideline() -> None:
-    source_id = "guideline-source"
-    guideline_service: Any = _FakeGuidelineService({source_id: _guideline(source_id)})
-    guideline_rag_service: Any = _FakeGuidelineRagService()
+def test_guideline_selected_source_takes_priority_over_active_guideline(monkeypatch) -> None:
+    selected_id = "selected-guideline"
+    active_id = "active-guideline"
+    selected = _guideline(selected_id)
+    active = _guideline(active_id)
+    monkeypatch.setattr(guideline_workflow, "LLMGateway", _FakeGuidelineGateway)
+    guideline_service: Any = _FakeGuidelineService(
+        {selected_id: selected, active_id: active},
+        active=active,
+    )
+    guideline_rag_service = _FakeGuidelineRagService(
+        retrieved=[
+            RetrievedChunk(
+                source_id=selected_id,
+                chunk_id=0,
+                score=0.91,
+                content="PART_NAME은 제품명이고 PassOrFail=1은 불량입니다.",
+            )
+        ]
+    )
     workflow = build_guideline_workflow(
         guideline_service=guideline_service,
-        guideline_rag_service=guideline_rag_service,
+        guideline_rag_service=cast(Any, guideline_rag_service),
+        default_model="test-model",
+    )
+
+    result = workflow.invoke(
+        {
+            "user_input": "제품별 불량률 기준은?",
+            "active_guideline_source_id": selected_id,
+        }
+    )
+
+    assert result["active_guideline_source_id"] == selected_id
+    assert guideline_rag_service.queries == [selected_id]
+    assert result["guideline_result"]["status"] in {"retrieved", "no_evidence"}
+
+
+def test_guideline_blank_selection_falls_back_to_active_guideline(
+    monkeypatch,
+) -> None:
+    source_id = "guideline-source"
+    active_guideline = _guideline(source_id)
+    monkeypatch.setattr(guideline_workflow, "LLMGateway", _FakeGuidelineGateway)
+    guideline_service: Any = _FakeGuidelineService(
+        {source_id: active_guideline},
+        active=active_guideline,
+    )
+    guideline_rag_service = _FakeGuidelineRagService(
+        retrieved=[
+            RetrievedChunk(
+                source_id=source_id,
+                chunk_id=0,
+                score=0.91,
+                content="PART_NAME은 제품명이고 PassOrFail=1은 불량입니다.",
+            )
+        ]
+    )
+    workflow = build_guideline_workflow(
+        guideline_service=guideline_service,
+        guideline_rag_service=cast(Any, guideline_rag_service),
         default_model="test-model",
     )
 
@@ -164,17 +226,50 @@ def test_guideline_blank_selection_is_no_selected_guideline() -> None:
         }
     )
 
-    assert result["guideline_index_status"]["status"] == "no_selected_guideline"
-    assert result["guideline_result"]["status"] == "no_selected_guideline"
-    assert result["guideline_result"]["retrieved_count"] == 0
+    assert result["active_guideline_source_id"] == source_id
+    assert guideline_rag_service.queries == [source_id]
+    assert result["guideline_result"]["status"] == "retrieved"
+    assert result["guideline_result"]["retrieved_count"] == 1
 
 
-def test_guideline_missing_selection_key_is_no_active_guideline() -> None:
+def test_guideline_missing_selection_key_uses_active_guideline(monkeypatch) -> None:
+    source_id = "guideline-source"
+    active_guideline = _guideline(source_id)
+    monkeypatch.setattr(guideline_workflow, "LLMGateway", _FakeGuidelineGateway)
+    guideline_service: Any = _FakeGuidelineService(
+        {source_id: active_guideline},
+        active=active_guideline,
+    )
+    guideline_rag_service = _FakeGuidelineRagService(
+        retrieved=[
+            RetrievedChunk(
+                source_id=source_id,
+                chunk_id=0,
+                score=0.91,
+                content="PART_NAME은 제품명이고 PassOrFail=1은 불량입니다.",
+            )
+        ]
+    )
+    workflow = build_guideline_workflow(
+        guideline_service=guideline_service,
+        guideline_rag_service=cast(Any, guideline_rag_service),
+        default_model="test-model",
+    )
+
+    result = workflow.invoke({"user_input": "안전 기준은?"})
+
+    assert result["active_guideline_source_id"] == source_id
+    assert guideline_rag_service.queries == [source_id]
+    assert result["guideline_result"]["status"] == "retrieved"
+    assert result["guideline_result"]["retrieved_count"] == 1
+
+
+def test_guideline_missing_selection_key_without_active_is_no_active_guideline() -> None:
     guideline_service: Any = _FakeGuidelineService()
     guideline_rag_service: Any = _FakeGuidelineRagService()
     workflow = build_guideline_workflow(
         guideline_service=guideline_service,
-        guideline_rag_service=guideline_rag_service,
+        guideline_rag_service=cast(Any, guideline_rag_service),
         default_model="test-model",
     )
 
@@ -183,6 +278,59 @@ def test_guideline_missing_selection_key_is_no_active_guideline() -> None:
     assert result["guideline_index_status"]["status"] == "no_active_guideline"
     assert result["guideline_result"]["status"] == "no_active_guideline"
     assert result["guideline_result"]["retrieved_count"] == 0
+
+
+def test_guideline_context_includes_semantic_glossary_from_guideline_and_dataset(
+    monkeypatch,
+) -> None:
+    source_id = "guideline-source"
+    active_guideline = _guideline(source_id)
+
+    monkeypatch.setattr(guideline_workflow, "LLMGateway", _FakeGuidelineGateway)
+
+    workflow = build_guideline_workflow(
+        guideline_service=cast(Any, _FakeGuidelineService(
+            {source_id: active_guideline},
+            active=active_guideline,
+        )),
+        guideline_rag_service=cast(Any, _FakeGuidelineRagService(
+            retrieved=[
+                RetrievedChunk(
+                    source_id=source_id,
+                    chunk_id=0,
+                    score=0.91,
+                    content=(
+                        "PART_NAME은 제품명입니다. "
+                        "PassOrFail 컬럼에서 1은 불량, 0은 정상입니다. "
+                        "불량률은 불량 건수 / 전체 건수입니다."
+                    ),
+                )
+            ]
+        )),
+        default_model="test-model",
+    )
+
+    result = workflow.invoke(
+        {
+            "user_input": "제품별 불량률을 분석해줘",
+            "dataset_context": {
+                "columns": ["PART_NO", "PART_NAME", "PassOrFail", "TimeStamp"],
+                "numeric_columns": ["PassOrFail"],
+                "categorical_columns": ["PART_NO", "PART_NAME"],
+            },
+        }
+    )
+
+    semantic_glossary = result["guideline_context"]["semantic_glossary"]
+    assert semantic_glossary["product"]["columns"] == ["PART_NAME", "PART_NO"]
+    assert semantic_glossary["defect_indicator"] == {
+        "column": "PassOrFail",
+        "defect_value": 1,
+        "pass_value": 0,
+    }
+    assert semantic_glossary["defect_rate"]["formula"] == (
+        "count(PassOrFail == 1) / count(*)"
+    )
 
 
 def test_guideline_stale_selection_is_guideline_missing() -> None:

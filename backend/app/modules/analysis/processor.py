@@ -628,14 +628,21 @@ class AnalysisProcessor:
             normalized_column = self._resolve_column_name(
                 metric.column, metadata, resolved_columns, set()
             )
+        normalized_positive_value = metric.positive_value
+        if (
+            metric.aggregation == "sum"
+            and normalized_column in metadata.numeric_columns
+            and metric.positive_value == 1
+        ):
+            normalized_positive_value = None
         if metric.aggregation != "count" and not normalized_column:
             raise ValueError(f"metric '{metric.name}' requires a source column")
-        if metric.positive_value is not None and not normalized_column:
+        if normalized_positive_value is not None and not normalized_column:
             raise ValueError(
                 f"metric '{metric.name}' positive value requires a source column"
             )
         if (
-            metric.positive_value is not None
+            normalized_positive_value is not None
             and metric.aggregation not in {"avg", "rate"}
         ):
             raise ValueError(
@@ -644,7 +651,13 @@ class AnalysisProcessor:
         alias = metric.alias.strip() or metric.name.strip()
         if not alias:
             raise ValueError("metric alias must not be empty")
-        return metric.model_copy(update={"column": normalized_column, "alias": alias})
+        return metric.model_copy(
+            update={
+                "column": normalized_column,
+                "positive_value": normalized_positive_value,
+                "alias": alias,
+            }
+        )
 
     def _normalize_derived_column(
         self,

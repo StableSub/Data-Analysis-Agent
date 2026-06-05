@@ -38,8 +38,8 @@
 ### Guideline workflow
 
 - route/status: `no_active_guideline`, `no_selected_guideline`, `guideline_missing`, `existing`, `created`, `missing`, `retrieved`, `no_evidence`.
-- payload contract: `user_input`, `model_id`, `active_guideline_source_id`, `guideline_index_status`, `guideline_result`, `guideline_data_exists`, `retrieved_chunks`, `retrieved_count`, `evidence_summary`, `status`.
-- `active_guideline_source_id`는 전역 활성 지침서가 아니라 현재 chat 요청에서 선택된 `guideline_source_id`를 기준으로 채워진다. state에 선택 key가 없으면 `no_active_guideline`, 선택값이 빈 문자열이면 `no_selected_guideline`, 선택한 source가 조회되지 않으면 `guideline_missing`으로 종료된다.
+- payload contract: `user_input`, `model_id`, `active_guideline_source_id`, `guideline_index_status`, `guideline_result`, `guideline_context`, `guideline_data_exists`, `retrieved_chunks`, `retrieved_count`, `evidence_summary`, `semantic_glossary`, `status`.
+- `active_guideline_source_id`는 현재 chat 요청에서 선택된 `guideline_source_id`를 우선 반영한다. 선택 source가 없으면 활성 guideline을 조회하고, 활성 guideline도 없을 때만 `no_active_guideline` 또는 `no_selected_guideline`으로 종료된다. 선택 source가 조회되지 않으면 active로 우회하지 않고 `guideline_missing`으로 종료된다.
 
 ### Preprocess workflow
 
@@ -97,11 +97,11 @@
 ### State/output
 
 - `active_guideline_source_id`, `guideline_index_status`, `guideline_data_exists`, `guideline_result`가 주요 key다.
-- `guideline_result.status`, `retrieved_count`, `evidence_summary`, `filename`, `guideline_id`가 downstream `merged_context.guideline_context`에 반영된다.
+- `guideline_result.status`, `retrieved_count`, `evidence_summary`, `filename`, `guideline_id`, `semantic_glossary`가 downstream `merged_context.guideline_context`에 반영된다.
 
 ### 주의점
 
-- guideline 선택 key가 없거나 비어 있거나 삭제된 source를 가리키면 각각 `no_active_guideline`, `no_selected_guideline`, `guideline_missing` 상태로 끝난다.
+- 선택 source가 없으면 활성 guideline을 사용하고, 선택 source가 삭제된 경우에만 `guideline_missing` 상태로 끝난다.
 - guideline evidence가 없다는 것은 workflow 실패와 다르다.
 
 ## Preprocess workflow: `backend/app/orchestration/workflows/preprocess.py`

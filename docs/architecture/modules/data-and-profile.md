@@ -20,6 +20,7 @@
 | `backend/app/modules/eda/__init__.py` | EDA package marker다. |
 | `backend/app/modules/eda/ai.py` | EDA profile 기반 AI summary/recommendation 생성과 parsing helper를 담당한다. |
 | `backend/app/modules/eda/dependencies.py` | `EDAService`를 dataset repository/reader/profile service와 조립한다. |
+| `backend/app/modules/eda/guideline_overview.py` | 선택 지침서와 EDA profile을 합쳐 `dataset_overview` 문맥과 fallback 요약을 만든다. |
 | `backend/app/modules/eda/router.py` | `APIRouter(prefix="/eda")`로 profile, summary, quality, columns/types, stats, correlations, outliers, distribution, recommendations, insights route를 제공한다. |
 | `backend/app/modules/eda/schemas.py` | EDA summary/quality/type/stats response model을 정의한다. |
 | `backend/app/modules/eda/service.py` | `EDAService`가 profile 조회, summary/statistics/correlation/outlier/distribution/recommendation/insight 계산을 담당한다. |
@@ -55,7 +56,7 @@
 - `GET /eda/{source_id}/outliers`: outlier 정보.
 - `GET /eda/{source_id}/distribution`: 분포 정보.
 - `GET /eda/{source_id}/preprocess-recommendations`: 전처리 추천.
-- `GET /eda/{source_id}/insights`: AI 기반 EDA insight.
+- `GET /eda/{source_id}/insights`: AI 기반 EDA insight. 선택 query `guideline_source_id`가 있으면 해당 지침서를 우선 사용하고, 없으면 활성 guideline을 조회한다. 지침 문맥을 읽을 수 있으면 데이터 프로파일과 합친 `dataset_overview`를 함께 반환한다.
 
 ## Hotspot: `backend/app/modules/datasets/service.py`
 

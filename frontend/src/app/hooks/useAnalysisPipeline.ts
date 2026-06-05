@@ -43,6 +43,7 @@ import type { RawLogEntry } from "../components/genui/MCPPanel";
 import type { TimelineItemStatus } from "../components/genui/TimelineItem";
 import type { PipelineStepStatus } from "../components/genui/PipelineTracker";
 import {
+  mapEdaDatasetOverview,
   type PreEdaProfile,
 } from "../lib/preEdaProfile";
 import {
@@ -178,13 +179,13 @@ export interface UseAnalysisPipelineReturn {
   removeUploadedDataset: (sourceId: string) => Promise<void>;
 
   // Actions
-  startUpload: (file: File) => void;
+  startUpload: (file: File, guidelineSourceId?: string | null) => void;
   resumeRun: (decision: "approve" | "revise" | "cancel", instruction?: string) => void;
   handleApprove: () => Promise<"approved" | "failed" | "noop">;
   handleReject: () => void;
   handleEditInstruction: (text: string) => void;
   handleRetry: () => void;
-  retrySelectedPreEda: () => Promise<"ready" | "unavailable" | "noop">;
+  retrySelectedPreEda: (guidelineSourceId?: string | null) => Promise<"ready" | "unavailable" | "noop">;
   bootstrapServerDatasets: (datasets: DatasetResponse[]) => PipelineSessionContext;
   loadSelectedPreEdaDistribution: (column: string) => Promise<void>;
   applyRecommendedOperation: (
@@ -446,6 +447,7 @@ async function loadServerPreEdaProfile(
   sourceId: string,
   sourceLabel: string,
   uploadedAt: string,
+  guidelineSourceId?: string | null,
 ): Promise<PreEdaLoadResult> {
   try {
     const [profile, quality, correlations, stats, outliers, preprocessRecommendationResponse, insights] =
@@ -456,7 +458,7 @@ async function loadServerPreEdaProfile(
         fetchEdaStats(sourceId),
         fetchEdaOutliers(sourceId),
         fetchEdaPreprocessRecommendations(sourceId),
-        fetchEdaInsights(sourceId),
+        fetchEdaInsights(sourceId, guidelineSourceId),
       ]);
 
     const missingColumns = quality.columns.map((column) => ({
@@ -536,6 +538,7 @@ async function loadServerPreEdaProfile(
         })),
         qualitySummary: buildServerQualitySummary(profile, insights),
         summaryBullets: buildServerSummaryBullets(profile, insights),
+        datasetOverview: mapEdaDatasetOverview(insights.dataset_overview),
         serverRecommendation,
       },
       recommendationMode: preprocessRecommendationResponse.generation_mode,
@@ -1119,57 +1122,61 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
     [addLog, upsertUploadedDataset],
   );
 
-  const retrySelectedPreEda = useCallback(async (): Promise<"ready" | "unavailable" | "noop"> => {
-    if (!selectedSourceId) {
-      return "noop";
-    }
-    const selectedDataset = uploadedDatasets.find((item) => item.sourceId === selectedSourceId) ?? null;
-    if (!selectedDataset) {
-      return "noop";
-    }
+  const retrySelectedPreEda = useCallback(
+    async (guidelineSourceId?: string | null): Promise<"ready" | "unavailable" | "noop"> => {
+      if (!selectedSourceId) {
+        return "noop";
+      }
+      const selectedDataset = uploadedDatasets.find((item) => item.sourceId === selectedSourceId) ?? null;
+      if (!selectedDataset) {
+        return "noop";
+      }
 
-    const preEdaResult = await loadServerPreEdaProfile(
-      selectedSourceId,
-      selectedDataset.fileName,
-      selectedDataset.uploadedAt,
-    );
+      const preEdaResult = await loadServerPreEdaProfile(
+        selectedSourceId,
+        selectedDataset.fileName,
+        selectedDataset.uploadedAt,
+        guidelineSourceId,
+      );
 
-    if (preEdaResult.status === "ready") {
+      if (preEdaResult.status === "ready") {
+        upsertUploadedDataset({
+          ...selectedDataset,
+          preEdaProfile: preEdaResult.profile,
+          preEdaStatus: "ready",
+          preEdaWarning: preEdaResult.warning,
+          recommendationMode: preEdaResult.recommendationMode,
+          preprocessApproved: isRecommendationExhausted(
+            preEdaResult.recommendationMode,
+            preEdaResult.profile.serverRecommendation,
+          ),
+        });
+        setPreEdaApplyErrors((prev) => ({ ...prev, [selectedSourceId]: null }));
+        setSelectedPreEdaDistributionColumn(preEdaResult.initialDistributionColumn);
+        setPreEdaDistributionError(
+          preEdaResult.distributionError && preEdaResult.initialDistributionColumn
+            ? {
+                sourceId: selectedSourceId,
+                column: preEdaResult.initialDistributionColumn,
+                message: preEdaResult.distributionError,
+              }
+            : null,
+        );
+        return "ready";
+      }
+
       upsertUploadedDataset({
         ...selectedDataset,
-        preEdaProfile: preEdaResult.profile,
-        preEdaStatus: "ready",
-        preEdaWarning: preEdaResult.warning,
-        recommendationMode: preEdaResult.recommendationMode,
-        preprocessApproved: isRecommendationExhausted(
-          preEdaResult.recommendationMode,
-          preEdaResult.profile.serverRecommendation,
-        ),
-    });
-      setPreEdaApplyErrors((prev) => ({ ...prev, [selectedSourceId]: null }));
-      setSelectedPreEdaDistributionColumn(preEdaResult.initialDistributionColumn);
-      setPreEdaDistributionError(
-        preEdaResult.distributionError && preEdaResult.initialDistributionColumn
-          ? {
-              sourceId: selectedSourceId,
-              column: preEdaResult.initialDistributionColumn,
-              message: preEdaResult.distributionError,
-            }
-          : null,
-      );
-      return "ready";
-    }
-
-    upsertUploadedDataset({
-      ...selectedDataset,
-      preEdaProfile: null,
-      preEdaStatus: "unavailable",
-      preEdaWarning: preEdaResult.message,
-      recommendationMode: null,
-    });
-    setPreEdaDistributionError((prev) => (prev?.sourceId === selectedSourceId ? null : prev));
-    return "unavailable";
-  }, [selectedSourceId, uploadedDatasets, upsertUploadedDataset]);
+        preEdaProfile: null,
+        preEdaStatus: "unavailable",
+        preEdaWarning: preEdaResult.message,
+        recommendationMode: null,
+      });
+      setPreEdaDistributionError((prev) => (prev?.sourceId === selectedSourceId ? null : prev));
+      return "unavailable";
+    },
+    [selectedSourceId, uploadedDatasets, upsertUploadedDataset],
+  );
 
   const loadSelectedPreEdaDistribution = useCallback(
     async (column: string): Promise<void> => {
@@ -1840,7 +1847,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
   );
 
   const startUpload = useCallback(
-    (file: File) => {
+    (file: File, guidelineSourceId?: string | null) => {
       setChatResponse(null);
       setStreamingAnswer("");
       setThoughtSteps([]);
@@ -1884,6 +1891,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
             dataset.source_id,
             dataset.filename || file.name,
             uploadedAt,
+            guidelineSourceId,
           );
           if (preEdaResult.status === "ready") {
             preEdaProfile = preEdaResult.profile;

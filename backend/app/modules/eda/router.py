@@ -1,6 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from ..datasets.service import DATASET_READ_ERROR_DETAIL, DatasetReadError
+from ..guidelines.dependencies import get_guideline_service
+from ..guidelines.service import GuidelineService
 from .dependencies import get_eda_service
 from .schemas import (
     EDAAISummaryResponse,
@@ -200,14 +202,28 @@ def get_eda_preprocess_recommendations(
     return recommendation_response
 
 
-@router.get("/{source_id}/insights", response_model=EDAAISummaryResponse)
+@router.get(
+    "/{source_id}/insights",
+    response_model=EDAAISummaryResponse,
+    response_model_exclude_none=True,
+)
 def get_eda_insights(
     source_id: str,
     model_id: str | None = Query(default=None, description="Optional model override"),
+    guideline_source_id: str | None = Query(
+        default=None,
+        description="Optional guideline source id",
+    ),
     service: EDAService = Depends(get_eda_service),
+    guideline_service: GuidelineService = Depends(get_guideline_service),
 ):
     try:
-        summary = service.get_ai_summary(source_id, model_id=model_id)
+        summary = service.get_ai_summary(
+            source_id,
+            model_id=model_id,
+            guideline_source_id=guideline_source_id,
+            guideline_service=guideline_service,
+        )
     except DatasetReadError as exc:
         _raise_dataset_read_http_error(exc)
     if summary is None:

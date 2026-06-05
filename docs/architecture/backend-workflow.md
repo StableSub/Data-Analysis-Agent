@@ -180,11 +180,13 @@ START
 
 파일: `backend/app/orchestration/workflows/guideline.py`.
 
-- 현재 chat 요청의 `guideline_source_id`에서 온 `active_guideline_source_id`를 확인한다.
+- 현재 chat 요청의 `guideline_source_id`에서 온 `active_guideline_source_id`를 우선 확인하고, 값이 없으면 활성 guideline을 조회한다.
 - dataset 없이 guideline만 선택된 질문은 이 subgraph 이후 planner를 거치지 않고 `merge_context`로 이동한다.
 - guideline index/retrieval을 수행한다.
 - `guideline_result`와 `guideline_index_status`를 main state에 올린다.
-- 선택 key 누락, 빈 선택값, 삭제된 선택값, 검색 근거 없음은 각각 `no_active_guideline`, `no_selected_guideline`, `guideline_missing`, `no_evidence`로 구분한다.
+- 선택 source가 있으면 활성 guideline보다 우선하며, 삭제된 선택값은 `guideline_missing`으로 끝난다.
+- 선택 source와 활성 guideline이 모두 없으면 `no_active_guideline` 또는 `no_selected_guideline`, 검색 근거가 없으면 `no_evidence`로 구분한다.
+- 지침 원문과 dataset columns에서 `semantic_glossary`를 만들어 planner에 제품 컬럼, 불량 indicator, 불량률 공식 매핑을 전달한다.
 
 ### Visualization subgraph
 

@@ -29,7 +29,7 @@ class RagResultPayload(TypedDict, total=False):
     has_evidence: bool
     query: str
     source_id: str
-    retrieved_chunks: list
+    retrieved_chunks: list[Dict[str, Any]]
     context: str
     retrieved_count: int
     evidence_summary: str
@@ -41,7 +41,7 @@ class GuidelineResultPayload(TypedDict, total=False):
     source_id: str
     guideline_id: str
     filename: str
-    retrieved_chunks: list
+    retrieved_chunks: list[Dict[str, Any]]
     context: str
     retrieved_count: int
     evidence_summary: str
@@ -92,6 +92,7 @@ class GuidelineContextPayload(TypedDict, total=False):
     retrieved_count: int
     has_evidence: bool
     evidence_summary: str
+    semantic_glossary: Dict[str, Any]
 
 
 class VisualizationResultPayload(TypedDict, total=False):

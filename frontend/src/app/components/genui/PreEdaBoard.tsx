@@ -754,6 +754,35 @@ export function PreEdaBoard({
               />
             </div>
 
+            {profile.datasetOverview ? (
+              <div className="space-y-2 rounded-lg border border-[var(--genui-border)] bg-[var(--genui-panel)] px-3 py-2.5">
+                <div className="flex min-w-0 items-center justify-between gap-2">
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--genui-muted)]">
+                    Guideline Overview
+                  </p>
+                  <span
+                    className="max-w-[160px] truncate text-[10px] text-[var(--genui-muted)]"
+                    title={profile.datasetOverview.guidelineFilename}
+                  >
+                    {profile.datasetOverview.guidelineFilename}
+                  </span>
+                </div>
+                <p className="text-sm leading-relaxed text-[var(--genui-text)]">
+                  {profile.datasetOverview.summary}
+                </p>
+                {profile.datasetOverview.keyPoints.length > 0 ? (
+                  <ul className="space-y-1 text-xs leading-relaxed text-[var(--genui-muted)]">
+                    {profile.datasetOverview.keyPoints.slice(0, 3).map((point) => (
+                      <li key={point} className="flex gap-2">
+                        <span className="mt-1 h-1 w-1 shrink-0 rounded-full bg-[var(--genui-muted)]" />
+                        <span>{point}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+            ) : null}
+
             <div className="rounded-lg border border-[var(--genui-border)] bg-[var(--genui-surface)] px-3 py-2.5">
               <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--genui-muted)]">
                 Quality Summary

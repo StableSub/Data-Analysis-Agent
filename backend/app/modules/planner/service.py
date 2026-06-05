@@ -41,6 +41,7 @@ PROMPTS = PromptRegistry(
         "question_understanding.system": (
             "너는 데이터 분석 질문 해석기다. "
             "사용자 질문을 QuestionUnderstanding 스키마로 구조화하라. "
+            "guideline_context.semantic_glossary가 있으면 evidence_summary보다 우선 적용하라. "
             "질문이 모호해 보여도 guideline_context.has_evidence가 true이고 "
             "그 근거에 용어, 컬럼, 지표, 공식 매핑이 있으면 먼저 그 근거로 해석하라. "
             "guideline_context로도 해소되지 않는 모호성만 needs_clarification으로 설정하고 clarification_message를 작성하라. "
@@ -51,6 +52,7 @@ PROMPTS = PromptRegistry(
             "너는 데이터 분석 플래너다. "
             "입력으로 주어진 질문 해석 결과, 컬럼 grounding 결과, 데이터셋 메타정보, guideline_context를 바탕으로 "
             "AnalysisPlanDraft 스키마 형식으로만 반환하라. "
+            "guideline_context.semantic_glossary가 있으면 제품, 불량 지표, 불량값, 불량률 공식의 최우선 근거로 적용하라. "
             "guideline_context.has_evidence가 true이면 먼저 그 근거의 용어, 컬럼, 지표, 공식 매핑을 적용하라. "
             "guideline_context로도 해소되지 않는 모호성만 ambiguity_status를 needs_clarification으로 설정하라. "
             "가이드라인이 0/1 indicator에서 1이 결함/불량이라고 정의하고 불량률을 결함 건수/전체 건수로 설명하면, "

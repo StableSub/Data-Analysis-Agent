@@ -123,11 +123,20 @@ class EDADistributionResponse(BaseModel):
     bins: list[EDADistributionBin] = Field(default_factory=list)
 
 
+class EDADatasetOverview(BaseModel):
+    guideline_source_id: str
+    guideline_filename: str = ""
+    summary: str = ""
+    key_points: list[str] = Field(default_factory=list)
+    matched_terms: list[str] = Field(default_factory=list)
+
+
 class EDAAISummaryResponse(BaseModel):
     source_id: str
     structure_summary: str = ""
     quality_issues: list[str] = Field(default_factory=list)
     key_insights: list[str] = Field(default_factory=list)
+    dataset_overview: EDADatasetOverview | None = None
 
 
 class EDAProfileResponse(BaseModel):

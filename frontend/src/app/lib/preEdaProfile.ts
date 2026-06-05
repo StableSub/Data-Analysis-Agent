@@ -1,4 +1,4 @@
-import type { EdaPreprocessRecommendation } from "../../lib/api";
+import type { EdaDatasetOverview, EdaPreprocessRecommendation } from "../../lib/api";
 
 export interface NumericSnapshot {
   column: string;
@@ -86,6 +86,14 @@ export interface PreprocessRecommendation {
   alternativeStrategies: PreprocessStrategy[];
 }
 
+export interface DatasetOverview {
+  guidelineSourceId: string;
+  guidelineFilename: string;
+  summary: string;
+  keyPoints: string[];
+  matchedTerms: string[];
+}
+
 export interface PreEdaProfile {
   sourceLabel: string;
   uploadedAt: string;
@@ -110,6 +118,7 @@ export interface PreEdaProfile {
   outlierSummaries: OutlierSummary[];
   qualitySummary: string;
   summaryBullets: string[];
+  datasetOverview: DatasetOverview | null;
   serverRecommendation: EdaPreprocessRecommendation | null;
 }
 
@@ -464,7 +473,23 @@ function createFallbackProfile(file: File, uploadedAt: string): PreEdaProfile {
       "CSV/JSON이 아닌 형식이라 브라우저 내 즉시 프로파일링은 생략했습니다.",
       "업로드 후 질문과 후속 Analysis 흐름은 그대로 진행할 수 있습니다.",
     ],
+    datasetOverview: null,
     serverRecommendation: null,
+  };
+}
+
+export function mapEdaDatasetOverview(
+  overview: EdaDatasetOverview | null | undefined,
+): DatasetOverview | null {
+  if (!overview || !overview.summary.trim()) {
+    return null;
+  }
+  return {
+    guidelineSourceId: overview.guideline_source_id,
+    guidelineFilename: overview.guideline_filename,
+    summary: overview.summary,
+    keyPoints: overview.key_points.map((item) => item.trim()).filter(Boolean),
+    matchedTerms: overview.matched_terms.map((item) => item.trim()).filter(Boolean),
   };
 }
 
@@ -899,6 +924,7 @@ export async function buildPreEdaProfile(file: File): Promise<PreEdaProfile | nu
     outlierSummaries,
     qualitySummary,
     summaryBullets,
+    datasetOverview: null,
     serverRecommendation: null,
   };
 }

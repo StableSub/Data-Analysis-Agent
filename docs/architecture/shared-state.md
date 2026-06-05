@@ -44,10 +44,11 @@
 ### `guideline_context`
 
 - 의미
-  - `merge_context` 안에 요약되어 들어가는 guideline evidence 컨텍스트
+  - guideline flow가 검색한 지침 근거와 planner grounding에 쓸 의미 매핑 컨텍스트
 - 주 생성 위치
-  - `merge_context` node
+  - `guideline_flow`
 - 주 소비 위치
+  - planner
   - `data_qa_terminal`
   - report
 - 주요 내용
@@ -59,6 +60,7 @@
   - `retrieved_count`
   - `has_evidence`
   - `evidence_summary`
+  - `semantic_glossary`: 지침 원문과 dataset columns에서 추출한 제품 컬럼, 불량 indicator, 불량률 공식 매핑
 
 ### `final_status`
 

@@ -668,11 +668,20 @@ export interface EdaDistributionResponse {
   bins: EdaDistributionBin[];
 }
 
+export interface EdaDatasetOverview {
+  guideline_source_id: string;
+  guideline_filename: string;
+  summary: string;
+  key_points: string[];
+  matched_terms: string[];
+}
+
 export interface EdaInsightResponse {
   source_id: string;
   structure_summary: string;
   quality_issues: string[];
   key_insights: string[];
+  dataset_overview?: EdaDatasetOverview | null;
 }
 
 export interface EdaPreprocessRecommendation {
@@ -804,8 +813,17 @@ export function fetchEdaPreprocessRecommendations(
 /** GET /eda/{source_id}/insights */
 export function fetchEdaInsights(
   sourceId: string,
+  guidelineSourceId?: string | null,
 ): Promise<EdaInsightResponse> {
-  return apiRequest<EdaInsightResponse>(`/eda/${sourceId}/insights`);
+  const params = new URLSearchParams();
+  const normalizedGuidelineSourceId = guidelineSourceId?.trim();
+  if (normalizedGuidelineSourceId) {
+    params.set("guideline_source_id", normalizedGuidelineSourceId);
+  }
+  const query = params.toString();
+  return apiRequest<EdaInsightResponse>(
+    `/eda/${sourceId}/insights${query ? `?${query}` : ""}`,
+  );
 }
 // --- Upload with XHR progress tracking ---
 

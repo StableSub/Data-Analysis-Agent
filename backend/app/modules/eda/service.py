@@ -4,6 +4,7 @@ from openai import OpenAIError
 import pandas as pd
 
 from .ai import generate_eda_ai_summary
+from .guideline_overview import build_dataset_overview, build_guideline_context
 from .insights import build_deterministic_ai_summary
 from .numeric import finite_float, finite_numeric_frame, finite_numeric_series
 from .schemas import (
@@ -28,6 +29,7 @@ from .schemas import (
 )
 from ..datasets.repository import DataSourceRepository
 from ..datasets.service import DatasetReader
+from ..guidelines.service import GuidelineService
 from ..profiling.schemas import DatasetProfile
 from ..profiling.service import DatasetProfileService
 from .ai import detect_issues, recommend
@@ -334,6 +336,10 @@ class EDAService:
 
         return {
             "source_id": source_id,
+            "dataset": {
+                "source_id": source_id,
+                "filename": dataset.filename,
+            },
             "summary": summary.model_dump(),
             "quality": quality.model_dump(),
             "column_types": {
@@ -546,10 +552,21 @@ class EDAService:
         source_id: str,
         *,
         model_id: str | None = None,
+        guideline_source_id: str | None = None,
+        guideline_service: GuidelineService | None = None,
     ) -> EDAAISummaryResponse | None:
         payload = self.build_ai_summary_payload(source_id)
         if payload is None:
             return None
+
+        guideline_context = build_guideline_context(
+            source_id=source_id,
+            payload=payload,
+            guideline_source_id=guideline_source_id,
+            guideline_service=guideline_service,
+        )
+        if guideline_context is not None:
+            payload["guideline_context"] = guideline_context
 
         try:
             summary_content = generate_eda_ai_summary(
@@ -559,11 +576,17 @@ class EDAService:
             )
         except (OpenAIError, RuntimeError, TimeoutError, ConnectionError, ValueError):
             summary_content = build_deterministic_ai_summary(payload)
+        dataset_overview = build_dataset_overview(
+            summary_content=summary_content,
+            guideline_context=guideline_context,
+            payload=payload,
+        )
         return EDAAISummaryResponse(
             source_id=source_id,
             structure_summary=str(summary_content.get("structure_summary", "")).strip(),
             quality_issues=[str(item) for item in summary_content.get("quality_issues", [])],
             key_insights=[str(item) for item in summary_content.get("key_insights", [])],
+            dataset_overview=dataset_overview,
         )
 
     def _build_prompt_summary(
