@@ -895,7 +895,15 @@ export default function Workbench() {
       return "활동 없음";
     }
     const date = new Date(value);
-    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    if (Number.isNaN(date.getTime())) {
+      return "활동 없음";
+    }
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    const hour = String(date.getHours()).padStart(2, "0");
+    const minute = String(date.getMinutes()).padStart(2, "0");
+    return `${year}.${month}.${day} ${hour}시 ${minute}분`;
   };
 
   const formatPercent = (value: number) => `${(value * 100).toFixed(2).replace(/\.00$/, "")}%`;
@@ -1051,7 +1059,7 @@ export default function Workbench() {
               EDA 또는 전처리 추천 정보를 아직 불러오지 못했습니다.
             </p>
             <p className="text-xs text-[var(--genui-muted)]">
-              {selectedDataset.preEdaWarning ?? "잠시 후 다시 시도하면 최신 Pre-EDA 상태를 다시 조회합니다."}
+              {selectedDataset.preEdaWarning ?? "잠시 후 다시 시도하면 최신 EDA 상태를 다시 조회합니다."}
             </p>
           </div>
         </div>
@@ -1306,8 +1314,8 @@ export default function Workbench() {
             <div className="space-y-6">
               <div className="flex items-center gap-2 mb-2">
                 <StatusBadge status="success" />
-                <span className="text-xs font-semibold text-[var(--genui-text)]">Pre-EDA</span>
-                <span className="text-sm text-[var(--genui-muted)]">업로드 직후 데이터 프로파일 스냅샷</span>
+                <span className="text-xs font-semibold text-[var(--genui-text)]">EDA</span>
+                <span className="text-sm text-[var(--genui-muted)]">데이터 프로파일 스냅샷</span>
               </div>
               {selectedPreEdaProfile ? (
                 <PreEdaBoard
@@ -1640,19 +1648,10 @@ export default function Workbench() {
 
   /* ── HEADER ── */
   const Header = (
-    <div className="h-full flex items-center justify-between gap-4 px-4 w-full min-w-0">
-      <div className="min-w-0">
-        <div className="flex items-center gap-3 min-w-0">
-          <span className="truncate text-[15px] font-semibold tracking-tight text-[var(--genui-text)]">
-            {sessionDisplayTitle}
-          </span>
-          <StatusBadge
-            status={state}
-            labelOverride={state === "success" ? "Complete" : undefined}
-            className="shrink-0"
-          />
-        </div>
-      </div>
+    <div className="h-full flex items-center px-4 w-full min-w-0">
+      <span className="text-[15px] font-semibold tracking-tight text-[var(--genui-text)]">
+        HADA
+      </span>
     </div>
   );
 
