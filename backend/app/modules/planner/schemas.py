@@ -23,6 +23,7 @@ class PlanningResult(BaseModel):
     route: PlanningRoute
     needs_clarification: bool = False
     clarification_question: str = ""
+    ask_analysis: bool = False
     preprocess_required: bool = False
     analysis_plan: AnalysisPlan | None = None
     need_visualization: bool = False

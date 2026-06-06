@@ -32,7 +32,7 @@ workflow 전체가 공유하는 state key와 subgraph별 payload contract를 정
 
 ### 주요 payload
 
-- `HandoffPayload`: `next_step`, `ask_preprocess`, `ask_analysis`, `ask_visualization`, `ask_report`, `ask_guideline` 등 intake route flag.
+- `HandoffPayload`: `next_step`, `ask_preprocess`, `ask_analysis`, `ask_visualization`, `ask_report`, `ask_guideline` 등 route flag. `ask_preprocess=true`이더라도 downstream `ask_analysis`/`ask_visualization`/`ask_report`가 모두 false이면 preprocess-only 답변으로 종료할 수 있다.
 - `PreprocessResultPayload`: preprocess 적용/skip/cancel status, output source id, summary/error.
 - `RagResultPayload`: retrieved chunks, context, retrieved count, evidence summary.
 - `GuidelineResultPayload`: selected guideline id/filename, retrieved chunks, evidence summary, status.

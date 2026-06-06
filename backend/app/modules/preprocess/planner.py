@@ -8,7 +8,17 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
 from ...core.ai import LLMGateway, PromptRegistry
-from .schemas import PreprocessOperation
+from .schemas import (
+    DerivedColumnOperation,
+    DropColumnsOperation,
+    DropMissingOperation,
+    EncodeCategoricalOperation,
+    ImputeOperation,
+    OutlierOperation,
+    ParseDatetimeOperation,
+    PreprocessOperation,
+    ScaleOperation,
+)
 
 PROMPTS = PromptRegistry(
     {
@@ -95,6 +105,14 @@ def build_preprocess_plan(
     model_id: str | None,
     default_model: str,
 ) -> PreprocessPlan:
+    if not get_revision_instruction(revision_request):
+        deterministic_plan = build_preprocess_plan_from_recommendations(
+            dataset_profile.get("preprocess_recommendations"),
+            available_columns=dataset_profile.get("columns"),
+        )
+        if deterministic_plan is not None:
+            return deterministic_plan
+
     llm = LLMGateway(default_model=default_model)
     profile_json = json.dumps(dataset_profile, ensure_ascii=False)
     revision_text = (
@@ -117,6 +135,205 @@ def build_preprocess_plan(
             ),
         ],
     )
+
+
+def build_preprocess_plan_from_recommendations(
+    value: Any,
+    *,
+    available_columns: Any = None,
+) -> PreprocessPlan | None:
+    if not isinstance(value, list):
+        return None
+
+    active_columns_list = _string_list(available_columns)
+    active_columns = set(active_columns_list) if active_columns_list else None
+    removed_columns: set[str] = set()
+    operations: list[PreprocessOperation] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        normalized_item = _normalize_recommendation_columns(
+            item,
+            active_columns=active_columns,
+            removed_columns=removed_columns,
+        )
+        operation = _recommendation_to_operation(normalized_item)
+        if operation is not None:
+            operations.append(operation)
+            _update_active_columns(operation, active_columns, removed_columns)
+
+    if not operations:
+        return None
+
+    return PreprocessPlan(
+        operations=operations,
+        planner_comment="EDA 추천 항목을 실행 가능한 전처리 계획으로 변환했습니다.",
+    )
+
+
+def _normalize_recommendation_columns(
+    item: Mapping[str, Any],
+    *,
+    active_columns: set[str] | None,
+    removed_columns: set[str],
+) -> dict[str, Any]:
+    normalized = dict(item)
+    op = str(item.get("op") or "").strip()
+    columns = _filter_existing_columns(
+        _recommendation_columns(item),
+        active_columns=active_columns,
+        removed_columns=removed_columns,
+    )
+    source_columns = _filter_existing_columns(
+        _string_list(item.get("source_columns")),
+        active_columns=active_columns,
+        removed_columns=removed_columns,
+    )
+
+    if op == "derived_column":
+        normalized["source_columns"] = source_columns
+        if columns:
+            normalized["columns"] = columns
+            normalized["target_columns"] = columns
+        return normalized
+
+    normalized["columns"] = columns
+    normalized["target_columns"] = columns
+    return normalized
+
+
+def _filter_existing_columns(
+    columns: list[str],
+    *,
+    active_columns: set[str] | None,
+    removed_columns: set[str],
+) -> list[str]:
+    filtered: list[str] = []
+    seen: set[str] = set()
+    for column in columns:
+        if column in seen:
+            continue
+        seen.add(column)
+        if active_columns is not None:
+            if column not in active_columns:
+                continue
+        elif column in removed_columns:
+            continue
+        filtered.append(column)
+    return filtered
+
+
+def _update_active_columns(
+    operation: PreprocessOperation,
+    active_columns: set[str] | None,
+    removed_columns: set[str],
+) -> None:
+    if operation.op == "drop_columns":
+        for column in operation.columns:
+            removed_columns.add(column)
+            if active_columns is not None:
+                active_columns.discard(column)
+        return
+    if operation.op == "rename_columns":
+        for old_column in operation.rename_from:
+            removed_columns.add(old_column)
+            if active_columns is not None:
+                active_columns.discard(old_column)
+        if active_columns is not None:
+            active_columns.update(operation.rename_to)
+        return
+    if operation.op == "derived_column" and active_columns is not None:
+        active_columns.add(operation.name)
+
+
+def _recommendation_to_operation(item: Mapping[str, Any]) -> PreprocessOperation | None:
+    op = str(item.get("op") or "").strip()
+    columns = _recommendation_columns(item)
+    raw_params = item.get("params")
+    params: dict[str, Any] = dict(raw_params) if isinstance(raw_params, dict) else {}
+
+    if op == "drop_missing" and columns:
+        return DropMissingOperation.model_validate(
+            {"op": "drop_missing", "columns": columns, "how": "any"}
+        )
+    if op == "impute" and columns:
+        method = str(params.get("method") or item.get("method") or "median")
+        if method not in {"mean", "median", "mode", "value"}:
+            method = "median"
+        return ImputeOperation.model_validate(
+            {"op": "impute", "columns": columns, "method": method, "value": params.get("value")}
+        )
+    if op == "drop_columns" and columns:
+        return DropColumnsOperation.model_validate(
+            {"op": "drop_columns", "columns": columns}
+        )
+    if op == "scale" and columns:
+        method = str(params.get("method") or item.get("method") or "standardize")
+        if method not in {"standardize", "normalize"}:
+            method = "standardize"
+        return ScaleOperation.model_validate(
+            {"op": "scale", "columns": columns, "method": method}
+        )
+    if op == "encode_categorical" and columns:
+        method = str(params.get("method") or item.get("method") or "one_hot")
+        if method not in {"one_hot", "label"}:
+            method = "one_hot"
+        return EncodeCategoricalOperation.model_validate(
+            {"op": "encode_categorical", "columns": columns, "method": method}
+        )
+    if op == "parse_datetime" and columns:
+        date_format = params.get("format")
+        return ParseDatetimeOperation.model_validate(
+            {
+                "op": "parse_datetime",
+                "columns": columns,
+                "format": str(date_format) if isinstance(date_format, str) else None,
+            }
+        )
+    if op == "outlier" and columns:
+        method = str(params.get("method") or item.get("method") or "iqr")
+        strategy = str(params.get("strategy") or item.get("strategy") or "clip")
+        if method not in {"zscore", "iqr"}:
+            method = "iqr"
+        if strategy not in {"drop", "clip"}:
+            strategy = "clip"
+        return OutlierOperation.model_validate(
+            {"op": "outlier", "columns": columns, "method": method, "strategy": strategy}
+        )
+    if op == "derived_column":
+        source_columns = _string_list(item.get("source_columns"))
+        name = str(item.get("target_column") or "").strip()
+        if not name and columns:
+            name = columns[0]
+        transform_type = item.get("transform_type")
+        if (
+            name
+            and source_columns
+            and transform_type in {"log1p", "sum", "difference", "ratio"}
+        ):
+            return DerivedColumnOperation.model_validate(
+                {
+                    "op": "derived_column",
+                    "name": name,
+                    "source_columns": source_columns,
+                    "transform_type": transform_type,
+                    "params": params,
+                }
+            )
+    return None
+
+
+def _recommendation_columns(item: Mapping[str, Any]) -> list[str]:
+    columns = _string_list(item.get("columns"))
+    if columns:
+        return columns
+    return _string_list(item.get("target_columns"))
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [text for item in value if (text := str(item or "").strip())]
 
 
 def build_preprocess_review_payload(
@@ -179,16 +396,9 @@ def build_preprocess_review_payload(
 def _collect_affected_columns(operations: list[PreprocessOperation]) -> list[str]:
     columns: list[str] = []
     for operation in operations:
-        if operation.op in {
-            "drop_missing",
-            "impute",
-            "drop_columns",
-            "scale",
-            "parse_datetime",
-            "outlier",
-            "encode_categorical",
-        }:
-            columns.extend(operation.columns)
+        operation_columns = getattr(operation, "columns", None)
+        if isinstance(operation_columns, list):
+            columns.extend(operation_columns)
         elif operation.op == "rename_columns":
             columns.extend(operation.rename_from)
             columns.extend(operation.rename_to)

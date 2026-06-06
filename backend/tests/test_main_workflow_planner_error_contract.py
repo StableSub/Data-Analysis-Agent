@@ -55,7 +55,7 @@ def test_main_workflow_planner_exception_surfaces_as_plan_validation_failure() -
         "TimeStamp group_by validation failed"
     )
     assert result["output"]["type"] == "planning_failed"
-    assert result["output"]["content"] == (
-        "분석 계획을 확인하는 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요."
-    )
+    assert "분석 계획을 만들 수 없습니다" in result["output"]["content"]
+    assert "기준 컬럼" in result["output"]["content"]
+    assert "지표와 기준 컬럼을 지정" in result["output"]["content"]
     assert "TimeStamp group_by validation failed" not in result["output"]["content"]

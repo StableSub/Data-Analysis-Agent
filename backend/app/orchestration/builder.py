@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Dict
+from typing import TYPE_CHECKING, Any, Dict, Mapping
 
 from langgraph.graph import END, START, StateGraph
 
@@ -40,6 +40,63 @@ def _analysis_result_from_common_analytics(
         "raw_metrics": result.raw_metrics,
         "table": result.table,
     }
+
+
+def route_after_preprocess_result(state: MainWorkflowState | dict[str, Any]) -> str:
+    preprocess_result = state.get("preprocess_result") or {}
+    output = state.get("output") or {}
+    if (
+        preprocess_result.get("status") == "cancelled"
+        or output.get("type") == "cancelled"
+    ):
+        return "cancelled"
+    if (
+        preprocess_result.get("status") == "failed"
+        or output.get("type") == "preprocess_failed"
+    ):
+        return "failed"
+    if _preprocess_has_downstream_work(state):
+        return "analysis"
+    return "merge_context"
+
+
+def _preprocess_has_downstream_work(state: MainWorkflowState | dict[str, Any]) -> bool:
+    handoff = state.get("handoff") or {}
+    if not isinstance(handoff, dict):
+        return False
+    return any(
+        bool(handoff.get(key, False))
+        for key in ("ask_analysis", "ask_visualization", "ask_report")
+    )
+
+
+def _is_preprocess_only_result(state: MainWorkflowState | dict[str, Any]) -> bool:
+    preprocess_result = state.get("preprocess_result")
+    if not isinstance(preprocess_result, dict):
+        return False
+    if preprocess_result.get("status") not in {"applied", "skipped"}:
+        return False
+    return not _preprocess_has_downstream_work(state)
+
+
+def _build_preprocess_answer(preprocess_result: Mapping[str, Any]) -> str:
+    status = str(preprocess_result.get("status") or "").strip()
+    summary = str(preprocess_result.get("summary") or "").strip()
+    output_source_id = str(preprocess_result.get("output_source_id") or "").strip()
+    output_filename = str(preprocess_result.get("output_filename") or "").strip()
+    applied_ops_count = preprocess_result.get("applied_ops_count")
+
+    if status == "skipped":
+        return summary or "전처리가 필요하지 않아 원본 데이터로 진행할 수 있습니다."
+
+    lines = [summary or "전처리를 적용했습니다."]
+    if isinstance(applied_ops_count, int):
+        lines.append(f"적용된 전처리 연산: {applied_ops_count}개")
+    if output_filename:
+        lines.append(f"생성된 데이터 파일: {output_filename}")
+    if output_source_id:
+        lines.append(f"새 데이터 소스 ID: {output_source_id}")
+    return "\n".join(lines)
 
 
 def build_main_workflow(
@@ -120,19 +177,7 @@ def build_main_workflow(
         return "merge_context"
 
     def route_after_preprocess(state: MainWorkflowState) -> str:
-        preprocess_result = state.get("preprocess_result") or {}
-        output = state.get("output") or {}
-        if (
-            preprocess_result.get("status") == "cancelled"
-            or output.get("type") == "cancelled"
-        ):
-            return "cancelled"
-        if (
-            preprocess_result.get("status") == "failed"
-            or output.get("type") == "preprocess_failed"
-        ):
-            return "failed"
-        return "analysis"
+        return route_after_preprocess_result(state)
 
     def route_after_analysis(state: MainWorkflowState) -> str:
         final_status = state.get("final_status")
@@ -435,6 +480,19 @@ def build_main_workflow(
                 },
             }
 
+        preprocess_result = state.get("preprocess_result")
+        if _is_preprocess_only_result(state) and isinstance(preprocess_result, dict):
+            answer_text = _build_preprocess_answer(preprocess_result)
+            return {
+                "data_qa_result": {"content": answer_text},
+                "output": {
+                    "type": "data_qa",
+                    "content": answer_text,
+                    "evidence_package": evidence_package,
+                    "answer_quality": answer_quality,
+                },
+            }
+
         handoff = state.get("handoff") or {}
         visualization_result = state.get("visualization_result")
         analysis_result = state.get("analysis_result")
@@ -567,6 +625,7 @@ def build_main_workflow(
         route_after_preprocess,
         {
             "analysis": "analysis_flow",
+            "merge_context": "merge_context",
             "cancelled": "status_terminal",
             "failed": "status_terminal",
         },

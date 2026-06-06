@@ -109,6 +109,7 @@ def _execute_basic_metric(
     summary = f"{column} {metric} calculated for top {min(len(table), _TOP_N)} values"
     if label_metrics is not None:
         raw_metrics.update(label_metrics)
+        table = _with_labeled_value_column(column=column, table=table)
         summary = pass_or_fail_summary(label_metrics)
 
     return CommonAnalyticsExecutionResult(
@@ -260,6 +261,20 @@ def _apply_group_metric(grouped: Any, metric: str) -> pd.Series:
     if metric == "median":
         return grouped.median()
     return grouped.mean()
+
+
+def _with_labeled_value_column(
+    *,
+    column: str,
+    table: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    return [
+        {
+            column: row.get("value"),
+            **row,
+        }
+        for row in table
+    ]
 
 
 def _round_float(value: object) -> float | None:

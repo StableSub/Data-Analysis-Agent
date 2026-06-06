@@ -95,11 +95,12 @@ planner 주변 판단은 아래 위치에 나뉘어 있다.
 
 ### 3. preprocess 선행 경로
 
-현재 브랜치에서는 selected-dataset 질문이 메인 그래프에서 항상 `preprocess_flow`를 먼저 지난다.
+현재 브랜치에서는 planner가 `preprocess_required=true`로 판단한 selected-dataset 질문만 `preprocess_flow`를 먼저 지난다.
 
 - `preprocess_decision`이 `run_preprocess`면 approval/revise/cancel을 거친다.
 - skip이면 바로 다음 단계로 넘어간다.
-- 메인 그래프는 preprocess 이후 `handoff.ask_analysis`를 보고 `analysis_flow` 또는 `rag_flow`를 결정한다.
+- 메인 그래프는 preprocess 이후 `handoff.ask_analysis`, `handoff.ask_visualization`, `handoff.ask_report` 중 하나라도 true이면 `analysis_flow`로 진행한다.
+- downstream 분석/시각화/리포트 요청이 없으면 `merge_context`와 `data_qa_terminal`로 진행해 전처리 결과를 최종 답변 근거로 사용한다.
 - 취소 또는 실패하면 `status_terminal`에서 `evidence_package`와 `answer_quality`를 보존한 뒤 종료한다.
 
 ### 4. analysis 경로

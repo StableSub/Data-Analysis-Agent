@@ -307,6 +307,8 @@ class AgentClient:
         if isinstance(output, dict):
             output_type = output.get("type")
             if isinstance(output_type, str):
+                if output_type in {"fast_dataset_answer", "fast_common_analytics"}:
+                    return "data_qa"
                 return output_type
         return ""
 

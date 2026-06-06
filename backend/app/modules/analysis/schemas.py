@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer
 
 
 class StrictModel(BaseModel):
@@ -227,6 +227,12 @@ class SandboxExecutionResult(StrictModel):
     message: str | None = None
     diagnostic_message: str | None = None
 
+    @model_serializer(mode="wrap")
+    def _serialize_public(self, handler: Any) -> dict[str, Any]:
+        data = dict(handler(self))
+        data.pop("diagnostic_message", None)
+        return data
+
 
 class ChartSeries(StrictModel):
     name: str
@@ -251,6 +257,12 @@ class AnalysisError(StrictModel):
     message: str
     detail: dict[str, Any] = Field(default_factory=dict)
 
+    @model_serializer(mode="wrap")
+    def _serialize_public(self, handler: Any) -> dict[str, Any]:
+        data = dict(handler(self))
+        data["detail"] = _strip_internal_error_detail(data.get("detail"))
+        return data
+
 
 class AnalysisWarning(StrictModel):
     code: str
@@ -271,6 +283,12 @@ class AnalysisExecutionResult(StrictModel):
     quality_reason: str | None = None
     warnings: list[AnalysisWarning] = Field(default_factory=list)
 
+    @model_serializer(mode="wrap")
+    def _serialize_public(self, handler: Any) -> dict[str, Any]:
+        data = dict(handler(self))
+        data.pop("diagnostic_message", None)
+        return data
+
 
 FinalStatus = Literal[
     "planning",
@@ -289,3 +307,15 @@ class AnalysisRunRequest(StrictModel):
     request_context: str | None = None
     guideline_context: dict[str, Any] | None = None
     model_id: str | None = None
+
+
+def _strip_internal_error_detail(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            str(key): _strip_internal_error_detail(item)
+            for key, item in value.items()
+            if str(key) not in {"diagnostic_message", "schema_name"}
+        }
+    if isinstance(value, list):
+        return [_strip_internal_error_detail(item) for item in value]
+    return value

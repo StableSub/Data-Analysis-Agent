@@ -166,6 +166,8 @@ const buildRepairGuidance = (
 ): RepairGuidance | undefined => {
   const outputType = response?.output_type ?? "";
   const status = response?.status ?? "";
+  const isPlanValidationFailure =
+    response?.error_stage === "plan_validation" || outputType === "planning_failed";
   const isClarification =
     outputType === "clarification" || status === "unanswerable" || status === "limited";
   const isFailure = state === "error" || status === "failed" || outputType.endsWith("_failed");
@@ -179,6 +181,42 @@ const buildRepairGuidance = (
   const missing = profile?.topMissingColumns[0]?.column ?? null;
   const availableColumns = profile?.columns.slice(0, 6).join(", ") ?? "";
   const actions: RepairGuidance["actions"] = [];
+
+  if (isFailure && isPlanValidationFailure) {
+    actions.push({
+      label: "지표와 기준 컬럼 지정",
+      description: availableColumns
+        ? `사용 가능 컬럼: ${availableColumns}`
+        : "분석 목표와 기준 컬럼을 먼저 정합니다.",
+      prompt: availableColumns
+        ? `사용 가능한 컬럼(${availableColumns}) 중에서 분석 목표, 기준 컬럼, 집계 지표를 정해 다시 실행할 질문을 작성해줘.`
+        : "분석 목표, 기준 컬럼, 집계 지표를 정해 다시 실행할 질문을 작성해줘.",
+    });
+
+    if (missing) {
+      actions.push({
+        label: "전처리 결과 확인",
+        description: `${missing} 처리 상태를 먼저 확인합니다.`,
+        prompt: `전처리 결과와 '${missing}' 결측 처리 상태를 요약해줘.`,
+      });
+    }
+
+    actions.push({
+      label: "답 가능한 질문 추천",
+      description: availableColumns
+        ? `사용 가능 컬럼: ${availableColumns}`
+        : "현재 데이터로 가능한 질문을 다시 고릅니다.",
+      prompt: availableColumns
+        ? `사용 가능한 컬럼(${availableColumns})을 기준으로 바로 답할 수 있는 분석 질문 3개를 추천해줘.`
+        : "이 데이터에서 바로 답할 수 있는 분석 질문 3개를 추천해줘.",
+    });
+
+    return {
+      title: "분석 계획 오류 해결",
+      message: response?.error_message ?? "분석 목표, 기준 컬럼, 집계 기준이 현재 데이터와 맞지 않습니다.",
+      actions: actions.slice(0, 3),
+    };
+  }
 
   if (group) {
     actions.push({

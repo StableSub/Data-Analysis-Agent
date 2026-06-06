@@ -171,6 +171,7 @@ def build_evidence_contract(
 
     answerable = (
         _analysis_has_evidence(analysis_result)
+        or _preprocess_has_evidence(preprocess_result)
         or _has_retrieval_evidence(evidence_package)
         or _visualization_has_evidence(visualization_result)
     )
@@ -269,6 +270,18 @@ def _analysis_has_evidence(analysis_result: Mapping[str, Any] | None) -> bool:
         _as_non_empty_str(analysis_result.get("summary"))
         or _as_dict(analysis_result.get("raw_metrics"))
         or _as_dict_list(analysis_result.get("table"))
+    )
+
+
+def _preprocess_has_evidence(preprocess_result: Mapping[str, Any] | None) -> bool:
+    if preprocess_result is None:
+        return False
+    if preprocess_result.get("status") not in {"applied", "skipped"}:
+        return False
+    return bool(
+        _as_non_empty_str(preprocess_result.get("summary"))
+        or _as_non_empty_str(preprocess_result.get("output_source_id"))
+        or _as_non_empty_str(preprocess_result.get("output_filename"))
     )
 
 

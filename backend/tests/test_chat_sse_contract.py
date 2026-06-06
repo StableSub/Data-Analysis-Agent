@@ -64,6 +64,17 @@ def _make_agent(snapshots: list[Dict[str, Any]]) -> AgentClient:
     return AgentClient(workflow_runtime_factory=factory)
 
 
+def test_fast_path_done_output_type_is_user_facing_data_qa() -> None:
+    assert (
+        AgentClient._extract_output_type({"output": {"type": "fast_common_analytics"}})
+        == "data_qa"
+    )
+    assert (
+        AgentClient._extract_output_type({"output": {"type": "fast_dataset_answer"}})
+        == "data_qa"
+    )
+
+
 def _make_service(agent: AgentClient, *, source_exists: bool = True) -> ChatService:
     """ChatService 를 최소 fake repository 로 생성한다."""
 

@@ -51,18 +51,19 @@ def pass_or_fail_metrics(
     defect_count = _row_count(defect) if defect is not None else 0
     if normal_count is None or defect_count is None:
         return None
-    normal_ratio = _row_ratio(normal) if normal is not None else 0.0
-    defect_ratio = _row_ratio(defect) if defect is not None else 0.0
+    normal_ratio = float(normal_count / total) if total else 0.0
+    defect_ratio = float(defect_count / total) if total else 0.0
 
     return {
         "column": column,
         "total": total,
+        "total_count": total,
         "normal_label": normal.get("value") if normal is not None else "0",
         "defect_label": defect.get("value") if defect is not None else "1",
         "normal_count": normal_count,
         "defect_count": defect_count,
-        "normal_rate_pct": round(normal_ratio * 100, 2),
-        "defect_rate_pct": round(defect_ratio * 100, 2),
+        "normal_rate_pct": normal_ratio * 100,
+        "defect_rate_pct": defect_ratio * 100,
         "defect_analysis_sufficiency": _sufficiency_status(defect_count),
     }
 

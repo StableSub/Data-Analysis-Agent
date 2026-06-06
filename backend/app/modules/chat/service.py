@@ -613,7 +613,6 @@ class ChatService:
                     "status": event.get("status") or "failed",
                     "stage": event.get("stage") or event_error_stage,
                     "error_stage": event_error_stage,
-                    "error_source": event_error_source or "unknown",
                     "error_message": event_error_message,
                     "error_code": (
                         public_event.get("error_code")
@@ -631,6 +630,8 @@ class ChatService:
                         else event.get("output_type")
                     ) or "",
                 }
+                if event_error_source:
+                    error_data["error_source"] = event_error_source
                 public_error = (
                     public_event.get("public_error")
                     if isinstance(public_event, dict)

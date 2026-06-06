@@ -36,6 +36,9 @@ PROMPTS = PromptRegistry(
             "단순한 dataset 설명, 컬럼 소개, 샘플 확인, 비정량적 문서형 질의응답이면 ask_analysis를 false로 둘 수 있다. "
             "preprocess_required는 결측치 처리, 형변환, 문자열 정리, 정규화, 스케일링, 인코딩, 컬럼명 변경, 파생 컬럼 생성처럼 "
             "데이터를 먼저 정제하거나 변환해야 할 때만 true다. "
+            "사용자가 분석 전에 필요한 전처리 확인, 전처리 계획, 전처리 적용만 요청하고 전처리 이후의 계산/집계/차트/리포트를 요청하지 않았다면 "
+            "preprocess_required=true, ask_analysis=false로 둬라. "
+            "사용자가 전처리 후 분석/시각화/리포트까지 명시하면 preprocess_required=true와 함께 해당 downstream 플래그도 true로 둬라. "
             "월/주/일 버킷팅, 최근 N개월 필터링, 집계, 비교, 추세 분석은 전처리가 아니라 분석이므로 그 이유만으로 preprocess_required를 true로 두지 마라. "
             "양품/불량 비율, 사유별 건수, 제품별 생산량, 그룹별 count, 차트/그래프/시각화 요청은 원본 컬럼으로 계산 가능한 분석/시각화다. "
             "사용자가 결측치 처리, 정규화, 표준화, 인코딩, 형변환 같은 전처리를 명시하지 않았다면 이런 요청은 preprocess_required=false로 둬라. "
@@ -134,9 +137,19 @@ class PlannerService:
         if route != "analysis":
             return PlanningResult(
                 route=route,
+                ask_analysis=decision.ask_analysis,
                 preprocess_required=decision.preprocess_required,
                 need_visualization=decision.need_visualization,
                 need_report=decision.need_report,
+                guideline_context_used=decision.guideline_context_used,
+            )
+        if decision.preprocess_required and not _decision_requires_analysis_plan(decision):
+            return PlanningResult(
+                route="analysis",
+                ask_analysis=False,
+                preprocess_required=True,
+                need_visualization=False,
+                need_report=False,
                 guideline_context_used=decision.guideline_context_used,
             )
 
@@ -158,6 +171,7 @@ class PlannerService:
                 route="analysis",
                 needs_clarification=True,
                 clarification_question=understanding.clarification_message,
+                ask_analysis=decision.ask_analysis,
                 preprocess_required=decision.preprocess_required,
                 need_visualization=decision.need_visualization,
                 need_report=decision.need_report,
@@ -190,6 +204,7 @@ class PlannerService:
                 route="analysis",
                 needs_clarification=True,
                 clarification_question=clarification_question,
+                ask_analysis=decision.ask_analysis,
                 preprocess_required=decision.preprocess_required,
                 need_visualization=decision.need_visualization,
                 need_report=decision.need_report,
@@ -203,6 +218,7 @@ class PlannerService:
         )
         return PlanningResult(
             route="analysis",
+            ask_analysis=decision.ask_analysis,
             preprocess_required=decision.preprocess_required,
             analysis_plan=analysis_plan,
             need_visualization=decision.need_visualization,
@@ -375,6 +391,14 @@ def _user_requested_visualization(user_input: str) -> bool:
         "visualization",
     )
     return any(term in text for term in visualization_terms)
+
+
+def _decision_requires_analysis_plan(decision: PlannerDecision) -> bool:
+    return bool(
+        decision.ask_analysis
+        or decision.need_visualization
+        or decision.need_report
+    )
 
 
 def _repair_time_bucket_defect_understanding(
@@ -591,7 +615,9 @@ def build_handoff_from_planning_result(planning_result: PlanningResult) -> dict[
 
     return {
         "next_step": next_step,
-        "ask_analysis": route == "analysis",
+        "ask_analysis": bool(
+            planning_result.ask_analysis or planning_result.analysis_plan is not None
+        ),
         "ask_preprocess": planning_result.preprocess_required,
         "ask_visualization": planning_result.need_visualization,
         "ask_report": planning_result.need_report,

@@ -126,8 +126,8 @@ def test_value_counts_preserves_label_distribution_table(tmp_path: Path) -> None
     result = _execute_pass_or_fail_value_counts(dataset_path)
 
     assert result.table == [
-        {"value": "0", "count": 98, "ratio": 0.98},
-        {"value": "1", "count": 2, "ratio": 0.02},
+        {"PassOrFail": "0", "value": "0", "count": 98, "ratio": 0.98},
+        {"PassOrFail": "1", "value": "1", "count": 2, "ratio": 0.02},
     ]
     assert result.raw_metrics["total"] == 100
 
@@ -219,6 +219,8 @@ def test_common_analytics_fast_path_emits_meaningful_evidence_package(
     assert result["analysis_result"]["execution_status"] == "success"
     assert result["analysis_result"]["used_columns"] == ["PassOrFail"]
     assert result["analysis_result"]["raw_metrics"]["defect_count"] == 2
+    assert result["analysis_result"]["raw_metrics"]["total_count"] == 100
+    assert result["analysis_result"]["table"][0]["PassOrFail"] == "0"
     assert result["evidence_package"]["filename"] == "labels.csv"
     assert result["evidence_package"]["used_columns"] == ["PassOrFail"]
     assert result["evidence_package"]["analysis_metrics"]["total"] == 100

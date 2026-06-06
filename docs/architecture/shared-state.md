@@ -157,8 +157,8 @@
   - client streaming
 - 대표 타입
   - `general_question`
-  - `fast_dataset_answer`
-  - `fast_common_analytics`
+  - top-level done `output_type="data_qa"` with `output.type="fast_dataset_answer"`
+  - top-level done `output_type="data_qa"` with `output.type="fast_common_analytics"`
   - `clarification`
   - `data_qa`
   - `report_answer`
@@ -268,6 +268,7 @@
   - intake가 어떤 최상위 경로를 선택했는지 표현
 - `preprocess_decision`, `preprocess_plan`, `preprocess_result`
   - 전처리 필요 판단과 결과 표현
+  - 전처리 결과가 `applied` 또는 `skipped`이고 downstream 분석/시각화/리포트 요청이 없으면 최종 답변의 answerable evidence로 사용
 - `analysis_result`
   - 분석 성공/실패 표현
   - SQL 실행이면 `execution_engine`, `query_text` 같은 실행 메타데이터 포함

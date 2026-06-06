@@ -1,12 +1,20 @@
 from __future__ import annotations
 
+from typing import Any, cast
+
 from pydantic import ValidationError
 
 from backend.app.modules.preprocess.planner import PreprocessPlan
+from backend.app.modules.preprocess.executor import execute_preprocess_plan
 from backend.app.orchestration.workflows.preprocess import (
     _build_preprocess_plan_failed_output,
     _route_after_preprocess_planner,
 )
+
+
+class _FailingPreprocessService:
+    def apply(self, *, source_id: str, operations: list[object]) -> object:
+        raise ValueError("Column not found: Clamp_Open_Position")
 
 
 def _scale_method_validation_error() -> ValidationError:
@@ -53,3 +61,34 @@ def test_route_after_preprocess_planner_sends_valid_plan_to_approval() -> None:
     )
 
     assert route == "approval"
+
+
+def test_preprocess_execution_error_keeps_public_stage_and_internal_diagnostic() -> None:
+    result = execute_preprocess_plan(
+        source_id="source-1",
+        preprocess_plan={
+            "operations": [
+                {
+                    "op": "scale",
+                    "columns": ["Clamp_Open_Position"],
+                    "method": "standardize",
+                }
+            ],
+            "planner_comment": "수치형 컬럼을 표준화합니다.",
+        },
+        approved_plan=None,
+        dataset_profile={},
+        preprocess_service=cast(Any, _FailingPreprocessService()),
+    )
+
+    workflow_error = result["workflow_error"]
+    public_error = result["output"]["public_error"]
+
+    assert workflow_error["stage"] == "preprocess_execute"
+    assert workflow_error["source"] == "preprocess_executor"
+    assert workflow_error["error_code"] == "preprocess_execution_failed"
+    assert "Column not found: Clamp_Open_Position" in workflow_error["diagnostic_message"]
+    assert result["preprocess_result"]["error_stage"] == "preprocess_execute"
+    assert public_error["error_stage"] == "preprocess_execute"
+    assert "전처리 실행 중" in public_error["message"]
+    assert "Column not found" not in public_error["message"]

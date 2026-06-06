@@ -88,7 +88,7 @@ FastAPI route와 SSE formatting을 담당한다. `ask_chat_stream()`과 `resume_
 ### 주의점
 
 - `done` payload에는 `preprocess_result` key가 항상 포함되며 값이 `None`일 수 있다.
-- `output_type`은 `fast_dataset_answer`, `fast_common_analytics`, `data_qa`, `report_answer` 같은 terminal output type을 전달할 수 있다.
+- `output_type`은 사용자-facing terminal type이다. fast path로 계산되더라도 최상위 done event는 `data_qa`로 정규화하고, 내부 fast-path 세부 타입은 `output.type`에 남길 수 있다.
 - `analysis_result`, `visualization_result`, `report_result`, `output`, `evidence_package`, `answer_quality`는 agent done event에 있을 때만 추가된다.
 - assistant message 저장은 stream이 끝난 뒤 final answer 기준으로 수행된다.
 
