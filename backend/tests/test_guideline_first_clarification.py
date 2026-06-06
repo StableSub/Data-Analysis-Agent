@@ -196,6 +196,70 @@ def test_guideline_defect_rate_trace_plan_survives_metric_normalization() -> Non
     assert "분석 계획을 확인" not in result.clarification_question
 
 
+def test_daily_defect_count_uses_dataset_indicator_without_guideline_clarification() -> None:
+    context = dataset_context().model_copy(
+        update={
+            "column_count": 5,
+            "columns": [
+                "TimeStamp",
+                "PART_NO",
+                "PART_NAME",
+                "EQUIP_NAME",
+                "PassOrFail",
+            ],
+            "dtypes": {
+                "TimeStamp": "datetime64[ns]",
+                "PART_NO": "object",
+                "PART_NAME": "object",
+                "EQUIP_NAME": "object",
+                "PassOrFail": "int64",
+            },
+            "numeric_columns": ["PassOrFail"],
+            "datetime_columns": ["TimeStamp"],
+            "sample_rows": [
+                {
+                    "TimeStamp": "2026-05-01 00:00:00",
+                    "PART_NO": "P1",
+                    "PART_NAME": "A",
+                    "EQUIP_NAME": "E1",
+                    "PassOrFail": 1,
+                },
+                {
+                    "TimeStamp": "2026-05-01 00:01:00",
+                    "PART_NO": "P1",
+                    "PART_NAME": "A",
+                    "EQUIP_NAME": "E1",
+                    "PassOrFail": 0,
+                },
+            ],
+        }
+    )
+
+    result = planner_service(GuidelineAwarePlannerLLM()).plan(
+        user_input="날짜별 불량 건수를 분석해줘.",
+        request_context=None,
+        source_id="dataset-source",
+        dataset_context=context,
+        guideline_context=None,
+        model_id="test-model",
+    )
+
+    assert result.needs_clarification is False
+    assert result.guideline_context_used is False
+    assert result.analysis_plan is not None
+    assert result.analysis_plan.time_context is not None
+    assert result.analysis_plan.time_context.time_column == "TimeStamp"
+    assert result.analysis_plan.time_context.grain == "day"
+    assert result.analysis_plan.filters == []
+    defect_rate = next(
+        metric
+        for metric in result.analysis_plan.metrics
+        if metric.alias == "defect_rate"
+    )
+    assert defect_rate.column == "PassOrFail"
+    assert defect_rate.positive_value == 1
+
+
 def test_guideline_analysis_request_with_dataset_still_reaches_planner() -> None:
     analysis_questions = [
         "가이드라인 기준으로 제품별 불량률을 그래프로 보여줘",

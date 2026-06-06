@@ -51,6 +51,16 @@ _SYNTHETIC_DIMENSION_TOKENS = {
 _NORMALIZED_SYNTHETIC_DIMENSION_TOKENS = {
     _IDENTIFIER_RE.sub("", token.lower()) for token in _SYNTHETIC_DIMENSION_TOKENS
 }
+_OUTLIER_TOKENS = ("outlier", "anomaly", "이상치")
+_OPTIONAL_OUTLIER_MARKERS = (
+    "if needed",
+    "if necessary",
+    "optionally",
+    "optional",
+    "필요하면",
+    "필요한 경우",
+    "선택적으로",
+)
 
 
 def _rewrite_preloaded_import_aliases(*, tree: ast.Module, original_code: str) -> str:
@@ -635,17 +645,23 @@ class AnalysisProcessor:
         filters: list[FilterCondition],
         metrics: list[MetricSpec],
     ) -> None:
-        filtered_columns = {condition.column for condition in filters}
         for metric in metrics:
             if (
                 metric.positive_value is not None
                 and metric.column
-                and metric.column in filtered_columns
+                and any(
+                    condition.column == metric.column
+                    and self._reduces_positive_value_denominator(condition)
+                    for condition in filters
+                )
             ):
                 raise ValueError(
                     f"metric '{metric.name}' positive value cannot be combined "
                     f"with filters on '{metric.column}'"
                 )
+
+    def _reduces_positive_value_denominator(self, condition: FilterCondition) -> bool:
+        return condition.operator != "not_null"
 
     # 질문 의도에 맞는 결과 형태를 자동으로 정한다.
     def _build_expected_output(
@@ -683,10 +699,7 @@ class AnalysisProcessor:
         if not is_scatter_relationship:
             table_columns.extend(metric.alias for metric in metrics)
 
-        normalized_objective = draft.objective.lower()
-        require_outlier_info = (
-            "outlier" in normalized_objective or "이상치" in draft.objective
-        )
+        require_outlier_info = self._requires_outlier_info(draft)
         group_axis_columns = [
             column
             for column in group_by
@@ -703,6 +716,22 @@ class AnalysisProcessor:
             require_time_axis=bool(time_axis_column),
             require_outlier_info=require_outlier_info,
         )
+
+    def _requires_outlier_info(self, draft: AnalysisPlanDraft) -> bool:
+        contract_text = " ".join(
+            [
+                draft.analysis_type,
+                *(metric.name for metric in draft.metrics),
+                *(metric.alias for metric in draft.metrics),
+            ]
+        ).lower()
+        if any(token in contract_text for token in _OUTLIER_TOKENS):
+            return True
+
+        objective = draft.objective.lower()
+        if not any(token in objective for token in _OUTLIER_TOKENS):
+            return False
+        return not any(marker in objective for marker in _OPTIONAL_OUTLIER_MARKERS)
 
     # 시각화 힌트를 자동 보정한다.
     def _build_visualization_hint(
@@ -821,6 +850,8 @@ class AnalysisProcessor:
         ]
         if derived_column.expression_type == "datetime_part":
             part = str(derived_column.params.get("part") or "").strip()
+            if part == "date":
+                part = "day"
             if part not in {
                 "year",
                 "month",
@@ -833,6 +864,12 @@ class AnalysisProcessor:
                 raise ValueError(
                     "datetime_part derived column requires a valid params.part"
                 )
+            return derived_column.model_copy(
+                update={
+                    "source_columns": source_columns,
+                    "params": {**derived_column.params, "part": part},
+                }
+            )
         if derived_column.expression_type == "ratio" and len(source_columns) != 2:
             raise ValueError("ratio derived column requires exactly 2 source columns")
         return derived_column.model_copy(update={"source_columns": source_columns})

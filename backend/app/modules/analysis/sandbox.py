@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any
 
 from pydantic import ValidationError
 
@@ -79,6 +80,19 @@ def _extract_root_name(node: ast.Attribute) -> str | None:
     if isinstance(current, ast.Name):
         return current.id
     return None
+
+
+def _normalize_analysis_output_payload(payload: Any) -> Any:
+    if not isinstance(payload, dict):
+        return payload
+    normalized = dict(payload)
+    if "summary" in normalized and not isinstance(normalized["summary"], str):
+        normalized["summary"] = json.dumps(
+            normalized["summary"],
+            ensure_ascii=False,
+            default=str,
+        )
+    return normalized
 
 
 class AnalysisSandbox:
@@ -213,7 +227,9 @@ class AnalysisSandbox:
                 )
             # 출력 스키마를 검증한다.
             try:
-                output_payload = AnalysisOutputPayload.model_validate(payload)
+                output_payload = AnalysisOutputPayload.model_validate(
+                    _normalize_analysis_output_payload(payload)
+                )
             except ValidationError as exc:
                 return SandboxExecutionResult(
                     ok=False,

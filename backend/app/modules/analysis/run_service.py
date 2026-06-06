@@ -182,9 +182,10 @@ class AnalysisRunService:
                 ),
             ],
         )
-        return self._normalize_code_output(
+        code = self._normalize_code_output(
             result.content if hasattr(result, "content") else str(result)
         )
+        return self._replace_json_payload_with_deterministic_code(code, plan)
 
     # 기존 코드가 실패했을 때 에러를 반영해서 코드만 다시 생성한다.
     def repair_analysis_code(
@@ -214,14 +215,25 @@ class AnalysisRunService:
                 ),
             ],
         )
-        return self._normalize_code_output(
+        code = self._normalize_code_output(
             result.content if hasattr(result, "content") else str(result)
         )
+        return self._replace_json_payload_with_deterministic_code(code, plan)
 
     def _normalize_code_output(self, value: str) -> str:
         code = str(value or "").strip()
         code = _CODE_FENCE_RE.sub("", code).strip()
         return code
+
+    def _replace_json_payload_with_deterministic_code(
+        self,
+        code: str,
+        plan: AnalysisPlan,
+    ) -> str:
+        if not _is_json_payload_only(code):
+            return code
+        fallback = _build_time_bucket_aggregation_code(plan)
+        return fallback or code
 
     def _to_json(self, payload: dict[str, Any]) -> str:
         return json.dumps(payload, ensure_ascii=False, default=str)
@@ -264,3 +276,177 @@ class AnalysisRunService:
         if isinstance(analysis_error, AnalysisError):
             return analysis_error
         return AnalysisError.model_validate(analysis_error)
+
+
+def _is_json_payload_only(code: str) -> bool:
+    try:
+        payload = json.loads(code)
+    except json.JSONDecodeError:
+        return False
+    return isinstance(payload, dict)
+
+
+def _build_time_bucket_aggregation_code(plan: AnalysisPlan) -> str | None:
+    if not plan.time_context or not plan.time_context.time_column:
+        return None
+    if plan.group_by:
+        return None
+    time_column = plan.time_context.time_column
+    time_alias = _time_axis_alias(plan.time_context.grain)
+    if time_alias is None:
+        return None
+
+    filter_lines = _build_filter_lines(plan)
+    if filter_lines is None:
+        return None
+    metric_lines = _build_metric_lines(plan)
+    if metric_lines is None:
+        return None
+
+    used_columns = [
+        column
+        for column in plan.required_columns
+        if column in plan.metadata_snapshot.columns
+    ]
+    if time_column not in used_columns:
+        used_columns.append(time_column)
+
+    lines = [
+        "work = df.copy()",
+        (
+            f"work[{time_alias!r}] = pd.to_datetime("
+            f"work[{time_column!r}], errors='coerce')"
+            f"{_time_bucket_expression(plan.time_context.grain)}"
+        ),
+        f"work = work[work[{time_alias!r}].notna()].copy()",
+        *filter_lines,
+        "rows = []",
+        f"for bucket_value, group in work.groupby({time_alias!r}, dropna=False, sort=True):",
+        f"    row = {{{time_alias!r}: str(bucket_value)}}",
+        *metric_lines,
+        "    rows.append(row)",
+        "total_count = int(len(work))",
+        _total_defect_line(plan),
+        "date_values = [row.get('date') for row in rows if row.get('date')]",
+        "summary = (",
+        "    f\"기간 {date_values[0]}부터 {date_values[-1]}까지 \"",
+        "    f\"총 {total_count}건 중 불량 {total_defects}건을 집계했습니다.\"",
+        "    if date_values",
+        "    else f\"집계 가능한 데이터가 없습니다. 총 {total_count}건을 확인했습니다.\"",
+        ")",
+        "raw_metrics = {",
+        "    'total_count': total_count,",
+        "    'total_defects': total_defects,",
+        "}",
+        "print(json.dumps({",
+        "    'summary': summary,",
+        "    'table': rows,",
+        "    'raw_metrics': raw_metrics,",
+        f"    'used_columns': {used_columns!r},",
+        "}, ensure_ascii=False))",
+    ]
+    return "\n".join(lines)
+
+
+def _time_axis_alias(grain: str | None) -> str | None:
+    if grain == "hour":
+        return "hour"
+    if grain == "day":
+        return "date"
+    if grain == "week":
+        return "week"
+    if grain == "month":
+        return "month"
+    if grain == "quarter":
+        return "quarter"
+    if grain == "year":
+        return "year"
+    return None
+
+
+def _time_bucket_expression(grain: str | None) -> str:
+    if grain == "hour":
+        return ".dt.strftime('%Y-%m-%d %H:00:00')"
+    if grain == "week":
+        return ".dt.to_period('W').astype(str)"
+    if grain == "month":
+        return ".dt.to_period('M').astype(str)"
+    if grain == "quarter":
+        return ".dt.to_period('Q').astype(str)"
+    if grain == "year":
+        return ".dt.year.astype('Int64').astype(str)"
+    return ".dt.strftime('%Y-%m-%d')"
+
+
+def _build_filter_lines(plan: AnalysisPlan) -> list[str] | None:
+    lines: list[str] = []
+    for condition in plan.filters:
+        if condition.operator == "not_null":
+            lines.append(
+                f"work = work[work[{condition.column!r}].notna()].copy()"
+            )
+        elif condition.operator == "eq":
+            lines.append(
+                f"work = work[work[{condition.column!r}] == {condition.value!r}].copy()"
+            )
+        else:
+            return None
+    return lines
+
+
+def _build_metric_lines(plan: AnalysisPlan) -> list[str] | None:
+    lines: list[str] = []
+    for metric in plan.metrics:
+        alias = metric.alias
+        if metric.aggregation == "count":
+            if metric.column:
+                lines.append(
+                    f"    row[{alias!r}] = int(group[{metric.column!r}].count())"
+                )
+            else:
+                lines.append(f"    row[{alias!r}] = int(len(group))")
+        elif metric.aggregation == "sum" and metric.column:
+            lines.extend(
+                [
+                    f"    {alias}_value = group[{metric.column!r}].sum()",
+                    (
+                        f"    row[{alias!r}] = int({alias}_value) "
+                        f"if pd.notna({alias}_value) and "
+                        f"float({alias}_value).is_integer() "
+                        f"else float({alias}_value)"
+                    ),
+                ]
+            )
+        elif (
+            metric.aggregation == "rate"
+            and metric.column
+            and metric.positive_value is not None
+        ):
+            lines.extend(
+                [
+                    (
+                        f"    {alias}_numerator = "
+                        f"(group[{metric.column!r}] == {metric.positive_value!r}).sum()"
+                    ),
+                    (
+                        f"    row[{alias!r}] = "
+                        f"float({alias}_numerator / len(group)) if len(group) else 0.0"
+                    ),
+                ]
+            )
+        else:
+            return None
+    return lines
+
+
+def _total_defect_line(plan: AnalysisPlan) -> str:
+    for metric in plan.metrics:
+        if metric.column and metric.positive_value is not None:
+            return (
+                f"total_defects = int((work[{metric.column!r}] == "
+                f"{metric.positive_value!r}).sum())"
+            )
+    for metric in plan.metrics:
+        if metric.column and metric.aggregation == "sum":
+            return f"total_defects = int(work[{metric.column!r}].sum())"
+    return "total_defects = 0"

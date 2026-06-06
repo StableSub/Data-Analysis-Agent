@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
 from backend.app.modules.planner.schemas import PlanningResult
+from backend.app.modules.rag.errors import RagEmbeddingError
 from backend.app.modules.rag.service import RetrievedChunk
 from backend.app.orchestration import builder
 from backend.app.orchestration.builder import build_main_workflow
@@ -49,6 +51,32 @@ class _FakeGuidelineRagService:
 
     def build_context(self, retrieved: list[RetrievedChunk]) -> str:
         return "\n\n".join(item.content for item in retrieved)
+
+
+class _EmbeddingFailureGuidelineRagService(_FakeGuidelineRagService):
+    def __init__(self, *, fail_at: str) -> None:
+        super().__init__(retrieved=[])
+        self.fail_at = fail_at
+
+    def ensure_index_for_guideline(self, guideline: SimpleNamespace) -> dict[str, str]:
+        if self.fail_at == "ensure":
+            raise RagEmbeddingError("No module named 'sentence_transformers'")
+        return super().ensure_index_for_guideline(guideline)
+
+    def query_for_source(
+        self,
+        *,
+        query: str,
+        source_id: str,
+        top_k: int,
+    ) -> list[RetrievedChunk]:
+        if self.fail_at == "query":
+            raise RagEmbeddingError("No module named 'sentence_transformers'")
+        return super().query_for_source(query=query, source_id=source_id, top_k=top_k)
+
+    def load_guideline_text(self, guideline: SimpleNamespace) -> str:
+        storage_path = str(getattr(guideline, "storage_path", "") or "").strip()
+        return Path(storage_path).read_text(encoding="utf-8") if storage_path else ""
 
 
 class _PlannerMustNotRun:
@@ -230,6 +258,94 @@ def test_guideline_blank_selection_falls_back_to_active_guideline(
     assert guideline_rag_service.queries == [source_id]
     assert result["guideline_result"]["status"] == "retrieved"
     assert result["guideline_result"]["retrieved_count"] == 1
+
+
+def test_guideline_embedding_failure_degrades_to_no_evidence_without_aborting_analysis_path(
+    monkeypatch,
+) -> None:
+    source_id = "guideline-source"
+    active_guideline = _guideline(source_id)
+    monkeypatch.setattr(guideline_workflow, "LLMGateway", _FakeGuidelineGateway)
+
+    for fail_at in ("ensure", "query"):
+        workflow = build_guideline_workflow(
+            guideline_service=cast(Any, _FakeGuidelineService(
+                {source_id: active_guideline},
+                active=active_guideline,
+            )),
+            guideline_rag_service=cast(Any, _EmbeddingFailureGuidelineRagService(
+                fail_at=fail_at,
+            )),
+            default_model="test-model",
+        )
+
+        result = workflow.invoke(
+            {
+                "user_input": "날짜별 불량 건수를 분석해줘.",
+                "active_guideline_source_id": source_id,
+                "dataset_context": {
+                    "columns": ["TimeStamp", "PassOrFail"],
+                    "numeric_columns": ["PassOrFail"],
+                    "datetime_columns": ["TimeStamp"],
+                },
+            }
+        )
+
+        assert result["guideline_result"]["status"] == "no_evidence"
+        assert result["guideline_result"]["retrieved_count"] == 0
+        assert result["guideline_result"]["has_evidence"] is False
+        assert result["guideline_data_exists"] is False
+        assert "임베딩" in result["guideline_result"]["evidence_summary"]
+
+
+def test_guideline_embedding_failure_uses_raw_guideline_text_fallback(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    source_id = "guideline-source"
+    guideline_file = tmp_path / "guide.txt"
+    guideline_file.write_text(
+        ("배경 설명입니다.\n" * 300)
+        + "PassOrFail 컬럼에서 1은 불량, 0은 정상입니다. "
+        + "불량률은 불량 건수 / 전체 건수입니다.",
+        encoding="utf-8",
+    )
+    active_guideline = _guideline(source_id)
+    active_guideline.storage_path = str(guideline_file)
+
+    monkeypatch.setattr(guideline_workflow, "LLMGateway", _FakeGuidelineGateway)
+
+    workflow = build_guideline_workflow(
+        guideline_service=cast(Any, _FakeGuidelineService(
+            {source_id: active_guideline},
+            active=active_guideline,
+        )),
+        guideline_rag_service=cast(Any, _EmbeddingFailureGuidelineRagService(
+            fail_at="ensure",
+        )),
+        default_model="test-model",
+    )
+
+    result = workflow.invoke(
+        {
+            "user_input": "날짜별 불량 건수를 분석해줘.",
+            "active_guideline_source_id": source_id,
+            "dataset_context": {
+                "columns": ["TimeStamp", "PassOrFail"],
+                "numeric_columns": ["PassOrFail"],
+                "datetime_columns": ["TimeStamp"],
+            },
+        }
+    )
+
+    assert result["guideline_result"]["status"] == "retrieved"
+    assert result["guideline_result"]["retrieval_mode"] == "raw_text_fallback"
+    assert result["guideline_result"]["has_evidence"] is True
+    assert result["guideline_context"]["semantic_glossary"]["defect_indicator"] == {
+        "column": "PassOrFail",
+        "defect_value": 1,
+        "pass_value": 0,
+    }
 
 
 def test_guideline_missing_selection_key_uses_active_guideline(monkeypatch) -> None:

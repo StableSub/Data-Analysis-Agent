@@ -10,8 +10,13 @@ from ...core.ai import LLMGateway, PromptRegistry
 from ..analysis.processor import AnalysisProcessor
 from ..analysis.schemas import (
     AnalysisPlanDraft,
+    FilterCondition,
     MetadataSnapshot,
+    MetricSpec,
     QuestionUnderstanding,
+    SortSpec,
+    TimeContext,
+    VisualizationHint,
 )
 from ..profiling.schemas import DatasetContext
 from ..profiling.prompt_context import trim_fast_path_bulk_context_fields
@@ -142,6 +147,12 @@ class PlannerService:
             guideline_context=guideline_context,
             model_id=model_id,
         )
+        understanding = _repair_time_bucket_defect_understanding(
+            understanding=understanding,
+            user_input=user_input,
+            dataset_context=context,
+            dataset_meta=metadata,
+        )
         if understanding.ambiguity_status != "clear":
             return PlanningResult(
                 route="analysis",
@@ -164,6 +175,12 @@ class PlannerService:
             dataset_meta=metadata,
             guideline_context=guideline_context,
             model_id=model_id,
+        )
+        plan_draft = _repair_time_bucket_defect_plan_draft(
+            plan_draft=plan_draft,
+            user_input=user_input,
+            dataset_context=context,
+            dataset_meta=metadata,
         )
         if plan_draft.ambiguity_status != "clear":
             clarification_question = (
@@ -345,12 +362,221 @@ def _should_force_skip_preprocess_for_analysis_request(user_input: str) -> bool:
     )
 
 
+def _user_requested_visualization(user_input: str) -> bool:
+    text = user_input.lower()
+    visualization_terms = (
+        "그래프",
+        "시각화",
+        "차트",
+        "plot",
+        "chart",
+        "graph",
+        "visualize",
+        "visualization",
+    )
+    return any(term in text for term in visualization_terms)
+
+
+def _repair_time_bucket_defect_understanding(
+    *,
+    understanding: QuestionUnderstanding,
+    user_input: str,
+    dataset_context: DatasetContext,
+    dataset_meta: MetadataSnapshot,
+) -> QuestionUnderstanding:
+    defect_column = _resolve_defect_indicator_column(dataset_meta)
+    time_column = _resolve_time_bucket_column(dataset_meta)
+    if not (
+        defect_column
+        and time_column
+        and _is_time_bucket_defect_request(user_input)
+        and _dataset_supports_binary_indicator(dataset_context, defect_column)
+    ):
+        return understanding
+
+    return understanding.model_copy(
+        update={
+            "analysis_goal": _append_unique(
+                understanding.analysis_goal,
+                [
+                    "날짜별 불량 건수 집계",
+                    f"{defect_column}=1을 불량 indicator로 사용",
+                ],
+            ),
+            "metric_keywords": _append_unique(
+                understanding.metric_keywords,
+                [defect_column, "defect_count", "defect_rate"],
+            ),
+            "group_keywords": _append_unique(
+                understanding.group_keywords,
+                [time_column, "date", "일별"],
+            ),
+            "filter_conditions": _append_unique_filters(
+                understanding.filter_conditions,
+                [FilterCondition(column=defect_column, operator="eq", value=1)],
+            ),
+            "time_context": understanding.time_context
+            or TimeContext(time_column=time_column, range_type="none", grain="day"),
+            "ambiguity_status": "clear",
+            "clarification_message": "",
+        }
+    )
+
+
+def _repair_time_bucket_defect_plan_draft(
+    *,
+    plan_draft: AnalysisPlanDraft,
+    user_input: str,
+    dataset_context: DatasetContext,
+    dataset_meta: MetadataSnapshot,
+) -> AnalysisPlanDraft:
+    if plan_draft.ambiguity_status == "clear":
+        return plan_draft
+    defect_column = _resolve_defect_indicator_column(dataset_meta)
+    time_column = _resolve_time_bucket_column(dataset_meta)
+    if not (
+        defect_column
+        and time_column
+        and _is_time_bucket_defect_request(user_input)
+        and _dataset_supports_binary_indicator(dataset_context, defect_column)
+    ):
+        return plan_draft
+
+    return AnalysisPlanDraft(
+        analysis_type="daily_defect_analysis",
+        objective=(
+            f"{time_column}를 day 단위로 버킷팅해 날짜별 불량 건수와 "
+            f"전체 건수, 불량률을 계산합니다. {defect_column}=1은 불량입니다."
+        ),
+        group_by=[],
+        metrics=[
+            MetricSpec(
+                name="defect_count",
+                aggregation="sum",
+                column=defect_column,
+                positive_value=1,
+                alias="defect_count",
+            ),
+            MetricSpec(
+                name="total_count",
+                aggregation="count",
+                column=None,
+                alias="total_count",
+            ),
+            MetricSpec(
+                name="defect_rate",
+                aggregation="rate",
+                column=defect_column,
+                positive_value=1,
+                alias="defect_rate",
+            ),
+        ],
+        sort_by=[SortSpec(column=time_column, direction="asc")],
+        time_context=TimeContext(
+            time_column=time_column,
+            range_type="none",
+            grain="day",
+        ),
+        visualization_hint=VisualizationHint(preferred_chart="none"),
+        ambiguity_status="clear",
+    )
+
+
+def _is_time_bucket_defect_request(user_input: str) -> bool:
+    text = user_input.lower()
+    defect_terms = ("불량", "defect", "failure", "fail")
+    time_terms = (
+        "날짜별",
+        "일별",
+        "월별",
+        "주별",
+        "시간별",
+        "date",
+        "daily",
+        "weekly",
+        "monthly",
+        "time",
+    )
+    metric_terms = ("건수", "count", "개수", "횟수", "비율", "률", "rate")
+    return (
+        any(term in text for term in defect_terms)
+        and any(term in text for term in time_terms)
+        and any(term in text for term in metric_terms)
+    )
+
+
+def _resolve_defect_indicator_column(dataset_meta: MetadataSnapshot) -> str | None:
+    for column in dataset_meta.columns:
+        if column.lower() == "passorfail":
+            return column
+    return None
+
+
+def _resolve_time_bucket_column(dataset_meta: MetadataSnapshot) -> str | None:
+    if dataset_meta.datetime_columns:
+        return dataset_meta.datetime_columns[0]
+    preferred = ("timestamp", "time_stamp", "date", "datetime")
+    for expected in preferred:
+        for column in dataset_meta.columns:
+            if column.lower() == expected:
+                return column
+    for column in dataset_meta.columns:
+        normalized = column.lower()
+        if "timestamp" in normalized or "date" in normalized:
+            return column
+    return None
+
+
+def _dataset_supports_binary_indicator(
+    dataset_context: DatasetContext,
+    column: str,
+) -> bool:
+    samples = list(dataset_context.column_value_samples.get(column, []))
+    samples.extend(
+        row.get(column) for row in dataset_context.sample_rows if column in row
+    )
+    normalized = {
+        str(value).strip().lower()
+        for value in samples
+        if value is not None and str(value).strip() != ""
+    }
+    if not normalized:
+        return True
+    return normalized <= {"0", "0.0", "1", "1.0", "true", "false"}
+
+
+def _append_unique(existing: list[str], additions: list[str]) -> list[str]:
+    values = list(existing)
+    seen = set(values)
+    for value in additions:
+        if value not in seen:
+            values.append(value)
+            seen.add(value)
+    return values
+
+
+def _append_unique_filters(
+    existing: list[FilterCondition],
+    additions: list[FilterCondition],
+) -> list[FilterCondition]:
+    values = list(existing)
+    seen = {(item.column, item.operator, str(item.value)) for item in values}
+    for item in additions:
+        key = (item.column, item.operator, str(item.value))
+        if key not in seen:
+            values.append(item)
+            seen.add(key)
+    return values
+
+
 def _apply_planner_decision_guards(
     decision: PlannerDecision,
     user_input: str,
 ) -> PlannerDecision:
     if _should_force_skip_preprocess_for_analysis_request(user_input):
         decision.preprocess_required = False
+    if decision.need_visualization and not _user_requested_visualization(user_input):
+        decision.need_visualization = False
     return decision
 
 

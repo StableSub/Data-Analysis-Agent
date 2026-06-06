@@ -470,6 +470,15 @@ class GuidelineRagService(_BaseIndexedRagService):
     def _load_guideline_text(path: Path) -> str:
         return _BaseIndexedRagService._load_text_from_file(path=path)
 
+    def load_guideline_text(self, guideline: Guideline) -> str:
+        storage_path = str(getattr(guideline, "storage_path", "") or "").strip()
+        if not storage_path:
+            return ""
+        path = Path(storage_path)
+        if not path.exists():
+            return ""
+        return self._load_guideline_text(path)
+
 
 class DatasetRagSyncService:
     def __init__(

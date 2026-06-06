@@ -39,6 +39,25 @@ def test_guard_overrides_only_preprocess_required_for_plain_visualization() -> N
     assert guarded.ask_analysis is True
 
 
+def test_guard_removes_guideline_induced_visualization_when_user_did_not_ask_for_chart() -> None:
+    decision = PlannerDecision(
+        is_general_question=False,
+        ask_analysis=True,
+        preprocess_required=False,
+        need_visualization=True,
+        need_report=False,
+        guideline_context_used=True,
+    )
+
+    guarded = _apply_planner_decision_guards(
+        decision,
+        "날짜별 불량 건수를 분석해줘.",
+    )
+
+    assert guarded.need_visualization is False
+    assert guarded.ask_analysis is True
+
+
 def test_guard_preserves_explicit_preprocess_decision() -> None:
     decision = PlannerDecision(
         is_general_question=False,
