@@ -160,12 +160,14 @@ function SkeletonLines() {
 }
 
 function EvidenceExplainer({ evidence }: { evidence: EvidenceFooterProps }) {
-  const rows = [
-    ["데이터", evidence.data ?? "-", "답변에 사용된 데이터셋입니다."],
-    ["범위", evidence.scope ?? "-", "계산에 반영된 컬럼 또는 파일 범위입니다."],
-    ["계산", evidence.compute ?? "-", "답변 가능성, 경고, 실행 시간을 요약합니다."],
-    ["참고", evidence.rag ?? "OFF", "검색된 데이터/가이드 근거 수입니다."],
-  ];
+  const rows = evidence.details?.length
+    ? evidence.details
+    : [
+      { label: "데이터", value: evidence.data ?? "-", description: "답변에 사용된 데이터셋입니다." },
+      { label: "범위", value: evidence.scope ?? "-", description: "계산에 반영된 컬럼 또는 파일 범위입니다." },
+      { label: "계산", value: evidence.compute ?? "-", description: "답변 가능성, 경고, 실행 시간을 요약합니다." },
+      { label: "참고", value: evidence.rag ?? "OFF", description: "검색된 데이터/가이드 근거 수입니다." },
+    ];
 
   return (
     <details className="mt-3 rounded-md border border-[var(--genui-border)] bg-[var(--genui-surface)] px-3 py-2">
@@ -173,18 +175,18 @@ function EvidenceExplainer({ evidence }: { evidence: EvidenceFooterProps }) {
         근거 자세히 보기
       </summary>
       <div className="mt-2 grid gap-2 sm:grid-cols-2">
-        {rows.map(([label, value, description]) => (
-          <div key={label} className="rounded border border-[var(--genui-border)] bg-[var(--genui-panel)] px-2.5 py-2">
+        {rows.map((row) => (
+          <div key={row.label} className="rounded border border-[var(--genui-border)] bg-[var(--genui-panel)] px-2.5 py-2">
             <div className="flex items-center justify-between gap-2">
               <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--genui-muted)]">
-                {label}
+                {row.label}
               </span>
-              <span className="max-w-[9rem] truncate text-[11px] font-semibold text-[var(--genui-text)]">
-                {value}
+              <span className="max-w-[12rem] text-right text-[11px] font-semibold leading-snug text-[var(--genui-text)]">
+                {row.value}
               </span>
             </div>
             <p className="mt-1 text-[11px] leading-relaxed text-[var(--genui-muted)]">
-              {description}
+              {row.description}
             </p>
           </div>
         ))}

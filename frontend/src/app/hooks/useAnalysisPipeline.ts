@@ -47,6 +47,7 @@ import {
   mapEdaDatasetOverview,
   type PreEdaProfile,
 } from "../lib/preEdaProfile";
+import { buildEvidenceFooterProps } from "../lib/answerEvidence";
 import {
   buildPreprocessOperationsFromRecommendedOperation,
   countAutoApplicableRecommendedOperations,
@@ -2795,31 +2796,13 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
 
   const derivedEvidence: EvidenceFooterProps = (() => {
     const selectedDataset = uploadedDatasets.find((item) => item.sourceId === sourceId);
-    const evidencePackage = chatResponse?.evidence_package;
-    const answerQuality = chatResponse?.answer_quality;
-    const ragUsed = thoughtSteps.some(
-      (step) => step.phase === "rag_retrieval" && step.displayMessage === "질문과 관련된 참고 정보를 찾았습니다.",
-    );
-    const ragCount = evidencePackage?.rag_retrieved_count;
-    const guidelineCount = evidencePackage?.guideline_retrieved_count;
-    const warningCount = evidencePackage?.warnings?.length ?? answerQuality?.warnings?.length ?? 0;
-    const computeStatus =
-      answerQuality?.status ??
-      evidencePackage?.analysis_quality_status ??
-      evidencePackage?.analysis_status;
-
-    return {
-      data: evidencePackage?.filename || selectedDataset?.fileName || "-",
-      scope: evidencePackage?.used_columns?.length
-        ? `${evidencePackage.used_columns.length} cols`
-        : uploadedDatasets.length > 0 ? `${uploadedDatasets.length} files` : "-",
-      compute: warningCount > 0
-        ? `${computeStatus ?? "limited"} · ${warningCount} warnings`
-        : `${computeStatus ?? "v3"} · ${formatElapsed(elapsedSeconds)}`,
-      rag: typeof ragCount === "number" || typeof guidelineCount === "number"
-        ? `${ragCount ?? 0} data / ${guidelineCount ?? 0} guide`
-        : ragUsed ? "사용함" : "사용 안 함",
-    };
+    return buildEvidenceFooterProps({
+      chatResponse,
+      selectedFileName: selectedDataset?.fileName,
+      uploadedDatasetCount: uploadedDatasets.length,
+      elapsedLabel: formatElapsed(elapsedSeconds),
+      thoughtSteps,
+    });
   })();
 
   return {

@@ -15,6 +15,7 @@ export interface EvidenceFooterProps {
   compute?: string;
   /** e.g. "12 chunks" or "OFF" */
   rag?: string;
+  details?: readonly EvidenceDetailItem[];
   /**
    * Navigation callbacks — SSOT: nav only, no action CTA.
    * Data/Scope → Details panel (Dataset profile)
@@ -25,6 +26,12 @@ export interface EvidenceFooterProps {
   onComputeNavigate?: () => void;
   onRagNavigate?: () => void;
   className?: string;
+}
+
+export interface EvidenceDetailItem {
+  readonly label: string;
+  readonly value: string;
+  readonly description: string;
 }
 
 /* ─────────────────────────────────────────────

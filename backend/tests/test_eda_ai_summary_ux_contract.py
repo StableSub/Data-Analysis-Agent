@@ -169,3 +169,34 @@ def test_frontend_surfaces_nonexpert_starters_evidence_and_repair_guidance() -> 
     assert "handleUseSuggestedQuestion" in workbench_source
     assert "GuidedRepairCard" in assistant_source
     assert "EvidenceExplainer" in assistant_source
+
+
+def test_frontend_evidence_explainer_surfaces_specific_answer_evidence() -> None:
+    project_root = Path(__file__).resolve().parents[2]
+    footer_source = (
+        project_root / "frontend/src/app/components/genui/EvidenceFooter.tsx"
+    ).read_text(encoding="utf-8")
+    assistant_source = (
+        project_root / "frontend/src/app/components/genui/AssistantReportMessage.tsx"
+    ).read_text(encoding="utf-8")
+    hook_source = (
+        project_root / "frontend/src/app/hooks/useAnalysisPipeline.ts"
+    ).read_text(encoding="utf-8")
+    helper_path = project_root / "frontend/src/app/lib/answerEvidence.ts"
+
+    assert "export interface EvidenceDetailItem" in footer_source
+    assert "details?: readonly EvidenceDetailItem[]" in footer_source
+    assert "evidence.details" in assistant_source
+    assert "buildEvidenceFooterProps" in hook_source
+    assert helper_path.exists()
+
+    helper_source = helper_path.read_text(encoding="utf-8")
+    for phrase in (
+        "analysis_metrics",
+        "used_columns",
+        "analysis_summary",
+        "rag_evidence_summary",
+        "guideline_evidence_summary",
+        "정보가 부족",
+    ):
+        assert phrase in helper_source
