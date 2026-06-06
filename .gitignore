@@ -41,9 +41,13 @@ backend/tests/*
 !backend/tests/test_frontend_report_markdown_renderer_contract.py
 !backend/tests/test_chat_session_list_contract.py
 !backend/tests/test_dataset_list_contract.py
+!backend/tests/test_dataset_context_service.py
 !backend/tests/test_eda_ai_summary_ux_contract.py
 !backend/tests/test_eda_service_contract.py
 !backend/tests/test_chat_fast_path_executor.py
+!backend/tests/test_chat_fast_path_defect_reason_counts.py
+!backend/tests/test_analysis_error_diagnostics.py
+!backend/tests/test_error_traceability_contract.py
 !backend/tests/guideline_first_fakes.py
 !backend/tests/test_guideline_first_clarification.py
 !backend/tests/test_guideline_rag_workflow_contract.py

@@ -1,4 +1,6 @@
 import logging
+import os
+import re
 from collections import OrderedDict
 from pathlib import Path
 
@@ -53,6 +55,7 @@ _COLUMN_ALIAS_CACHE: OrderedDict[
     tuple[str, tuple[str, ...]],
     dict[str, list[str]],
 ] = OrderedDict()
+_ENABLE_AI_COLUMN_ALIASES_ENV = "ENABLE_AI_COLUMN_ALIASES"
 logger = logging.getLogger(__name__)
 
 
@@ -350,7 +353,12 @@ class DatasetContextService:
         self.profile_service = profile_service
         self.default_model = default_model
 
-    def build_context(self, source_id: str) -> DatasetContext:
+    def build_context(
+        self,
+        source_id: str,
+        *,
+        include_ai_aliases: bool | None = None,
+    ) -> DatasetContext:
         if not source_id:
             return DatasetContext(source_id="", available=False)
 
@@ -359,7 +367,10 @@ class DatasetContextService:
             return DatasetContext(source_id=source_id, available=False)
 
         profile = self.profile_service.build_profile(source_id)
-        column_aliases = self._build_column_aliases(profile)
+        column_aliases = self._build_column_aliases(
+            profile,
+            include_ai_aliases=include_ai_aliases,
+        )
         return DatasetContext(
             source_id=source_id,
             filename=dataset.filename or "",
@@ -387,15 +398,23 @@ class DatasetContextService:
             quality_summary=self._build_quality_summary(profile),
         )
 
-    def _build_column_aliases(self, profile: DatasetProfile) -> dict[str, list[str]]:
+    def _build_column_aliases(
+        self,
+        profile: DatasetProfile,
+        *,
+        include_ai_aliases: bool | None,
+    ) -> dict[str, list[str]]:
         if not profile.available or not profile.columns:
             return {}
+        deterministic_aliases = self._build_deterministic_column_aliases(profile)
+        if not self._should_include_ai_aliases(include_ai_aliases):
+            return deterministic_aliases
 
         cache_key = (profile.source_id, tuple(profile.columns))
         cached = _COLUMN_ALIAS_CACHE.get(cache_key)
         if cached is not None:
             _COLUMN_ALIAS_CACHE.move_to_end(cache_key)
-            return cached
+            return self._merge_aliases(deterministic_aliases, cached)
 
         payload = {
             "source_id": profile.source_id,
@@ -415,11 +434,63 @@ class DatasetContextService:
             )
         except Exception:
             logger.exception("Failed to generate column aliases for dataset context.")
-            return {}
+            return deterministic_aliases
         _COLUMN_ALIAS_CACHE[cache_key] = aliases
         if len(_COLUMN_ALIAS_CACHE) > _COLUMN_ALIAS_CACHE_MAX_SIZE:
             _COLUMN_ALIAS_CACHE.popitem(last=False)
+        return self._merge_aliases(deterministic_aliases, aliases)
+
+    @staticmethod
+    def _should_include_ai_aliases(include_ai_aliases: bool | None) -> bool:
+        if include_ai_aliases is not None:
+            return include_ai_aliases
+        value = os.getenv(_ENABLE_AI_COLUMN_ALIASES_ENV, "")
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+
+    @classmethod
+    def _build_deterministic_column_aliases(cls, profile: DatasetProfile) -> dict[str, list[str]]:
+        aliases: dict[str, list[str]] = {}
+        for column in profile.columns:
+            candidates = cls._column_alias_candidates(column)
+            if candidates:
+                aliases[column] = candidates
         return aliases
+
+    @staticmethod
+    def _column_alias_candidates(column: str) -> list[str]:
+        text = str(column or "").strip()
+        if not text:
+            return []
+        spaced = text.replace("_", " ").replace("-", " ").strip()
+        camel_spaced = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", text).strip()
+        compact = spaced.replace(" ", "")
+        candidates = [text, spaced, camel_spaced, compact, camel_spaced.replace(" ", "")]
+        seen: set[str] = set()
+        result: list[str] = []
+        for candidate in candidates:
+            normalized = " ".join(candidate.strip().split())
+            if normalized and normalized != text and normalized not in seen:
+                seen.add(normalized)
+                result.append(normalized)
+        return result
+
+    @staticmethod
+    def _merge_aliases(
+        base: dict[str, list[str]],
+        extra: dict[str, list[str]],
+    ) -> dict[str, list[str]]:
+        merged = {column: list(aliases) for column, aliases in base.items()}
+        for column, aliases in extra.items():
+            if not isinstance(aliases, list):
+                continue
+            bucket = merged.setdefault(str(column), [])
+            seen = set(bucket)
+            for alias in aliases:
+                text = str(alias or "").strip()
+                if text and text not in seen:
+                    seen.add(text)
+                    bucket.append(text)
+        return merged
 
     @staticmethod
     def _build_quality_summary(profile: DatasetProfile) -> DatasetQualitySummary:
