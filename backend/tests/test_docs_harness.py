@@ -218,5 +218,25 @@ def test_moldset_report_questions_bound_broad_process_variable_requests() -> Non
         assert question not in content
 
     assert "주요 수치형 공정 변수" in content
+
+
+def test_rag_guideline_docs_record_embedding_fallback_contract() -> None:
+    content = _read(ARCHITECTURE_DIR / "modules" / "rag-and-guidelines.md")
+
+    assert "sentence-transformers" in content
+    assert "guideline_embedding_error" in content
+    assert "raw_text_fallback" in content
+    assert "chat SSE" in content
+
+
+def test_analysis_docs_record_planner_validator_contract() -> None:
+    content = _read(ARCHITECTURE_DIR / "modules" / "analysis.md")
+
+    assert "planner-validator contract" in content
+    assert "datetime_part" in content
+    assert "`date` -> `day`" in content
+    assert "PassOrFail" in content
+    assert "`not_null`" in content
+    assert "JSON-only codegen" in content
     assert "PassOrFail=1인 불량 데이터" in content
     assert "보호/식별 컬럼" in content

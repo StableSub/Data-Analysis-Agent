@@ -72,6 +72,8 @@
 - `rag_index_status.status`는 `existing`, `created`, `dataset_missing`, `unsupported_format` 같은 값으로 downstream thought step과 context 판단에 쓰인다.
 - 검색 결과가 없을 때도 `rag_result.evidence_summary`에는 “질문과 직접 연결되는 근거를 찾지 못했습니다.” 같은 no-evidence summary가 실릴 수 있다.
 - guideline RAG와 dataset RAG는 model/repository가 분리되어 있으므로 source id collision을 같은 namespace로 가정하면 안 된다.
+- `sentence-transformers` 또는 embedding adapter 로딩/실행이 실패하면 guideline workflow는 chat SSE를 abort하지 않는다. `backend/app/orchestration/workflows/guideline.py`가 `guideline_embedding_error`를 기록하고, 원본 guideline 파일을 읽을 수 있으면 `raw_text_fallback` 근거로 `guideline_context.semantic_glossary`를 만든다. 원본 파일도 사용할 수 없으면 `no_evidence`로 degraded result를 남기고 planner/analysis 경로를 계속 진행한다.
+- 이 fallback은 fast-path 우회가 아니라 guideline evidence boundary의 fail-safe다. downstream은 `guideline_result.status`, `retrieval_mode`, `error_code`, `has_evidence`를 보고 “근거 없음/검색 불가”와 “workflow 실패”를 구분해야 한다.
 
 ## Hotspot: `backend/app/modules/rag/infra/embedding.py`
 
@@ -88,6 +90,7 @@
 
 - embedding 실패는 `RagEmbeddingError` 계열로 이어질 수 있다.
 - RAG 품질 문제를 분석할 때 prompt뿐 아니라 chunk text, embedding query, FAISS result score를 같이 확인해야 한다.
+- local/dev 환경에서 `sentence-transformers` 설치가 누락되어도 service construction 자체는 지연 import 덕분에 성공해야 한다. 실제 embedding 호출 실패만 `RagEmbeddingError`로 표면화하고, guideline workflow는 위 `guideline_embedding_error`/`raw_text_fallback` 계약에 따라 사용자 답변 생산을 계속한다.
 
 ## Hotspot: `backend/app/modules/rag/infra/vector_store.py`
 

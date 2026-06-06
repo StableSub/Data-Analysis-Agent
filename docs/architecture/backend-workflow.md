@@ -8,7 +8,7 @@
 
 - `load_dotenv()`로 환경 변수를 로딩한다.
 - `FastAPI()` app을 만든다.
-- CORS origin은 `http://localhost:3000`, `http://127.0.0.1:3000`, `http://localhost:5173`, `http://127.0.0.1:5173`를 허용한다.
+- CORS origin은 `http://localhost:3000`, `http://127.0.0.1:3000`, `http://localhost:3021`, `http://127.0.0.1:3021`, `http://localhost:5173`, `http://127.0.0.1:5173`를 허용한다.
 - startup handler `on_startup()`에서 `Base.metadata.create_all(bind=engine)`를 실행한다.
 - 다음 router를 직접 mount한다.
 
