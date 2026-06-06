@@ -29,6 +29,19 @@ if TYPE_CHECKING:
     from ..modules.chat_fast_path.executor import CommonAnalyticsExecutionResult
 
 
+def _analysis_result_from_common_analytics(
+    result: CommonAnalyticsExecutionResult,
+) -> dict[str, Any]:
+    return {
+        "execution_status": "success",
+        "summary": result.summary,
+        "used_columns": result.columns,
+        "quality_status": "complete",
+        "raw_metrics": result.raw_metrics,
+        "table": result.table,
+    }
+
+
 def build_main_workflow(
     *,
     planner_service,
@@ -261,6 +274,32 @@ def build_main_workflow(
             },
         }
 
+    def common_analytics_with_evidence(
+        state: MainWorkflowState,
+        result: CommonAnalyticsExecutionResult,
+    ) -> Dict[str, Any]:
+        analysis_result = _analysis_result_from_common_analytics(result)
+        evidence_state = dict(state)
+        evidence_state["analysis_result"] = analysis_result
+        evidence_state["final_status"] = "success"
+        merged_context = build_merged_context(evidence_state)
+        evidence_package, answer_quality = build_evidence_contract(
+            state=evidence_state,
+            merged_context=merged_context,
+        )
+        output = common_analytics_output(result)
+        return {
+            "output": {
+                **output,
+                "evidence_package": evidence_package,
+                "answer_quality": answer_quality,
+            },
+            "analysis_result": analysis_result,
+            "merged_context": merged_context,
+            "evidence_package": evidence_package,
+            "answer_quality": answer_quality,
+        }
+
     def chat_fast_path_node(state: MainWorkflowState) -> Dict[str, Any]:
         set_trace_stage("chat_fast_path")
         dataset_context = state.get("dataset_context")
@@ -334,10 +373,9 @@ def build_main_workflow(
                 }
             }
 
-        return {
-            "output": common_analytics_output(common_result),
-            "fast_path_result": decision.to_fast_path_result(),
-        }
+        result_payload = common_analytics_with_evidence(state, common_result)
+        result_payload["fast_path_result"] = decision.to_fast_path_result()
+        return result_payload
 
     def planner_node(state: MainWorkflowState) -> Dict[str, Any]:
         set_trace_stage("planner")

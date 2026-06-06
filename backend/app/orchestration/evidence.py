@@ -37,6 +37,7 @@ def build_evidence_contract(
     visualization_result = _as_dict(state.get("visualization_result"))
     analysis_result = _as_dict(state.get("analysis_result"))
     analysis_plan = _as_dict(state.get("analysis_plan"))
+    dataset_context = _as_dict(state.get("dataset_context"))
     handoff = _as_dict(state.get("handoff")) or {}
 
     warnings: list[EvidenceWarningPayload] = []
@@ -80,6 +81,11 @@ def build_evidence_contract(
                 or _as_non_empty_str(preprocess_result.get("summary"))
                 or preprocess_status,
             )
+
+    if "filename" not in evidence_package and dataset_context is not None:
+        filename = _as_non_empty_str(dataset_context.get("filename"))
+        if filename:
+            evidence_package["filename"] = filename
 
     used_columns = _first_non_empty_str_list(
         analysis_result.get("used_columns") if analysis_result else None,
