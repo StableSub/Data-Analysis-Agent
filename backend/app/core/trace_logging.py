@@ -172,15 +172,22 @@ def _extract_error_fields(payload: dict[str, Any]) -> dict[str, Any] | None:
     error_stage = payload.get("error_stage")
     error_message = payload.get("error_message")
     error_type = payload.get("error_type")
+    error_source = payload.get("error_source")
+    diagnostic_message = payload.get("diagnostic_message")
 
-    if not any((error_stage, error_message, error_type)):
+    if not any((error_stage, error_message, error_type, error_source, diagnostic_message)):
         return None
 
-    return {
+    fields = {
         "stage": error_stage,
         "message": error_message,
         "type": error_type,
     }
+    if error_source:
+        fields["source"] = error_source
+    if diagnostic_message:
+        fields["diagnostic_message"] = diagnostic_message
+    return fields
 
 
 def _update_trace_summary(summary: dict[str, Any], entry: dict[str, Any]) -> None:
@@ -235,6 +242,30 @@ def _update_trace_summary(summary: dict[str, Any], entry: dict[str, Any]) -> Non
             },
         )
         return
+
+    if layer == "chat" and event not in {"thought", "approval_required", "done"}:
+        summary_error = _extract_error_fields(payload)
+        if summary_error is not None:
+            summary["status"] = "fail"
+            summary["error"] = summary_error
+            if payload.get("source_id") is not None:
+                summary["source_id"] = payload.get("source_id")
+            error_stage = payload.get("error_stage")
+            _upsert_trace_step(
+                summary,
+                phase=str(error_stage or event or "error"),
+                layer=layer,
+                event=event,
+                stage=error_stage if isinstance(error_stage, str) else None,
+                status="failed",
+                message=str(payload.get("error_message") or ""),
+                ts=ts,
+                details={
+                    "error_type": payload.get("error_type"),
+                    "error_source": payload.get("error_source"),
+                },
+            )
+            return
 
     if layer == "chat" and event == "thought":
         step = payload.get("step")

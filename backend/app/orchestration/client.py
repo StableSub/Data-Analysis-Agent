@@ -128,6 +128,7 @@ class AgentClient:
                 public_error = to_public_error(workflow_error if isinstance(workflow_error, dict) else None)
                 has_workflow_error = isinstance(workflow_error, dict)
                 error_stage = public_error["stage"] if has_workflow_error else summary.get("error_stage") or "unknown"
+                error_source = public_error["source"] if has_workflow_error else summary.get("error_source") or "unknown"
                 fallback_message = public_error["message"] if has_workflow_error else public_message_for_stage(str(error_stage))
                 error_message = (
                     public_error["message"]
@@ -163,6 +164,7 @@ class AgentClient:
                     "status": "failed",
                     "stage": error_stage,
                     "error_stage": error_stage,
+                    "error_source": error_source,
                     "error_message": error_message if isinstance(error_message, str) else answer,
                     "error_code": public_error["error_code"] if has_workflow_error else self._resolve_error_code(final_state, summary),
                     "retryable": public_error["retryable"] if has_workflow_error else self._resolve_retryable(final_state, summary),
@@ -409,15 +411,24 @@ class AgentClient:
         error_stage = None
         error_message = None
         error_type = None
+        error_source = None
+        diagnostic_message = None
         workflow_error = snapshot.get("workflow_error")
 
         if isinstance(workflow_error, dict):
             public_error = to_public_error(workflow_error)
             error_stage = public_error["stage"]
             error_message = public_error["message"]
+            error_source = public_error["source"]
+            workflow_diagnostic = workflow_error.get("diagnostic_message")
+            if isinstance(workflow_diagnostic, str) and workflow_diagnostic:
+                diagnostic_message = workflow_diagnostic
             details = workflow_error.get("details")
             if isinstance(details, dict):
                 error_type = details.get("exception_type") or details.get("error_type")
+                detail_diagnostic = details.get("diagnostic_message")
+                if not diagnostic_message and isinstance(detail_diagnostic, str):
+                    diagnostic_message = detail_diagnostic
 
         if not error_stage and isinstance(analysis_error, dict):
             error_stage = analysis_error.get("stage")
@@ -427,11 +438,18 @@ class AgentClient:
             detail = analysis_error.get("detail")
             if isinstance(detail, dict):
                 error_type = detail.get("exception_type") or detail.get("error_type")
+                detail_diagnostic = detail.get("diagnostic_message")
+                if not diagnostic_message and isinstance(detail_diagnostic, str):
+                    diagnostic_message = detail_diagnostic
 
         if not error_stage and isinstance(analysis_result, dict):
             error_stage = analysis_result.get("error_stage")
         if not error_message and isinstance(analysis_result, dict):
             error_message = analysis_result.get("error_message")
+        if isinstance(analysis_result, dict):
+            result_diagnostic = analysis_result.get("diagnostic_message")
+            if not diagnostic_message and isinstance(result_diagnostic, str):
+                diagnostic_message = result_diagnostic
         if (
             not error_stage
             and isinstance(report_result, dict)
@@ -446,6 +464,10 @@ class AgentClient:
             error_message = report_result.get("error") or report_result.get("summary")
         if not error_type and isinstance(sandbox_result, dict):
             error_type = sandbox_result.get("error_type")
+        if isinstance(sandbox_result, dict):
+            sandbox_diagnostic = sandbox_result.get("diagnostic_message")
+            if not diagnostic_message and isinstance(sandbox_diagnostic, str):
+                diagnostic_message = sandbox_diagnostic
         is_failed_snapshot = (
             snapshot.get("final_status") == "fail"
             or (
@@ -504,6 +526,8 @@ class AgentClient:
             "error_stage": error_stage,
             "error_message": error_message,
             "error_type": error_type,
+            "error_source": error_source,
+            "diagnostic_message": diagnostic_message,
             "interrupt_stage": interrupt.get("stage") if isinstance(interrupt, dict) else None,
         }
 

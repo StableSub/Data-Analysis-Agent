@@ -111,6 +111,7 @@ class AnalysisSandbox:
                 ok=False,
                 error_type="runtime",
                 message="analysis code is empty",
+                diagnostic_message="analysis source code was empty before sandbox execution",
             )
 
         validation_error = self._validate_source_code(source_code)
@@ -119,6 +120,7 @@ class AnalysisSandbox:
                 ok=False,
                 error_type="runtime",
                 message=validation_error,
+                diagnostic_message=validation_error,
             )
 
         # 실행용 임시 폴더를 만들고 그 안에 run_analysis.py를 생성한다.
@@ -147,13 +149,20 @@ class AnalysisSandbox:
                     error_type="timeout",
                     message="analysis execution timed out",
                     stderr=str(exc.stderr or ""),
+                    diagnostic_message=(
+                        "sandbox subprocess exceeded "
+                        f"{self.timeout_seconds}s timeout"
+                    ),
                 )
             # 기타 실행 예외 처리
-            except Exception:
+            except Exception as exc:
                 return SandboxExecutionResult(
                     ok=False,
                     error_type="runtime",
                     message="analysis execution failed",
+                    diagnostic_message=(
+                        f"sandbox subprocess launch failed: {type(exc).__name__}: {exc}"
+                    ),
                 )
             # 프로세스 종료 코드 검사
             stderr_text = str(completed.stderr or "")
@@ -163,6 +172,7 @@ class AnalysisSandbox:
                     error_type="runtime",
                     message="analysis execution failed",
                     stderr=stderr_text,
+                    diagnostic_message=_format_runtime_diagnostic(stderr_text),
                 )
             stdout_size = len((completed.stdout or "").encode("utf-8"))
             stderr_size = len(stderr_text.encode("utf-8"))
@@ -172,6 +182,10 @@ class AnalysisSandbox:
                     error_type="runtime",
                     message="analysis execution output exceeded size limit",
                     stderr=stderr_text[:4000],
+                    diagnostic_message=(
+                        "sandbox output exceeded size limit; "
+                        f"stdout_bytes={stdout_size}; stderr_bytes={stderr_size}"
+                    ),
                 )
             # stdout 비었는지 검사
             stdout_text = str(completed.stdout or "").strip()
@@ -181,26 +195,35 @@ class AnalysisSandbox:
                     error_type="invalid_json",
                     message="analysis execution produced empty stdout",
                     stderr=stderr_text,
+                    diagnostic_message="sandbox stdout was empty",
                 )
             # stdout 문자열을 JSON으로 파싱한다.
             try:
                 payload = json.loads(stdout_text)
-            except json.JSONDecodeError:
+            except json.JSONDecodeError as exc:
                 return SandboxExecutionResult(
                     ok=False,
                     error_type="invalid_json",
                     message="analysis execution did not return valid JSON",
                     stderr=stderr_text,
+                    diagnostic_message=_format_json_decode_diagnostic(
+                        exc,
+                        stdout_text=stdout_text,
+                    ),
                 )
             # 출력 스키마를 검증한다.
             try:
                 output_payload = AnalysisOutputPayload.model_validate(payload)
-            except ValidationError:
+            except ValidationError as exc:
                 return SandboxExecutionResult(
                     ok=False,
                     error_type="invalid_json",
                     message="analysis output schema validation failed",
                     stderr=stderr_text,
+                    diagnostic_message=_format_validation_diagnostic(
+                        exc,
+                        stdout_text=stdout_text,
+                    ),
                 )
 
             return SandboxExecutionResult(
@@ -237,3 +260,46 @@ class AnalysisSandbox:
         except ValueError:
             return "analysis source validation failed"
         return None
+
+
+def _format_runtime_diagnostic(stderr_text: str) -> str:
+    excerpt = _excerpt(stderr_text)
+    if not excerpt:
+        return "sandbox subprocess exited with non-zero status and empty stderr"
+    return f"sandbox subprocess exited with non-zero status; stderr_excerpt={excerpt}"
+
+
+def _format_json_decode_diagnostic(
+    exc: json.JSONDecodeError,
+    *,
+    stdout_text: str,
+) -> str:
+    return (
+        f"json decode failed at line={exc.lineno}, column={exc.colno}: {exc.msg}; "
+        f"stdout_excerpt={_excerpt(stdout_text)}"
+    )
+
+
+def _format_validation_diagnostic(
+    exc: ValidationError,
+    *,
+    stdout_text: str,
+) -> str:
+    field_errors: list[str] = []
+    for error in exc.errors():
+        loc = ".".join(str(part) for part in error.get("loc", ())) or "__root__"
+        message = str(error.get("msg") or "")
+        error_type = str(error.get("type") or "")
+        if error_type:
+            field_errors.append(f"{loc}: {message} (type={error_type})")
+        else:
+            field_errors.append(f"{loc}: {message}")
+    cause = "; ".join(field_errors) or str(exc)
+    return f"{cause}; stdout_excerpt={_excerpt(stdout_text)}"
+
+
+def _excerpt(value: str, *, limit: int = 500) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit]}..."

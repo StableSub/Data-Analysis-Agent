@@ -225,6 +225,7 @@ class SandboxExecutionResult(StrictModel):
     stderr: str = ""
     error_type: Literal["timeout", "runtime", "invalid_json"] | None = None
     message: str | None = None
+    diagnostic_message: str | None = None
 
 
 class ChartSeries(StrictModel):
@@ -265,6 +266,7 @@ class AnalysisExecutionResult(StrictModel):
     used_columns: list[str] = Field(default_factory=list)
     error_stage: ErrorStage | None = None
     error_message: str | None = None
+    diagnostic_message: str | None = None
     quality_status: Literal["complete", "empty", "partial", "invalid"] | None = None
     quality_reason: str | None = None
     warnings: list[AnalysisWarning] = Field(default_factory=list)

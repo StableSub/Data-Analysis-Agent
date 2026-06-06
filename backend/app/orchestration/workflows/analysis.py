@@ -9,12 +9,16 @@ V1 analysis 서브그래프.
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, cast
 
 from langgraph.graph import END, START, StateGraph
 
 from backend.app.core.trace_logging import set_trace_stage
-from backend.app.modules.analysis.schemas import AnalysisExecutionResult
+from backend.app.modules.analysis.schemas import (
+    AnalysisExecutionResult,
+    AnalysisPlan,
+    ErrorStage,
+)
 from backend.app.modules.planner.schemas import PlanningResult
 from backend.app.modules.analysis.service import AnalysisService
 from backend.app.orchestration.error_contract import (
@@ -24,6 +28,28 @@ from backend.app.orchestration.error_contract import (
 )
 from backend.app.orchestration.state import AnalysisGraphState
 from backend.app.orchestration.utils import resolve_target_source_id
+
+_ERROR_STAGE_VALUES = {
+    "question_understanding",
+    "column_grounding",
+    "plan_generation",
+    "plan_validation",
+    "code_generation",
+    "code_validation",
+    "sandbox_execution",
+    "result_validation",
+    "persist_result",
+}
+
+
+def _coerce_error_stage(
+    value: Any,
+    *,
+    fallback: ErrorStage = "result_validation",
+) -> ErrorStage:
+    if isinstance(value, str) and value in _ERROR_STAGE_VALUES:
+        return cast(ErrorStage, value)
+    return fallback
 
 
 # analysis 서브그래프를 조립한다.
@@ -125,7 +151,7 @@ def build_analysis_workflow(
     def analysis_planning_node(state: AnalysisGraphState) -> Dict[str, Any]:
         set_trace_stage("analysis_planning")
         question = str(state.get("user_input", "")).strip()
-        source_id = resolve_target_source_id(state)
+        source_id = resolve_target_source_id(dict(state))
         if not question:
             workflow_error = _build_analysis_workflow_error(
                 stage="question_understanding",
@@ -194,7 +220,7 @@ def build_analysis_workflow(
             )
             error_message = workflow_error["safe_message"]
             analysis_error = analysis_service.processor.build_error(
-                str(workflow_error["stage"]),
+                _coerce_error_stage(workflow_error.get("stage")),
                 error_message,
                 detail={
                     "source_id": source_id or "",
@@ -235,7 +261,7 @@ def build_analysis_workflow(
     # 최종 plan을 기반으로 코드 생성, code repair, sandbox 실행까지 수행한다.
     def analysis_execution_node(state: AnalysisGraphState) -> Dict[str, Any]:
         set_trace_stage("analysis_execution")
-        source_id = resolve_target_source_id(state)
+        source_id = resolve_target_source_id(dict(state))
         dataset = analysis_service._get_dataset(source_id or "")
         if dataset is None:
             workflow_error = _build_analysis_workflow_error(
@@ -266,7 +292,7 @@ def build_analysis_workflow(
         execution_bundle = analysis_service._run_code_generation_loop(
             question=str(state.get("user_input", "")),
             dataset=dataset,
-            analysis_plan=state["analysis_plan"],
+            analysis_plan=AnalysisPlan.model_validate(state.get("analysis_plan")),
             model_id=state.get("model_id"),
         )
         result = {
@@ -318,11 +344,17 @@ def build_analysis_workflow(
             }
 
         if state.get("analysis_error") is None:
+            diagnostic_message = (
+                execution_result.diagnostic_message
+                or execution_result.error_message
+                or ""
+            )
             workflow_error = _build_analysis_workflow_error(
                 stage=execution_result.error_stage or "result_validation",
                 error_code="analysis_validation_failed",
                 source="analysis_validation",
-                diagnostic_message=execution_result.error_message or "",
+                diagnostic_message=diagnostic_message,
+                details={"error_message": execution_result.error_message or ""},
             )
             analysis_error = analysis_service.processor.build_error(
                 execution_result.error_stage or "result_validation",
@@ -337,6 +369,16 @@ def build_analysis_workflow(
         existing_error = state.get("analysis_error") or {}
         workflow_error = state.get("workflow_error")
         if not isinstance(workflow_error, dict):
+            existing_detail = existing_error.get("detail")
+            if not isinstance(existing_detail, dict):
+                existing_detail = {}
+            diagnostic_message = str(
+                existing_detail.get("diagnostic_message")
+                or execution_result.diagnostic_message
+                or existing_error.get("message")
+                or execution_result.error_message
+                or ""
+            )
             error_stage = str(
                 existing_error.get("stage")
                 or execution_result.error_stage
@@ -346,11 +388,8 @@ def build_analysis_workflow(
                 stage=error_stage,
                 error_code="analysis_execution_failed",
                 source="analysis_validation",
-                diagnostic_message=str(
-                    existing_error.get("message")
-                    or execution_result.error_message
-                    or ""
-                ),
+                diagnostic_message=diagnostic_message,
+                details=existing_detail,
             )
         return {
             "workflow_error": workflow_error,
@@ -370,11 +409,15 @@ def build_analysis_workflow(
         try:
             result_id = analysis_service._persist_result(
                 question=str(state.get("user_input", "")),
-                source_id=resolve_target_source_id(state) or "",
+                source_id=resolve_target_source_id(dict(state)) or "",
                 session_id=state.get("session_id"),
-                analysis_plan=state.get("analysis_plan"),
+                analysis_plan=AnalysisPlan.model_validate(state.get("analysis_plan"))
+                if state.get("analysis_plan") is not None
+                else None,
                 generated_code=state.get("generated_code"),
-                execution_result=AnalysisExecutionResult.model_validate(state["analysis_result"]),
+                execution_result=AnalysisExecutionResult.model_validate(
+                    state.get("analysis_result")
+                ),
             )
             return {
                 "analysis_result_id": result_id,

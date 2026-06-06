@@ -4,11 +4,17 @@ from typing import Any, AsyncIterator, Dict, Optional, cast
 
 from ...core.trace_logging import log_trace, trace_context
 from ...orchestration.client import AgentClient
-from ...orchestration.error_contract import sanitize_public_payload
+from ...orchestration.error_contract import public_message_for_stage, sanitize_public_payload
 from ..datasets.repository import DatasetRepository
 from .models import ChatMessage, ChatSession
 from .repository import ChatRepository
-from .schemas import ChatHistoryResponse, ChatSessionListResponse, ChatSessionSummary, PendingApprovalResponse
+from .schemas import (
+    ChatHistoryResponse,
+    ChatSessionListResponse,
+    ChatSessionSummary,
+    PendingApproval,
+    PendingApprovalResponse,
+)
 
 
 def _datetime_min_utc() -> datetime:
@@ -28,6 +34,10 @@ def _preview(message: ChatMessage | None) -> str | None:
     if len(content) <= 80:
         return content
     return f"{content[:77]}..."
+
+
+def _session_id_value(session: ChatSession) -> int:
+    return int(cast(Any, session.id))
 
 
 class ChatService:
@@ -80,6 +90,13 @@ class ChatService:
                             "session_id": session_id if session is not None else None,
                             "run_id": run_id,
                             "source_id": source_id,
+                            "error_stage": "dataset_resolution",
+                            "error_message": "요청한 데이터셋을 찾을 수 없습니다.",
+                            "error_type": "invalid_source_id",
+                            "error_source": "chat_source_validation",
+                            "diagnostic_message": (
+                                f"dataset source_id not found: {source_id}"
+                            ),
                         },
                     )
                     if session is not None:
@@ -94,6 +111,7 @@ class ChatService:
                             "status": "failed",
                             "stage": "dataset_resolution",
                             "error_stage": "dataset_resolution",
+                            "error_source": "chat_source_validation",
                             "error_message": "요청한 데이터셋을 찾을 수 없습니다.",
                             "error_code": "invalid_source_id",
                             "retryable": False,
@@ -107,16 +125,17 @@ class ChatService:
             dataset = None
 
         session = self._get_or_create_session(session_id=session_id, title=question)
+        session_pk = _session_id_value(session)
         run_id = uuid.uuid4().hex
         active_trace_id = (trace_id or "").strip() or uuid.uuid4().hex
 
-        with trace_context(trace_id=active_trace_id, session_id=session.id, run_id=run_id):
+        with trace_context(trace_id=active_trace_id, session_id=session_pk, run_id=run_id):
             log_trace(
                 layer="chat",
                 event="ingress",
                 payload={
                     "trace_id": active_trace_id,
-                    "session_id": session.id,
+                    "session_id": session_pk,
                     "run_id": run_id,
                     "source_id": source_id,
                     "guideline_source_id": guideline_source_id,
@@ -137,27 +156,37 @@ class ChatService:
             yield {
                 "event": "session",
                 "data": {
-                    "session_id": session.id,
+                    "session_id": session_pk,
                     "run_id": run_id,
                     "trace_id": active_trace_id,
                 },
             }
 
-            async for event in self._relay_agent_events(
-                session_id=session.id,
-                run_id=run_id,
-                trace_id=active_trace_id,
-                agent_stream=self.agent.astream_with_trace(
-                    session_id=str(session.id),
+            try:
+                async for event in self._relay_agent_events(
+                    session_id=session_pk,
                     run_id=run_id,
-                    question=question,
-                    dataset=dataset,
-                    model_id=model_id,
-                    guideline_source_id=guideline_source_id,
-                ),
-                session=session,
-            ):
-                yield event
+                    trace_id=active_trace_id,
+                    agent_stream=self.agent.astream_with_trace(
+                        session_id=str(session_pk),
+                        run_id=run_id,
+                        question=question,
+                        dataset=dataset,
+                        model_id=model_id,
+                        guideline_source_id=guideline_source_id,
+                    ),
+                    session=session,
+                ):
+                    yield event
+            except Exception as exc:
+                yield self._build_stream_exception_event(
+                    exc=exc,
+                    session_id=session_pk,
+                    run_id=run_id,
+                    trace_id=active_trace_id,
+                    session=session,
+                )
+                return
 
     async def resume_run_stream(
         self,
@@ -172,16 +201,17 @@ class ChatService:
         session = self._get_session(session_id)
         if session is None:
             raise RuntimeError("세션을 찾을 수 없습니다.")
+        session_pk = _session_id_value(session)
 
         active_trace_id = (trace_id or "").strip() or run_id
 
-        with trace_context(trace_id=active_trace_id, session_id=session.id, run_id=run_id):
+        with trace_context(trace_id=active_trace_id, session_id=session_pk, run_id=run_id):
             log_trace(
                 layer="chat",
                 event="resume_ingress",
                 payload={
                     "trace_id": active_trace_id,
-                    "session_id": session.id,
+                    "session_id": session_pk,
                     "run_id": run_id,
                     "decision": decision,
                     "stage": stage,
@@ -191,27 +221,37 @@ class ChatService:
             yield {
                 "event": "session",
                 "data": {
-                    "session_id": session.id,
+                    "session_id": session_pk,
                     "run_id": run_id,
                     "trace_id": active_trace_id,
                 },
             }
-            async for event in self._relay_agent_events(
-                session_id=session.id,
-                run_id=run_id,
-                trace_id=active_trace_id,
-                agent_stream=self.agent.astream_with_trace(
-                    session_id=str(session.id),
+            try:
+                async for event in self._relay_agent_events(
+                    session_id=session_pk,
                     run_id=run_id,
-                    resume={
-                        "decision": decision,
-                        "stage": stage,
-                        "instruction": instruction or "",
-                    },
-                ),
-                session=session,
-            ):
-                yield event
+                    trace_id=active_trace_id,
+                    agent_stream=self.agent.astream_with_trace(
+                        session_id=str(session_pk),
+                        run_id=run_id,
+                        resume={
+                            "decision": decision,
+                            "stage": stage,
+                            "instruction": instruction or "",
+                        },
+                    ),
+                    session=session,
+                ):
+                    yield event
+            except Exception as exc:
+                yield self._build_stream_exception_event(
+                    exc=exc,
+                    session_id=session_pk,
+                    run_id=run_id,
+                    trace_id=active_trace_id,
+                    session=session,
+                )
+                return
 
     async def get_pending_approval(
         self,
@@ -229,7 +269,7 @@ class ChatService:
         return PendingApprovalResponse(
             session_id=session_id,
             run_id=run_id,
-            pending_approval=pending_approval,
+            pending_approval=PendingApproval.model_validate(pending_approval),
         )
 
     def has_session(self, session_id: int) -> bool:
@@ -243,7 +283,9 @@ class ChatService:
         if not session:
             return None
         messages = self.repository.get_history(session_id)
-        return ChatHistoryResponse(session_id=session_id, messages=messages)
+        return ChatHistoryResponse.model_validate(
+            {"session_id": session_id, "messages": messages}
+        )
 
     def list_sessions(self, skip: int = 0, limit: int = 20) -> ChatSessionListResponse:
         summaries = [self._summarize_session(session) for session in self.repository.list_sessions()]
@@ -262,6 +304,53 @@ class ChatService:
             session = self.repository.create_session(title=title[:60])
         return session
 
+    def _build_stream_exception_event(
+        self,
+        *,
+        exc: Exception,
+        session_id: int,
+        run_id: str,
+        trace_id: str,
+        session: ChatSession,
+    ) -> Dict[str, Any]:
+        public_message = public_message_for_stage("server_error")
+        error_type = type(exc).__name__
+        diagnostic_message = str(exc)
+        self.repository.append_message(session, "assistant", public_message)
+        log_trace(
+            layer="chat",
+            event="stream_exception",
+            payload={
+                "trace_id": trace_id,
+                "session_id": session_id,
+                "run_id": run_id,
+                "error_stage": "server_error",
+                "error_message": public_message,
+                "error_type": error_type,
+                "error_source": "chat_stream",
+                "diagnostic_message": diagnostic_message,
+            },
+        )
+        return {
+            "event": "error",
+            "data": {
+                "session_id": session_id,
+                "run_id": run_id,
+                "trace_id": trace_id,
+                "status": "failed",
+                "stage": "server_error",
+                "error_stage": "server_error",
+                "error_source": "chat_stream",
+                "error_message": public_message,
+                "message": public_message,
+                "answer": public_message,
+                "error_code": "server_error",
+                "retryable": True,
+                "error_type": error_type,
+                "output_type": "server_error",
+            },
+        }
+
     @staticmethod
     def _summarize_session(session: ChatSession) -> ChatSessionSummary:
         messages = sorted(session.messages, key=lambda message: (message.created_at, message.id))
@@ -270,7 +359,7 @@ class ChatService:
         updated_at = _as_utc(last_message.created_at) if last_message else None
         title = (session.title or "").strip() or _preview(first_user_message) or "새 채팅"
         return ChatSessionSummary(
-            id=cast(int, session.id),
+            id=_session_id_value(session),
             title=title,
             updated_at=updated_at,
             last_message_preview=_preview(last_message),
@@ -465,6 +554,9 @@ class ChatService:
                 event_error_stage = event.get("error_stage") or event.get("stage") or "unknown"
                 if isinstance(public_event, dict):
                     event_error_stage = public_event.get("error_stage") or public_event.get("stage") or event_error_stage
+                event_error_source = event.get("error_source")
+                if isinstance(public_event, dict):
+                    event_error_source = public_event.get("error_source") or event_error_source
                 event_error_message = event.get("error_message")
                 if isinstance(public_event, dict):
                     event_error_message = public_event.get("error_message") or public_event.get("message") or event_error_message
@@ -502,6 +594,7 @@ class ChatService:
                         "stage": event.get("stage"),
                         "status": event.get("status"),
                         "error_stage": event_error_stage,
+                        "error_source": event_error_source,
                         "error_message": event_error_message,
                         "error_code": event.get("error_code"),
                         "retryable": event.get("retryable"),
@@ -520,6 +613,7 @@ class ChatService:
                     "status": event.get("status") or "failed",
                     "stage": event.get("stage") or event_error_stage,
                     "error_stage": event_error_stage,
+                    "error_source": event_error_source or "unknown",
                     "error_message": event_error_message,
                     "error_code": (
                         public_event.get("error_code")

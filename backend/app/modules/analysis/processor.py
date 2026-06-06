@@ -95,6 +95,44 @@ def _preloaded_import_name(value: ast.AST) -> str | None:
     return _PRELOADED_IMPORT_ALIASES.get(module_arg.value)
 
 
+def _invalid_fillna_none_lines(tree: ast.Module) -> list[int]:
+    lines: list[int] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if not isinstance(node.func, ast.Attribute) or node.func.attr != "fillna":
+            continue
+        if _fillna_call_lacks_concrete_value(node):
+            lines.append(getattr(node, "lineno", 0))
+    return lines
+
+
+def _fillna_call_lacks_concrete_value(node: ast.Call) -> bool:
+    if node.args:
+        first_arg = node.args[0]
+        if isinstance(first_arg, ast.Constant) and first_arg.value is None:
+            return True
+        return False
+
+    value_keyword_found = False
+    method_keyword_found = False
+    for keyword in node.keywords:
+        if keyword.arg == "value":
+            value_keyword_found = True
+            if isinstance(keyword.value, ast.Constant) and keyword.value.value is None:
+                return True
+        if keyword.arg == "method":
+            method_keyword_found = True
+            if not (
+                isinstance(keyword.value, ast.Constant)
+                and isinstance(keyword.value.value, str)
+                and keyword.value.value
+            ):
+                return True
+
+    return not value_keyword_found and not method_keyword_found
+
+
 class _PreloadedImportAliasRewriter(ast.NodeTransformer):
     def __init__(
         self,
@@ -300,6 +338,15 @@ class AnalysisProcessor:
             raise ValueError(f"generated code is not valid python: {exc}") from exc
 
         code = _rewrite_preloaded_import_aliases(tree=tree, original_code=code)
+        tree = ast.parse(code)
+        invalid_fillna_lines = _invalid_fillna_none_lines(tree)
+        if invalid_fillna_lines:
+            line_text = ", ".join(str(line) for line in invalid_fillna_lines if line)
+            location = f" at line(s) {line_text}" if line_text else ""
+            raise ValueError(
+                "generated code calls pandas fillna without a concrete value"
+                f"{location}; use where(pd.notna(...), None) when preserving JSON nulls"
+            )
         validate_analysis_source_code(code, require_print=True)
 
         # 결과 JSON 출력을 위한 필수 키가 코드에 포함되어 있는지 확인한다.
@@ -344,6 +391,7 @@ class AnalysisProcessor:
                 execution_status="fail",
                 error_stage="sandbox_execution",
                 error_message=error_message,
+                diagnostic_message=result.diagnostic_message,
                 quality_status="invalid",
                 quality_reason=error_message,
             )
@@ -356,6 +404,7 @@ class AnalysisProcessor:
                 execution_status="fail",
                 error_stage="result_validation",
                 error_message=error,
+                diagnostic_message=error,
                 quality_status="invalid",
                 quality_reason=error,
             )
@@ -392,6 +441,7 @@ class AnalysisProcessor:
                 execution_status="fail",
                 error_stage="result_validation",
                 error_message="analysis returned no rows",
+                diagnostic_message="analysis returned no rows",
                 quality_status="invalid",
                 quality_reason="analysis returned no rows",
             )
@@ -728,7 +778,8 @@ class AnalysisProcessor:
         normalized_positive_value = metric.positive_value
         if (
             metric.aggregation == "sum"
-            and normalized_column in metadata.numeric_columns
+            and normalized_column
+            and self._is_numeric_like_column(normalized_column, metadata)
             and metric.positive_value == 1
         ):
             normalized_positive_value = None
@@ -829,12 +880,13 @@ class AnalysisProcessor:
                 set(),
             )
 
-        if time_context.range_type == "absolute" and not (
-            time_context.start or time_context.end
+        range_type = time_context.range_type
+        if range_type == "absolute" and not (time_context.start or time_context.end):
+            range_type = "none"
+        if range_type == "relative" and not (
+            time_context.relative_expr or time_context.relative_range_resolved
         ):
-            raise ValueError("absolute time range requires start or end")
-        if time_context.range_type == "relative" and not time_context.relative_expr:
-            raise ValueError("relative time range requires relative_expr")
+            range_type = "none"
 
         intraday = time_context.intraday_filter
         if intraday is not None:
@@ -843,11 +895,13 @@ class AnalysisProcessor:
                     raise ValueError("intraday filter hours must be between 0 and 23")
 
         if (
-            time_context.grain or time_context.range_type != "none" or intraday
+            time_context.grain or range_type != "none" or intraday
         ) and not normalized_time_column:
             raise ValueError("time-based analysis requires a time column")
 
-        return time_context.model_copy(update={"time_column": normalized_time_column})
+        return time_context.model_copy(
+            update={"time_column": normalized_time_column, "range_type": range_type}
+        )
 
     def _sanitize_synthetic_dimensions(
         self,
@@ -935,6 +989,16 @@ class AnalysisProcessor:
         if len(metadata.datetime_columns) == 1:
             return metadata.datetime_columns[0]
         return None
+
+    def _is_numeric_like_column(
+        self,
+        column: str,
+        metadata: MetadataSnapshot,
+    ) -> bool:
+        if column in metadata.numeric_columns:
+            return True
+        dtype = str(metadata.dtypes.get(column) or "").lower()
+        return any(token in dtype for token in ("int", "float", "double", "bool"))
 
     def _normalize_identifier(self, value: str) -> str:
         return _IDENTIFIER_RE.sub("", str(value or "").lower())

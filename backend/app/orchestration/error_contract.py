@@ -109,6 +109,7 @@ def to_public_error(workflow_error: Mapping[str, Any] | None) -> Dict[str, Any]:
         "stage": stage,
         "error_stage": stage,
         "error_code": str(workflow_error.get("error_code") or "unknown_error"),
+        "source": str(workflow_error.get("source") or "unknown"),
         "retryable": bool(workflow_error.get("retryable", False)),
         "message": safe_message,
         "error_message": safe_message,

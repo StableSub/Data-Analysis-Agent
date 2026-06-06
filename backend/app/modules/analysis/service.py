@@ -177,6 +177,12 @@ class AnalysisService:
                     )
                 # 실패 이후에는 이전 코드와 에러를 반영해 코드만 수정한다.
                 else:
+                    if analysis_error is None:
+                        analysis_error = self.processor.build_error(
+                            "code_generation",
+                            "analysis execution failed",
+                            detail={"attempt": attempt},
+                        )
                     generated_code = self.run_service.repair_analysis_code(
                         question=question,
                         analysis_plan=analysis_plan,
@@ -190,7 +196,7 @@ class AnalysisService:
                 )
                 sandbox_result = self.sandbox.execute(
                     code=validated_code,
-                    dataset_path=dataset.storage_path,
+                    dataset_path=str(dataset.storage_path),
                 )
                 execution_result = self.processor.validate_execution_result(
                     sandbox_result=sandbox_result,
@@ -218,18 +224,21 @@ class AnalysisService:
             except Exception as exc:
                 stage = "code_generation" if not generated_code else "code_validation"
                 safe_message = public_message_for_stage(stage)
+                diagnostic_message = f"{type(exc).__name__}: {exc}"
                 analysis_error = self.processor.build_error(
                     stage,
                     safe_message,
                     detail={
                         "attempt": attempt + 1,
                         "exception_type": type(exc).__name__,
+                        "diagnostic_message": diagnostic_message,
                     },
                 )
                 execution_result = AnalysisExecutionResult(
                     execution_status="fail",
                     error_stage=analysis_error.stage,
                     error_message=analysis_error.message,
+                    diagnostic_message=diagnostic_message,
                     quality_status="invalid",
                     quality_reason=analysis_error.message,
                 )
@@ -255,6 +264,8 @@ class AnalysisService:
             detail["quality_status"] = execution_result.quality_status
         if execution_result.quality_reason:
             detail["quality_reason"] = execution_result.quality_reason
+        if execution_result.diagnostic_message:
+            detail["diagnostic_message"] = execution_result.diagnostic_message
         if execution_result.warnings:
             detail["warnings"] = [
                 warning.model_dump() for warning in execution_result.warnings

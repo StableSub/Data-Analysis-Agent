@@ -556,6 +556,7 @@ class TestInvalidSourceId:
         error = next(e for e in events if e.get("event") == "error")
         assert error["data"]["status"] == "failed"
         assert error["data"]["error_stage"] == "dataset_resolution"
+        assert error["data"]["error_source"] == "chat_source_validation"
         assert error["data"]["error_message"] == "요청한 데이터셋을 찾을 수 없습니다."
 
     def test_invalid_source_id_does_not_emit_session_event_without_existing_session(self):
