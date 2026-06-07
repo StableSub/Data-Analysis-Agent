@@ -39,7 +39,7 @@ import {
   type EdaRecommendedOperation,
   fetchPendingApproval,
   getChatHistory,
-  isApiErrorStatus,
+  ApiError,
   listChatSessions,
   listDatasets,
   type ChatHistoryMessage,
@@ -124,6 +124,17 @@ const formatPendingOperation = (operation: Record<string, unknown>): string => {
   return details.length > 0 ? `${op} (${details.join(" · ")})` : op;
 };
 
+const compactPendingText = (value: string, maxLength = 180): string => {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return "";
+  }
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, maxLength).trimEnd()}...`;
+};
+
 const buildPendingApprovalChanges = (
   pendingApproval: PendingApprovalPayload | null,
 ): string[] => {
@@ -132,8 +143,11 @@ const buildPendingApprovalChanges = (
   }
 
   if (pendingApproval.stage === "report") {
+    const draftSummary = compactPendingText(pendingApproval.draft);
     return [
-      "분석 결과 초안을 검토한 뒤 승인 또는 수정 요청",
+      draftSummary
+        ? `초안 내용: ${draftSummary}`
+        : "분석 결과 초안을 불러오지 못했습니다.",
       typeof pendingApproval.review?.revision_count === "number"
         ? `현재 revision count: ${pendingApproval.review.revision_count}`
         : "분석 결과 수정 횟수 정보 없음",
@@ -145,7 +159,9 @@ const buildPendingApprovalChanges = (
     return [
       `chart_type: ${pendingApproval.plan.chart_type || "-"}`,
       `x: ${pendingApproval.plan.x_key || "-"} / y: ${pendingApproval.plan.y_key || "-"}`,
+      pendingApproval.plan.mode ? `mode: ${pendingApproval.plan.mode}` : "mode: -",
       pendingApproval.plan.reason || "시각화 계획 검토 필요",
+      `preview rows: ${(pendingApproval.plan.preview_rows ?? []).length}`,
     ];
   }
 
@@ -154,7 +170,42 @@ const buildPendingApprovalChanges = (
       ? pendingApproval.plan.operations.map((operation) => formatPendingOperation(operation))
       : ["제안된 전처리 operation 없음"];
 
-  return operationItems.slice(0, 4);
+  return [
+    ...(pendingApproval.plan.planner_comment
+      ? [`planner comment: ${pendingApproval.plan.planner_comment}`]
+      : []),
+    ...operationItems,
+    ...((pendingApproval.plan.affected_columns ?? []).length > 0
+      ? [`affected columns: ${(pendingApproval.plan.affected_columns ?? []).join(", ")}`]
+      : []),
+    ...(typeof pendingApproval.plan.row_count === "number"
+      ? [`profile sample rows: ${pendingApproval.plan.row_count.toLocaleString()}`]
+      : []),
+  ].slice(0, 6);
+};
+
+const buildPendingApprovalPreview = (
+  pendingApproval: PendingApprovalPayload | null,
+): string | undefined => {
+  if (!pendingApproval) {
+    return undefined;
+  }
+
+  if (pendingApproval.stage === "report") {
+    return compactPendingText(pendingApproval.draft, 600) || undefined;
+  }
+
+  if (pendingApproval.stage === "visualization") {
+    const previewRows = pendingApproval.plan.preview_rows ?? [];
+    if (previewRows.length === 0) {
+      return undefined;
+    }
+    return compactPendingText(JSON.stringify(previewRows.slice(0, 3), null, 2), 600);
+  }
+
+  return pendingApproval.plan.planner_comment
+    ? compactPendingText(pendingApproval.plan.planner_comment, 360)
+    : undefined;
 };
 
 const ANALYSIS_FAILURE_MESSAGE = "응답을 생성하지 못했습니다.";
@@ -395,6 +446,8 @@ export default function Workbench() {
   const preprocessApproveStartsAnalysis =
     pendingApproval?.stage === "preprocess" && state === "needs-user";
   const isDatasetSelectorLocked = preprocessApproveStartsAnalysis || isPreEdaApplying;
+  const pendingApprovalChanges = buildPendingApprovalChanges(pendingApproval);
+  const pendingApprovalPreview = buildPendingApprovalPreview(pendingApproval);
 
   // UI-only local state
   type CanvasView = "current" | "pre-eda" | "deep-eda" | "report";
@@ -688,7 +741,7 @@ export default function Workbench() {
               if (isStaleRestoreRequest()) {
                 return;
               }
-              if (isApiErrorStatus(error, 404)) {
+              if (error instanceof ApiError && error.status === 404) {
                 restoredPendingApproval = null;
                 stateHint = getRestoredFallbackStateHint({
                   ...nextContext,
@@ -721,7 +774,7 @@ export default function Workbench() {
           if (isStaleRestoreRequest()) {
             return;
           }
-          if (isApiErrorStatus(error, 404)) {
+          if (error instanceof ApiError && error.status === 404) {
             nextContext = normalizeRestoredSessionContext({
               ...nextContext,
               backendSessionId: null,
@@ -814,7 +867,7 @@ export default function Workbench() {
         try {
           await deleteChatSession(backendSessionId);
         } catch (error) {
-          if (!isApiErrorStatus(error, 404)) {
+          if (!(error instanceof ApiError && error.status === 404)) {
             toast.error("서버 세션 삭제에 실패했습니다.");
             return;
           }
@@ -1140,12 +1193,21 @@ export default function Workbench() {
   const latestAssistantMessage =
     [...chatHistory].reverse().find((message) => message.role === "assistant") ?? null;
   const latestAssistantContent = latestAssistantMessage?.content.trim() ?? "";
-  const hasCompletedAnalysis =
-    (latestAssistantContent.length > 0 && latestAssistantContent !== ANALYSIS_FAILURE_MESSAGE)
-    || (chatHistory.length === 0 && state === "success" && reportSections.length > 0);
+  const hasFailedResponse =
+    chatResponse?.status === "failed"
+    || chatResponse?.status === "cancelled"
+    || Boolean(chatResponse?.error_stage || chatResponse?.error_message || chatResponse?.public_error);
   const hasFailedAnalysis =
-    latestAssistantContent === ANALYSIS_FAILURE_MESSAGE
-    || (chatHistory.length === 0 && state === "error");
+    hasFailedResponse
+    || state === "error"
+    || latestAssistantContent === ANALYSIS_FAILURE_MESSAGE;
+  const hasCompletedAnalysis =
+    !hasFailedAnalysis
+    && (
+      (latestAssistantContent.length > 0 && latestAssistantContent !== ANALYSIS_FAILURE_MESSAGE)
+      || (chatHistory.length === 0 && state === "success" && reportSections.length > 0)
+    );
+  const hasAnalysisSnapshot = hasCompletedAnalysis || hasFailedAnalysis;
   const repairGuidance = buildRepairGuidance(selectedPreEdaProfile, chatResponse, state);
   const shouldKeepChatThreadVisible =
     chatHistory.some((message) => message.role === "assistant")
@@ -1193,7 +1255,7 @@ export default function Workbench() {
           key: "analysis" as const,
           label: "Analysis",
           completed: hasCompletedAnalysis,
-          onNavigate: hasCompletedAnalysis
+          onNavigate: hasAnalysisSnapshot
             ? () => {
               setCanvasView("deep-eda");
             }
@@ -1449,6 +1511,8 @@ export default function Workbench() {
               title={
                 step.completed
                   ? `${step.label} 결과 보기`
+                  : step.onNavigate
+                    ? `${step.label} 오류 보기`
                   : `${step.label}가 아직 완료되지 않았습니다.`
               }
             >
@@ -1756,7 +1820,7 @@ export default function Workbench() {
                 <ApprovalCard
                   title={pendingApproval.title}
                   description={pendingApproval.summary}
-                  changes={buildPendingApprovalChanges(pendingApproval)}
+                  changes={pendingApprovalChanges}
                   hideActions
                 />
               )}
@@ -1852,6 +1916,10 @@ export default function Workbench() {
       onApprove={pipeline.handleApprove}
       onCancel={pipeline.handleReject}
       onSubmitChange={pipeline.handleEditInstruction}
+      approvalTitle={pendingApproval?.title}
+      approvalDescription={pendingApproval?.summary}
+      approvalItems={pendingApprovalChanges}
+      approvalPreview={pendingApprovalPreview}
       approveLabel={pendingApproval?.stage === "report" ? "Approve Analysis" : undefined}
       cancelLabel={pendingApproval?.stage === "report" ? "Cancel Analysis" : undefined}
       changeLabel={pendingApproval?.stage === "report" ? "Request Analysis Revision..." : undefined}

@@ -27,6 +27,8 @@
   - dataset upload, selected source, server dataset bootstrap, chat run, SSE stream, approval resume, 결과 상태를 관리한다.
   - Pre-EDA insights와 chat stream 조회 시 현재 선택된 `guideline_source_id`를 전달해 backend의 selected guideline > active guideline > none 계약에 맞춘다. EDA 응답에 `dataset_overview`가 있으면 Workbench EDA 요약에 표시하고, `suggested_questions`가 있으면 Pre-EDA 보드의 시작 질문으로 정규화한다.
   - 최종 답변의 `evidence_package`/`answer_quality`는 `AssistantReportMessage`에서 evidence pill과 확장 설명으로 표시한다. clarification 또는 실패 응답은 같은 채팅 전송 경로를 쓰는 복구 질문 후보로 표시한다.
+  - `approval_required` 상태에서는 `pending_approval`을 본문 승인 카드와 하단 `GateBar`에 모두 전달한다. 하단 `GateBar`는 승인/취소 버튼만 표시하지 않고 승인 대상 제목, 요약, 주요 항목, 초안/preview를 함께 보여준다.
+  - Error 상태로 전환하거나 approval resume 요청을 수락하면 stale `pendingApproval`을 지운다. 실제 승인 대기 중인 `needs-user` 상태에서만 자유 입력 전송을 막아 실패 후 복구 질문과 하단 채팅 입력이 다시 동작한다.
   - backend workflow output shape가 바뀌면 이 파일을 먼저 확인한다.
 - `frontend/src/app/hooks/useWorkbenchSessionStore.ts`
   - workbench session을 localStorage에 저장하고 복원한다.
@@ -44,6 +46,7 @@
 ## UI 구성 위치
 
 - `frontend/src/app/components/genui/`: workbench 제품 UI와 panel 계열 컴포넌트
+- `frontend/src/app/components/genui/GateBar.tsx`: approval resume의 고정 하단 액션 표면이다. 승인/취소/수정 요청 버튼과 함께 현재 승인 대상의 세부 내용을 표시한다.
 - `frontend/src/app/components/ui/`: 여러 화면에서 재사용되는 UI primitive
 - `frontend/src/app/components/ui/chart.tsx`: chart primitive
 

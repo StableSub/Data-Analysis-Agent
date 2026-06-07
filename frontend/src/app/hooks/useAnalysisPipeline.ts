@@ -963,6 +963,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
     (step: string, message: string) => {
       setErrorStep(step);
       setErrorMessage(message);
+      setPendingApproval(null);
       setState("error");
       addMilestone({
         status: "failed",
@@ -2094,6 +2095,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
       const approvalTitle = pendingApproval.title;
       const approvalStage = pendingApproval.stage;
 
+      setPendingApproval(null);
       setErrorMessage(null);
       setErrorStep(null);
       setState("running");
@@ -2212,7 +2214,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
   const handleSend = useCallback(
     (message: string, modelId?: string | null, guidelineSourceId?: string | null) => {
       const question = message.trim();
-      if (!question || pendingApproval || applyingPreEdaSourceId !== null) return;
+      if (!question || (pendingApproval && state === "needs-user") || applyingPreEdaSourceId !== null) return;
       const requestModelId = typeof modelId === "string" ? (modelId.trim() || null) : null;
       const requestGuidelineSourceId =
         typeof guidelineSourceId === "string" ? (guidelineSourceId.trim() || null) : null;
@@ -2238,7 +2240,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
       setErrorStep(null);
       runQuestionStream(question, selectedSourceId, requestModelId, requestGuidelineSourceId);
     },
-    [applyingPreEdaSourceId, pendingApproval, nextLocalMessageId, selectedSourceId, runQuestionStream],
+    [applyingPreEdaSourceId, pendingApproval, nextLocalMessageId, selectedSourceId, runQuestionStream, state],
   );
 
   const handleApprove = useCallback(async (): Promise<"approved" | "failed" | "noop"> => {
