@@ -171,6 +171,23 @@
   - `evidence_package`
   - `answer_quality`
 
+### `workflow_error`
+
+- 의미
+  - workflow 내부 실패 원인과 public-safe 오류 응답을 함께 만들기 위한 진단 payload
+- 주 생성 위치
+  - analysis validation/persist failure
+  - preprocess/report/router 외부 예외 처리
+- 주 소비 위치
+  - `backend/app/orchestration/client.py`
+  - `backend/app/modules/chat/service.py`
+  - `output.public_error`
+- public projection 원칙
+  - `workflow_error.stage`는 내부 진단 stage일 수 있다.
+  - `code_validation`은 내부 전용 analysis stage다. public SSE와 Workbench에는 `analysis_repair_failed`로 노출한다.
+  - 원래 stage는 `workflow_error.details.internal_stage="code_validation"`처럼 `details`에 보존한다.
+  - Pydantic validation 원문, traceback, file path, internal schema명은 SSE의 `message`/`error_message`로 내보내지 않는다.
+
 ### `fast_path_result`
 
 - 의미

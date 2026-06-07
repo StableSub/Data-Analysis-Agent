@@ -12,7 +12,9 @@ from langgraph.types import Command
 from ..core.trace_logging import log_trace
 from .error_contract import (
     build_failure_output,
+    public_message_for_analysis_failure,
     public_message_for_stage,
+    public_stage_for_analysis_failure,
     sanitize_public_message,
     sanitize_public_payload,
     to_public_error,
@@ -127,12 +129,23 @@ class AgentClient:
                 workflow_error = final_state.get("workflow_error")
                 public_error = to_public_error(workflow_error if isinstance(workflow_error, dict) else None)
                 has_workflow_error = isinstance(workflow_error, dict)
-                error_stage = public_error["stage"] if has_workflow_error else summary.get("error_stage") or "unknown"
+                raw_error_stage = str(summary.get("error_stage") or "unknown")
+                legacy_public_stage = public_stage_for_analysis_failure(raw_error_stage)
+                is_internal_analysis_stage = legacy_public_stage != raw_error_stage
+                error_stage = public_error["stage"] if has_workflow_error else legacy_public_stage
                 error_source = public_error["source"] if has_workflow_error else summary.get("error_source") or "unknown"
-                fallback_message = public_error["message"] if has_workflow_error else public_message_for_stage(str(error_stage))
+                fallback_message = (
+                    public_error["message"]
+                    if has_workflow_error
+                    else public_message_for_analysis_failure(raw_error_stage)
+                    if is_internal_analysis_stage
+                    else public_message_for_stage(str(error_stage))
+                )
                 error_message = (
                     public_error["message"]
                     if has_workflow_error
+                    else fallback_message
+                    if is_internal_analysis_stage
                     else sanitize_public_message(
                         str(summary.get("error_message") or ""),
                         fallback_message=fallback_message,
@@ -141,6 +154,8 @@ class AgentClient:
                 answer = (
                     public_error["message"]
                     if has_workflow_error
+                    else fallback_message
+                    if is_internal_analysis_stage
                     else sanitize_public_message(
                         self._extract_answer(final_state),
                         fallback_message=fallback_message,
@@ -149,6 +164,18 @@ class AgentClient:
                 output_payload = (
                     build_failure_output(workflow_error)
                     if has_workflow_error
+                    else build_failure_output(
+                        {
+                            "stage": raw_error_stage,
+                            "error_code": legacy_public_stage,
+                            "source": error_source,
+                            "output_type": self._extract_output_type(final_state) or "analysis_failed",
+                            "retryable": self._resolve_retryable(final_state, summary),
+                            "safe_message": fallback_message,
+                            "details": {"internal_stage": raw_error_stage},
+                        }
+                    )
+                    if is_internal_analysis_stage
                     else final_state.get("output")
                 )
                 thought_steps = [
@@ -166,7 +193,13 @@ class AgentClient:
                     "error_stage": error_stage,
                     "error_source": error_source,
                     "error_message": error_message if isinstance(error_message, str) else answer,
-                    "error_code": public_error["error_code"] if has_workflow_error else self._resolve_error_code(final_state, summary),
+                    "error_code": (
+                        public_error["error_code"]
+                        if has_workflow_error
+                        else legacy_public_stage
+                        if is_internal_analysis_stage
+                        else self._resolve_error_code(final_state, summary)
+                    ),
                     "retryable": public_error["retryable"] if has_workflow_error else self._resolve_retryable(final_state, summary),
                     "answer": answer,
                     "thought_steps": thought_steps,

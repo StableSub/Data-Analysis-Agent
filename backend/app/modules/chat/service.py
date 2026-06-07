@@ -4,7 +4,12 @@ from typing import Any, AsyncIterator, Dict, Optional, cast
 
 from ...core.trace_logging import log_trace, trace_context
 from ...orchestration.client import AgentClient
-from ...orchestration.error_contract import public_message_for_stage, sanitize_public_payload
+from ...orchestration.error_contract import (
+    public_message_for_analysis_failure,
+    public_message_for_stage,
+    public_stage_for_analysis_failure,
+    sanitize_public_payload,
+)
 from ..datasets.repository import DatasetRepository
 from .models import ChatMessage, ChatSession
 from .repository import ChatRepository
@@ -391,19 +396,27 @@ class ChatService:
             error_stage = error_stage or "visualization"
             error_message = error_message or visualization_result.get("error") or visualization_result.get("summary")
 
-        if isinstance(analysis_result, dict):
-            error_stage = error_stage or analysis_result.get("error_stage")
-            error_message = error_message or analysis_result.get("error_message")
-
-        if not error_message and isinstance(output_payload, dict):
+        if isinstance(output_payload, dict):
             public_error = output_payload.get("public_error")
             if isinstance(public_error, dict):
                 error_stage = error_stage or public_error.get("stage") or public_error.get("error_stage")
-                error_message = public_error.get("message") or public_error.get("error_message")
+                error_message = error_message or public_error.get("message") or public_error.get("error_message")
             output_type = output_payload.get("type")
             output_content = output_payload.get("content")
             if isinstance(output_type, str) and output_type.endswith("_failed"):
                 error_message = error_message or output_content
+
+        if isinstance(analysis_result, dict):
+            raw_stage = analysis_result.get("error_stage")
+            if isinstance(raw_stage, str) and raw_stage:
+                public_stage = public_stage_for_analysis_failure(raw_stage)
+                error_stage = error_stage or public_stage
+                if public_stage != raw_stage:
+                    error_message = error_message or public_message_for_analysis_failure(raw_stage)
+                else:
+                    error_message = error_message or analysis_result.get("error_message")
+            else:
+                error_message = error_message or analysis_result.get("error_message")
 
         return {
             "error_stage": error_stage,

@@ -166,18 +166,18 @@ data: <json>
   "answer": "사용자에게 보여줄 오류 응답",
   "message": "사용자에게 보여줄 오류 응답",
   "status": "failed",
-  "stage": "analysis",
-  "error_stage": "analysis",
-  "error_message": "실패 원인 메시지",
-  "error_code": "analysis_execution_failed",
+  "stage": "analysis_repair_failed",
+  "error_stage": "analysis_repair_failed",
+  "error_message": "분석 코드를 자동으로 수정했지만 실행 가능한 형태로 만들지 못했습니다. 질문 범위나 기준 컬럼을 좁혀 다시 실행해 주세요.",
+  "error_code": "analysis_repair_failed",
   "retryable": true,
   "public_error": {
-    "stage": "analysis",
-    "error_stage": "analysis",
-    "error_code": "analysis_execution_failed",
+    "stage": "analysis_repair_failed",
+    "error_stage": "analysis_repair_failed",
+    "error_code": "analysis_repair_failed",
     "retryable": true,
-    "message": "사용자에게 보여줄 오류 응답",
-    "error_message": "사용자에게 보여줄 오류 응답",
+    "message": "분석 코드를 자동으로 수정했지만 실행 가능한 형태로 만들지 못했습니다. 질문 범위나 기준 컬럼을 좁혀 다시 실행해 주세요.",
+    "error_message": "분석 코드를 자동으로 수정했지만 실행 가능한 형태로 만들지 못했습니다. 질문 범위나 기준 컬럼을 좁혀 다시 실행해 주세요.",
     "output_type": "analysis_failed"
   },
   "output_type": "analysis_failed",
@@ -193,6 +193,7 @@ data: <json>
 - `status`, `stage`, `error_stage`, `error_message`, `error_code`, `retryable`, `output_type`은 optional metadata지만 workflow error에서는 기본값을 채워 보낸다.
 - `stage`는 기존 호환 alias이며, 새 클라이언트는 `error_stage`를 우선 사용할 수 있다.
 - workflow 내부 진단은 `workflow_error.diagnostic_message`와 `workflow_error.details`에만 남긴다. SSE에는 `public_error`와 안전한 `message`/`error_message`만 노출하며, Pydantic schema명, 누락 field명, stack trace, file path 같은 내부 진단 문자열은 포함하지 않는다.
+- analysis code validation은 내부 안전 gate다. 내부 `workflow_error.stage` 또는 `workflow_error.details.internal_stage`가 `code_validation`일 수 있지만, public SSE의 `stage`, `error_stage`, `error_code`, `message`, `public_error`는 `analysis_repair_failed`로 정규화한다.
 - `evidence_package`, `answer_quality`가 workflow final state 또는 `output`에 있으면 `error` payload에도 보존된다.
 - 존재하지 않는 `source_id`를 새 채팅에서 요청한 경우 `session_id` 없이 `error_code="invalid_source_id"`를 반환할 수 있다.
 - router 단계 예외처럼 workflow 밖에서 발생한 오류는 `message` 중심의 단순 `error` payload로 떨어질 수 있으므로, 프론트엔드는 `message`를 계속 기본 표시값으로 사용한다.

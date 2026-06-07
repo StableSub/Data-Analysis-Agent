@@ -13,7 +13,7 @@ from ..results.repository import ResultsRepository
 from ..visualization.service import VisualizationService
 from ...orchestration.error_contract import public_message_for_stage
 from .processor import AnalysisProcessor
-from .run_service import AnalysisRunService
+from .run_service import AnalysisRunService, build_deterministic_analysis_code
 from .sandbox import AnalysisSandbox
 from .schemas import (
     AnalysisError,
@@ -211,6 +211,7 @@ class AnalysisService:
                         "analysis_error": None,
                         "final_status": "success",
                         "retry_count": attempt,
+                        "deterministic_fallback_used": False,
                     }
 
                 analysis_error = self.processor.build_error(
@@ -223,16 +224,27 @@ class AnalysisService:
                 )
             except Exception as exc:
                 stage = "code_generation" if not generated_code else "code_validation"
+                if stage == "code_validation":
+                    fallback_bundle = self._try_deterministic_fallback(
+                        dataset=dataset,
+                        analysis_plan=analysis_plan,
+                        attempt=attempt,
+                    )
+                    if fallback_bundle is not None:
+                        return fallback_bundle
                 safe_message = public_message_for_stage(stage)
                 diagnostic_message = f"{type(exc).__name__}: {exc}"
+                detail: dict[str, Any] = {
+                    "attempt": attempt + 1,
+                    "exception_type": type(exc).__name__,
+                    "diagnostic_message": diagnostic_message,
+                }
+                if stage == "code_validation":
+                    detail["internal_stage"] = stage
                 analysis_error = self.processor.build_error(
                     stage,
                     safe_message,
-                    detail={
-                        "attempt": attempt + 1,
-                        "exception_type": type(exc).__name__,
-                        "diagnostic_message": diagnostic_message,
-                    },
+                    detail=detail,
                 )
                 execution_result = AnalysisExecutionResult(
                     execution_status="fail",
@@ -251,6 +263,64 @@ class AnalysisService:
             "analysis_error": analysis_error,
             "final_status": "fail",
             "retry_count": self.max_retries,
+            "deterministic_fallback_used": False,
+        }
+
+    def _try_deterministic_fallback(
+        self,
+        *,
+        dataset: Dataset,
+        analysis_plan: AnalysisPlan,
+        attempt: int,
+    ) -> dict[str, Any] | None:
+        fallback_code = build_deterministic_analysis_code(analysis_plan)
+        if not fallback_code:
+            return None
+        try:
+            validated_code = self.processor.validate_generated_code(
+                generated_code=fallback_code,
+                analysis_plan=analysis_plan,
+            )
+            sandbox_result = self.sandbox.execute(
+                code=validated_code,
+                dataset_path=str(dataset.storage_path),
+            )
+            execution_result = self.processor.validate_execution_result(
+                sandbox_result=sandbox_result,
+                analysis_plan=analysis_plan,
+            )
+        except Exception:
+            return None
+
+        if execution_result.execution_status == "success":
+            return {
+                "generated_code": fallback_code,
+                "validated_code": validated_code,
+                "sandbox_result": sandbox_result,
+                "analysis_result": execution_result,
+                "analysis_error": None,
+                "final_status": "success",
+                "retry_count": attempt,
+                "deterministic_fallback_used": True,
+            }
+
+        analysis_error = self.processor.build_error(
+            execution_result.error_stage or "result_validation",
+            execution_result.error_message or "analysis execution failed",
+            detail=self._build_analysis_error_detail(
+                attempt=attempt + 1,
+                execution_result=execution_result,
+            ),
+        )
+        return {
+            "generated_code": fallback_code,
+            "validated_code": validated_code,
+            "sandbox_result": sandbox_result,
+            "analysis_result": execution_result,
+            "analysis_error": analysis_error,
+            "final_status": "fail",
+            "retry_count": attempt,
+            "deterministic_fallback_used": True,
         }
 
     @staticmethod

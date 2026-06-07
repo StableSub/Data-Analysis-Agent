@@ -58,8 +58,9 @@
 - `final_status`가 `needs_clarification`, `fail`, `success` 중 무엇인지에 따라 main workflow terminal route가 달라진다.
 - code generation loop의 retry 판단은 module 내부 책임이고, main workflow는 최종 state만 보고 다음 subgraph를 선택한다.
 - planner-validator contract는 LLM draft를 그대로 믿지 않고 `AnalysisProcessor`에서 실행 가능한 shape로 좁히는 것이다. 예를 들어 `datetime_part`의 `params.part`가 `date`로 오면 day-level bucket 의미로 `date` -> `day` 정규화가 필요하고, `PassOrFail` 기반 불량률/불량 건수 plan에서는 같은 `PassOrFail` 컬럼의 `not_null` 필터가 분모를 줄이는 defect-only filter로 오인되면 안 된다. 반대로 `PassOrFail=1인 불량 데이터`처럼 명시적으로 불량 행만 남기는 filter는 전체 대비 불량률 분모를 줄이므로 positive-value rate plan에서 차단되어야 한다.
-- JSON-only codegen은 실패가 아니라 recoverable code-generation boundary다. LLM이 Python 코드 대신 지원 가능한 time-bucket aggregation JSON payload만 반환하면 `AnalysisRunService`가 deterministic pandas 코드로 변환하고, 그 결과도 기존 `validate_generated_code`/sandbox/`validate_execution_result` 경로를 그대로 통과해야 한다.
+- JSON-only codegen은 실패가 아니라 recoverable code-generation boundary다. LLM이 Python 코드 대신 지원 가능한 time-bucket aggregation JSON payload만 반환하면 `AnalysisRunService`가 deterministic pandas 코드로 변환하고, 그 결과도 기존 `validate_generated_code`/sandbox/`validate_execution_result` 경로를 그대로 통과해야 한다. 같은 deterministic fallback surface는 단일 `group_by` + 단일 metric(`count`, `sum`, `avg`/`mean`, `rate`)과 scatter 원시 point 구성에도 제한적으로 쓰이며, 지원하지 않는 plan은 성공으로 위장하지 않는다.
 - 생성 코드와 결과 검증은 보호/식별 컬럼을 누락하지 않아야 한다. group-by, time bucket, positive-value metric을 만들 때도 결과 table에는 사용자가 비교 기준으로 삼은 dimension/time axis가 남아 있어야 하며, metric-only payload로 축약해 frontend와 answer 근거를 잃으면 안 된다.
+- `code_validation`은 내부 안전/진단 단계명이다. public SSE, persisted assistant result, Workbench guidance에는 `code_validation`이나 과거 code-validation 공개 메시지를 노출하지 않고 `analysis_repair_failed`로 정규화한다. 원래 원인은 `workflow_error.details.internal_stage="code_validation"` 또는 `analysis_error.detail.internal_stage`에 남긴다.
 
 ## Hotspot: `backend/app/modules/analysis/processor.py`
 

@@ -33,7 +33,8 @@
 ### Analysis workflow
 
 - route/status: `planning`, `needs_clarification`, `executing`, `success`, `fail`, `analysis_failed`.
-- payload contract: `user_input`, `source_id`, `model_id`, `analysis_plan`, `session_id`, `dataset_meta`, `question_understanding`, `column_grounding`, `analysis_plan_draft`, `generated_code`, `validated_code`, `sandbox_result`, `analysis_result`, `analysis_error`, `retry_count`, `final_status`, `clarification_question`, `analysis_result_id`, `output`.
+- payload contract: `user_input`, `source_id`, `model_id`, `analysis_plan`, `session_id`, `dataset_meta`, `question_understanding`, `column_grounding`, `analysis_plan_draft`, `generated_code`, `validated_code`, `sandbox_result`, `analysis_result`, `analysis_error`, `workflow_error`, `retry_count`, `final_status`, `clarification_question`, `analysis_result_id`, `output`.
+- public error projection: generated-code validation failures may keep internal `stage="code_validation"` in diagnostic state, but `AgentClient`/`ChatService` expose them as `analysis_repair_failed` with `output.type="analysis_failed"`.
 
 ### Guideline workflow
 
@@ -85,6 +86,7 @@
 - `final_status="needs_clarification"`은 main graph의 `clarification_terminal`로 이어진다.
 - `final_status="fail"`은 main graph에서 `END`로 종료된다.
 - `analysis_result_id`는 `analysis_persist_result_node()`가 성공 시 반환하는 동적 state update이며, `state.py`의 `AnalysisGraphState` TypedDict에 정적으로 선언된 key는 아니다.
+- `analysis_validation`은 실패 시 `build_failure_output()`을 통해 public-safe `output.public_error`를 만든다. 내부 stage가 `code_validation`이면 public `stage`/`error_stage`/`error_code`는 `analysis_repair_failed`가 되고, 원래 stage는 `workflow_error.details.internal_stage`에 남는다.
 
 ## Guideline workflow: `backend/app/orchestration/workflows/guideline.py`
 

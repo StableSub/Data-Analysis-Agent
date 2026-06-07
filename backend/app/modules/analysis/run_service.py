@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Sequence
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -232,7 +233,7 @@ class AnalysisRunService:
     ) -> str:
         if not _is_json_payload_only(code):
             return code
-        fallback = _build_time_bucket_aggregation_code(plan)
+        fallback = build_deterministic_analysis_code(plan)
         return fallback or code
 
     def _to_json(self, payload: dict[str, Any]) -> str:
@@ -284,6 +285,16 @@ def _is_json_payload_only(code: str) -> bool:
     except json.JSONDecodeError:
         return False
     return isinstance(payload, dict)
+
+
+def build_deterministic_analysis_code(plan: AnalysisPlan) -> str | None:
+    time_bucket_code = _build_time_bucket_aggregation_code(plan)
+    if time_bucket_code is not None:
+        return time_bucket_code
+    group_by_code = _build_simple_group_by_metric_code(plan)
+    if group_by_code is not None:
+        return group_by_code
+    return _build_scatter_points_code(plan)
 
 
 def _build_time_bucket_aggregation_code(plan: AnalysisPlan) -> str | None:
@@ -346,6 +357,142 @@ def _build_time_bucket_aggregation_code(plan: AnalysisPlan) -> str | None:
         "}, ensure_ascii=False))",
     ]
     return "\n".join(lines)
+
+
+def _build_simple_group_by_metric_code(plan: AnalysisPlan) -> str | None:
+    if len(plan.group_by) != 1 or len(plan.metrics) != 1:
+        return None
+    group_column = plan.group_by[0]
+    metric = plan.metrics[0]
+    if group_column not in plan.metadata_snapshot.columns:
+        return None
+    if metric.column and metric.column not in plan.metadata_snapshot.columns:
+        return None
+    if metric.aggregation not in {"count", "sum", "avg", "mean", "rate"}:
+        return None
+    if metric.aggregation in {"sum", "avg", "mean", "rate"} and not metric.column:
+        return None
+    if metric.aggregation == "rate" and metric.positive_value is None:
+        return None
+
+    filter_lines = _build_filter_lines(plan)
+    if filter_lines is None:
+        return None
+    used_columns = _used_source_columns(plan, [group_column, metric.column])
+    alias = metric.alias
+    lines = [
+        "work = df.copy()",
+        *filter_lines,
+        "rows = []",
+        f"for group_value, group in work.groupby({group_column!r}, dropna=False, sort=True):",
+        (
+            "    group_key = None if pd.isna(group_value) "
+            "else str(group_value)"
+        ),
+        f"    row = {{{group_column!r}: group_key}}",
+    ]
+    if metric.aggregation == "count":
+        if metric.column:
+            lines.append(
+                f"    metric_value = int(group[{metric.column!r}].count())"
+            )
+        else:
+            lines.append("    metric_value = int(len(group))")
+    elif metric.aggregation == "sum":
+        lines.extend(
+            [
+                f"    metric_raw = group[{metric.column!r}].sum()",
+                "    metric_value = (",
+                "        int(metric_raw)",
+                "        if pd.notna(metric_raw) and float(metric_raw).is_integer()",
+                "        else float(metric_raw)",
+                "    )",
+            ]
+        )
+    elif metric.aggregation in {"avg", "mean"}:
+        lines.extend(
+            [
+                f"    metric_raw = group[{metric.column!r}].mean()",
+                "    metric_value = float(metric_raw) if pd.notna(metric_raw) else None",
+            ]
+        )
+    elif metric.aggregation == "rate":
+        lines.extend(
+            [
+                (
+                    f"    numerator = "
+                    f"(group[{metric.column!r}] == {metric.positive_value!r}).sum()"
+                ),
+                "    metric_value = float(numerator / len(group)) if len(group) else 0.0",
+            ]
+        )
+    else:
+        return None
+
+    lines.extend(
+        [
+            f"    row[{alias!r}] = metric_value",
+            "    rows.append(row)",
+            "total_count = int(len(work))",
+            "summary = f\"총 {total_count}건을 기준으로 그룹별 지표를 계산했습니다.\"",
+            "raw_metrics = {",
+            "    'total_count': total_count,",
+            f"    'group_count': int(len(rows)),",
+            "}",
+            "print(json.dumps({",
+            "    'summary': summary,",
+            "    'table': rows,",
+            "    'raw_metrics': raw_metrics,",
+            f"    'used_columns': {used_columns!r},",
+            "}, ensure_ascii=False))",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _build_scatter_points_code(plan: AnalysisPlan) -> str | None:
+    hint = plan.visualization_hint
+    if hint.preferred_chart != "scatter" or not hint.x or not hint.y:
+        return None
+    columns = [hint.x, hint.y]
+    if hint.series:
+        columns.append(hint.series)
+    if any(column not in plan.metadata_snapshot.columns for column in columns):
+        return None
+    if plan.group_by or plan.metrics:
+        return None
+    filter_lines = _build_filter_lines(plan)
+    if filter_lines is None:
+        return None
+    used_columns = _used_source_columns(plan, columns)
+    lines = [
+        "work = df.copy()",
+        *filter_lines,
+        f"point_columns = {columns!r}",
+        "points = work[point_columns].where(pd.notna(work[point_columns]), None)",
+        "rows = points.to_dict(orient='records')",
+        "summary = f\"총 {len(rows)}개 관측치로 산점도 데이터를 구성했습니다.\"",
+        "raw_metrics = {'row_count': int(len(rows))}",
+        "print(json.dumps({",
+        "    'summary': summary,",
+        "    'table': rows,",
+        "    'raw_metrics': raw_metrics,",
+        f"    'used_columns': {used_columns!r},",
+        "}, ensure_ascii=False))",
+    ]
+    return "\n".join(lines)
+
+
+def _used_source_columns(
+    plan: AnalysisPlan,
+    candidates: Sequence[str | None],
+) -> list[str]:
+    available = set(plan.metadata_snapshot.columns)
+    columns: list[str] = []
+    for column in [*plan.required_columns, *candidates]:
+        if column and column in available and column not in columns:
+            columns.append(column)
+    return columns
 
 
 def _time_axis_alias(grain: str | None) -> str | None:

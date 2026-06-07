@@ -5,6 +5,12 @@ from collections.abc import Mapping, Sequence
 from typing import Any, Dict
 
 DEFAULT_PUBLIC_ERROR_MESSAGE = "요청을 처리하는 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요."
+ANALYSIS_REPAIR_FAILED_STAGE = "analysis_repair_failed"
+ANALYSIS_REPAIR_FAILED_MESSAGE = (
+    "분석 코드를 자동으로 수정했지만 실행 가능한 형태로 만들지 못했습니다. "
+    "질문 범위나 기준 컬럼을 좁혀 다시 실행해 주세요."
+)
+_INTERNAL_ANALYSIS_STAGES = {"code_validation"}
 
 _STAGE_PUBLIC_MESSAGES: dict[str, str] = {
     "question_understanding": "질문을 이해하는 중 오류가 발생했습니다. 질문을 조금 더 구체적으로 다시 입력해 주세요.",
@@ -13,7 +19,8 @@ _STAGE_PUBLIC_MESSAGES: dict[str, str] = {
     "preprocess_execute": "전처리 실행 중 일부 계획이 현재 데이터 컬럼과 맞지 않습니다. 전처리 계획의 중복 컬럼이나 이미 제거된 컬럼을 확인해 주세요.",
     "analysis": "분석 단계에서 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.",
     "code_generation": "분석 코드를 생성하는 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.",
-    "code_validation": "분석 코드를 검증하는 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.",
+    "code_validation": ANALYSIS_REPAIR_FAILED_MESSAGE,
+    ANALYSIS_REPAIR_FAILED_STAGE: ANALYSIS_REPAIR_FAILED_MESSAGE,
     "sandbox_execution": "분석 코드를 실행하는 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.",
     "result_validation": "분석 결과를 검증하는 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.",
     "persist_result": "분석 결과를 저장하는 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.",
@@ -59,6 +66,9 @@ def build_workflow_error(
 ) -> Dict[str, Any]:
     stage_text = str(stage or "unknown")
     message = _safe_message_for_stage(stage_text, safe_message=safe_message)
+    diagnostic_details = dict(details or {})
+    if is_internal_analysis_stage(stage_text):
+        diagnostic_details.setdefault("internal_stage", stage_text)
     return {
         "stage": stage_text,
         "error_code": str(error_code or "unknown_error"),
@@ -67,7 +77,7 @@ def build_workflow_error(
         "retryable": bool(retryable),
         "safe_message": message,
         "diagnostic_message": str(diagnostic_message or "")[:4000],
-        "details": dict(details or {}),
+        "details": diagnostic_details,
     }
 
 
@@ -102,14 +112,20 @@ def to_public_error(workflow_error: Mapping[str, Any] | None) -> Dict[str, Any]:
     if not isinstance(workflow_error, Mapping):
         workflow_error = {}
     stage = str(workflow_error.get("stage") or "unknown")
-    safe_message = _safe_message_for_stage(
-        stage,
-        safe_message=workflow_error.get("safe_message") if isinstance(workflow_error.get("safe_message"), str) else None,
-    )
+    public_stage = public_stage_for_analysis_failure(stage)
+    public_error_code = str(workflow_error.get("error_code") or "unknown_error")
+    if public_stage != stage:
+        public_error_code = public_stage
+        safe_message = public_message_for_analysis_failure(stage)
+    else:
+        safe_message = _safe_message_for_stage(
+            stage,
+            safe_message=workflow_error.get("safe_message") if isinstance(workflow_error.get("safe_message"), str) else None,
+        )
     return {
-        "stage": stage,
-        "error_stage": stage,
-        "error_code": str(workflow_error.get("error_code") or "unknown_error"),
+        "stage": public_stage,
+        "error_stage": public_stage,
+        "error_code": public_error_code,
         "source": str(workflow_error.get("source") or "unknown"),
         "retryable": bool(workflow_error.get("retryable", False)),
         "message": safe_message,
@@ -168,6 +184,22 @@ def sanitize_public_message(
 
 def public_message_for_stage(stage: str, *, fallback: str | None = None) -> str:
     return _safe_message_for_stage(stage, safe_message=fallback)
+
+
+def is_internal_analysis_stage(stage: str) -> bool:
+    return str(stage or "") in _INTERNAL_ANALYSIS_STAGES
+
+
+def public_stage_for_analysis_failure(stage: str) -> str:
+    if is_internal_analysis_stage(stage):
+        return ANALYSIS_REPAIR_FAILED_STAGE
+    return str(stage or "unknown")
+
+
+def public_message_for_analysis_failure(stage: str) -> str:
+    if is_internal_analysis_stage(stage):
+        return ANALYSIS_REPAIR_FAILED_MESSAGE
+    return public_message_for_stage(stage)
 
 
 def _safe_message_for_stage(stage: str, *, safe_message: str | None = None) -> str:
