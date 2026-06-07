@@ -42,6 +42,7 @@ backend/tests/*
 !backend/tests/test_chat_session_list_contract.py
 !backend/tests/test_dataset_list_contract.py
 !backend/tests/test_dataset_context_service.py
+!backend/tests/test_user_query_validation_contract.py
 !backend/tests/test_eda_ai_summary_ux_contract.py
 !backend/tests/test_eda_service_contract.py
 !backend/tests/test_chat_fast_path_executor.py

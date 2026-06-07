@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Sequence
-from typing import Any, Mapping
+from typing import Any, Mapping, Protocol
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel
@@ -24,7 +24,10 @@ from ..analysis.schemas import (
 )
 from ..profiling.schemas import DatasetContext
 from ..profiling.prompt_context import trim_fast_path_bulk_context_fields
-from ..profiling.service import DatasetContextService
+from .query_validation import (
+    find_explicit_column_issue,
+    should_preflight_explicit_column_issue,
+)
 from .schemas import PlannerDecision, PlanningResult, PlanningRoute
 
 _EXACT_COLUMN_RE = re.compile(r"[`'\"]([^`'\"]+)[`'\"]")
@@ -47,6 +50,16 @@ _PRODUCT_COUNT_INTENT_TERMS = (
     "count",
     "건수",
 )
+
+
+class DatasetContextProvider(Protocol):
+    def build_context(
+        self,
+        source_id: str,
+        *,
+        include_ai_aliases: bool | None = None,
+    ) -> DatasetContext: ...
+
 
 PROMPTS = PromptRegistry(
     {
@@ -117,7 +130,7 @@ class PlannerService:
     def __init__(
         self,
         *,
-        dataset_context_service: DatasetContextService,
+        dataset_context_service: DatasetContextProvider,
         analysis_processor: AnalysisProcessor,
         default_model: str = "gpt-5-nano",
     ) -> None:
@@ -146,6 +159,28 @@ class PlannerService:
         )
         if not context.available:
             raise FileNotFoundError(f"dataset context unavailable: {normalized_source_id}")
+
+        if should_preflight_explicit_column_issue(user_input):
+            explicit_column_issue = find_explicit_column_issue(
+                user_input,
+                context.columns,
+            )
+            if explicit_column_issue is not None:
+                return PlanningResult(
+                    route="analysis",
+                    needs_clarification=True,
+                    clarification_question=explicit_column_issue.clarification_message(),
+                    ask_analysis=True,
+                    preprocess_required=False,
+                    need_visualization=_contains_any(
+                        user_input,
+                        _VISUALIZATION_INTENT_TERMS,
+                    ),
+                    need_report=_contains_any(user_input, _REPORT_INTENT_TERMS),
+                    guideline_context_used=bool(
+                        (guideline_context or {}).get("has_evidence", False)
+                    ),
+                )
 
         deterministic_result = self._try_plan_explicit_outlier(
             user_input=user_input,
@@ -207,6 +242,19 @@ class PlannerService:
                 preprocess_required=True,
                 need_visualization=False,
                 need_report=False,
+                guideline_context_used=decision.guideline_context_used,
+            )
+
+        explicit_column_issue = find_explicit_column_issue(user_input, context.columns)
+        if explicit_column_issue is not None:
+            return PlanningResult(
+                route="analysis",
+                needs_clarification=True,
+                clarification_question=explicit_column_issue.clarification_message(),
+                ask_analysis=decision.ask_analysis,
+                preprocess_required=decision.preprocess_required,
+                need_visualization=decision.need_visualization,
+                need_report=decision.need_report,
                 guideline_context_used=decision.guideline_context_used,
             )
 
