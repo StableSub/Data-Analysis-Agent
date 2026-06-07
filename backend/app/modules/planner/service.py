@@ -31,6 +31,21 @@ _OUTLIER_INTENT_TERMS = ("이상치", "outlier", "anomaly", "abnormal")
 _ROOT_CAUSE_INTENT_TERMS = ("원인", "cause", "reason")
 _VISUALIZATION_INTENT_TERMS = ("시각화", "그래프", "차트", "visualize", "chart", "graph")
 _REPORT_INTENT_TERMS = ("리포트", "보고서", "report")
+_QUALITY_SUMMARY_INTENT_TERMS = (
+    "전체 품질 현황",
+    "품질 현황",
+    "품질",
+    "양품",
+    "불량 비율",
+    "불량 사유",
+    "quality",
+)
+_PRODUCT_COUNT_INTENT_TERMS = (
+    "생산량",
+    "production",
+    "count",
+    "건수",
+)
 
 PROMPTS = PromptRegistry(
     {
@@ -132,6 +147,22 @@ class PlannerService:
             raise FileNotFoundError(f"dataset context unavailable: {normalized_source_id}")
 
         deterministic_result = self._try_plan_explicit_outlier(
+            user_input=user_input,
+            dataset_context=context,
+            guideline_context=guideline_context,
+        )
+        if deterministic_result is not None:
+            return deterministic_result
+
+        deterministic_result = self._try_plan_quality_report(
+            user_input=user_input,
+            dataset_context=context,
+            guideline_context=guideline_context,
+        )
+        if deterministic_result is not None:
+            return deterministic_result
+
+        deterministic_result = self._try_plan_product_count(
             user_input=user_input,
             dataset_context=context,
             guideline_context=guideline_context,
@@ -321,6 +352,134 @@ class PlannerService:
             ],
         )
 
+    def _try_plan_quality_report(
+        self,
+        *,
+        user_input: str,
+        dataset_context: DatasetContext,
+        guideline_context: Mapping[str, Any] | None,
+    ) -> PlanningResult | None:
+        if not _is_quality_summary_request(user_input):
+            return None
+        columns = dataset_context.columns
+        pass_column = "PassOrFail" if "PassOrFail" in columns else None
+        product_columns = [
+            *_columns_for_logical_axis(columns, "PART_NO"),
+            *_columns_for_logical_axis(columns, "PART_NAME"),
+        ]
+        reason_columns = _columns_for_logical_axis(columns, "Reason")
+        required_columns = _unique_columns([pass_column, *product_columns, *reason_columns])
+        if not required_columns:
+            return None
+
+        metadata = self._build_metadata_snapshot(dataset_context)
+        analysis_plan = AnalysisPlan(
+            analysis_type="quality_status_summary",
+            objective=(
+                "전체 품질 현황, 양품/불량 비율, 불량 사유, 제품별 생산량을 "
+                "결정적 집계로 요약합니다."
+            ),
+            required_columns=required_columns,
+            used_columns=required_columns,
+            filters=[],
+            group_by=[],
+            metrics=[
+                MetricSpec(
+                    name="total_count",
+                    aggregation="count",
+                    column=None,
+                    alias="total_count",
+                )
+            ],
+            derived_columns=[],
+            sort_by=[],
+            time_context=None,
+            expected_output=ExpectedOutputSpec(
+                require_summary=True,
+                require_table=True,
+                require_raw_metrics=True,
+                expected_table_columns=["section", "label", "count", "rate"],
+                allow_empty_table=False,
+                minimum_rows=1,
+            ),
+            visualization_hint=VisualizationHint(preferred_chart="none"),
+            empty_result_policy="success_with_empty_summary",
+            metadata_snapshot=metadata,
+            codegen_strategy="llm_codegen",
+        )
+        return PlanningResult(
+            route="analysis",
+            ask_analysis=True,
+            preprocess_required=False,
+            analysis_plan=analysis_plan,
+            need_visualization=_contains_any(user_input, _VISUALIZATION_INTENT_TERMS),
+            need_report=_contains_any(user_input, _REPORT_INTENT_TERMS),
+            guideline_context_used=bool((guideline_context or {}).get("has_evidence", False)),
+        )
+
+    def _try_plan_product_count(
+        self,
+        *,
+        user_input: str,
+        dataset_context: DatasetContext,
+        guideline_context: Mapping[str, Any] | None,
+    ) -> PlanningResult | None:
+        if not _contains_any(user_input, _PRODUCT_COUNT_INTENT_TERMS):
+            return None
+        target_axis = _select_product_axis(user_input, dataset_context.columns)
+        if target_axis is None:
+            return None
+        required_columns = _columns_for_logical_axis(dataset_context.columns, target_axis)
+        if not required_columns:
+            return None
+
+        metadata = self._build_metadata_snapshot(dataset_context)
+        analysis_plan = AnalysisPlan(
+            analysis_type="product_production_count",
+            objective=f"{target_axis}별 생산량을 결정적 집계로 계산합니다.",
+            required_columns=required_columns,
+            used_columns=required_columns,
+            filters=[],
+            group_by=[target_axis],
+            metrics=[
+                MetricSpec(
+                    name="production_count",
+                    aggregation="count",
+                    column=None,
+                    alias="production_count",
+                )
+            ],
+            derived_columns=[],
+            sort_by=[],
+            time_context=None,
+            expected_output=ExpectedOutputSpec(
+                require_summary=True,
+                require_table=True,
+                require_raw_metrics=True,
+                expected_table_columns=[target_axis, "production_count"],
+                allow_empty_table=False,
+                minimum_rows=1,
+                require_group_axis=True,
+            ),
+            visualization_hint=VisualizationHint(
+                preferred_chart="bar",
+                x=target_axis,
+                y="production_count",
+            ),
+            empty_result_policy="success_with_empty_summary",
+            metadata_snapshot=metadata,
+            codegen_strategy="llm_codegen",
+        )
+        return PlanningResult(
+            route="analysis",
+            ask_analysis=True,
+            preprocess_required=False,
+            analysis_plan=analysis_plan,
+            need_visualization=_contains_any(user_input, _VISUALIZATION_INTENT_TERMS),
+            need_report=_contains_any(user_input, _REPORT_INTENT_TERMS),
+            guideline_context_used=bool((guideline_context or {}).get("has_evidence", False)),
+        )
+
     def _ensure_dataset_context(
         self,
         *,
@@ -492,6 +651,43 @@ class PlannerService:
 def _contains_any(text: str, terms: tuple[str, ...]) -> bool:
     normalized = str(text or "").lower()
     return any(term.lower() in normalized for term in terms)
+
+
+def _is_quality_summary_request(user_input: str) -> bool:
+    text = str(user_input or "").lower()
+    if "전체 품질 현황" in text or "품질 현황" in text:
+        return True
+    if _contains_any(user_input, _REPORT_INTENT_TERMS) and _contains_any(
+        user_input,
+        _QUALITY_SUMMARY_INTENT_TERMS,
+    ):
+        return True
+    return "양품" in text and (
+        "불량 비율" in text
+        or "불량 사유" in text
+        or "제품별 생산량" in text
+    )
+
+
+def _select_product_axis(user_input: str, columns: list[str]) -> str | None:
+    text = str(user_input or "").lower()
+    if "part_name" in text or "제품명" in text:
+        for axis in ("PART_NAME", "PART_NO"):
+            if _columns_for_logical_axis(columns, axis):
+                return axis
+        return None
+    if "part_no" in text or "제품" in text or "생산량" in text:
+        for axis in ("PART_NO", "PART_NAME"):
+            if _columns_for_logical_axis(columns, axis):
+                return axis
+    return None
+
+
+def _columns_for_logical_axis(columns: list[str], logical_axis: str) -> list[str]:
+    if logical_axis in columns:
+        return [logical_axis]
+    prefix = f"{logical_axis}_"
+    return [column for column in columns if column.startswith(prefix)]
 
 
 def _find_explicit_column(user_input: str, columns: list[str]) -> str | None:

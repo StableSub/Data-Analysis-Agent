@@ -24,12 +24,14 @@ class LLMGateway:
         temperature: float,
     ):
         model_name = model_id or self.default_model
-        return init_chat_model(
-            model_name,
-            temperature=temperature,
-            timeout=_llm_timeout_seconds(),
-            max_retries=_llm_max_retries(),
-        )
+        kwargs: dict[str, Any] = {
+            "temperature": temperature,
+            "max_retries": _llm_max_retries(),
+        }
+        timeout = _llm_timeout_seconds()
+        if timeout is not None:
+            kwargs["timeout"] = timeout
+        return init_chat_model(model_name, **kwargs)
 
     def invoke(
         self,
@@ -192,13 +194,17 @@ class LLMGateway:
         return ""
 
 
-def _llm_timeout_seconds() -> float:
-    raw_value = os.getenv("LLM_TIMEOUT_SECONDS", "45")
+def _llm_timeout_seconds() -> float | None:
+    raw_value = os.getenv("LLM_TIMEOUT_SECONDS", "").strip()
+    if raw_value.lower() in {"", "0", "none", "null", "false", "disabled", "off"}:
+        return None
     try:
         timeout = float(raw_value)
     except ValueError:
-        return 45.0
-    return max(1.0, timeout)
+        return None
+    if timeout <= 0:
+        return None
+    return timeout
 
 
 def _llm_max_retries() -> int:

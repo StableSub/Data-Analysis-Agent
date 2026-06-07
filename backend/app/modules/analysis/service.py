@@ -257,6 +257,7 @@ class AnalysisService:
                         attempt=attempt,
                         trigger_stage=stage,
                         original_execution_result=execution_result,
+                        allow_failed_bundle=False,
                     )
                     if fallback_bundle is not None:
                         return fallback_bundle
@@ -302,6 +303,7 @@ class AnalysisService:
         attempt: int,
         trigger_stage: str,
         original_execution_result: AnalysisExecutionResult | None = None,
+        allow_failed_bundle: bool = True,
     ) -> dict[str, Any] | None:
         fallback_code = build_deterministic_analysis_code(analysis_plan)
         if not fallback_code:
@@ -335,6 +337,9 @@ class AnalysisService:
                 "deterministic_fallback_attempted": True,
                 "fallback_trigger_stage": trigger_stage,
             }
+
+        if not allow_failed_bundle:
+            return None
 
         analysis_error = self.processor.build_error(
             execution_result.error_stage or "result_validation",

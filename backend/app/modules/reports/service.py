@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any, Dict, List, Mapping
 
 from .ai import draft_report
@@ -175,16 +176,74 @@ class ReportService:
             guideline_context=guideline_context,
             dataset_context=dataset_context,
         )
-        report_text = draft_report(
-            question=question,
-            report_payload=report_payload,
-            revision_instruction=revision_instruction,
-            model_id=model_id,
-            default_model=default_model or self.default_model,
-        )
+        try:
+            report_text = draft_report(
+                question=question,
+                report_payload=report_payload,
+                revision_instruction=revision_instruction,
+                model_id=model_id,
+                default_model=default_model or self.default_model,
+            )
+        except Exception:
+            report_text = _build_deterministic_report_text(
+                question=question,
+                report_payload=report_payload,
+            )
         return {
             "status": "generated",
             "summary": report_text,
             "metrics": report_payload["metrics"],
             "visualizations": list(visualizations or []),
         }
+
+
+def _build_deterministic_report_text(
+    *,
+    question: str,
+    report_payload: Mapping[str, Any],
+) -> str:
+    analysis_payload = _as_dict(report_payload.get("analysis_result"))
+    dataset_payload = _as_dict(report_payload.get("dataset_context"))
+    metrics_payload = _as_dict(report_payload.get("metrics"))
+    raw_metrics = _as_dict(metrics_payload.get("raw_metrics"))
+    primary_metrics = _as_dict(metrics_payload.get("primary_metrics"))
+    table_metrics = _as_dict(metrics_payload.get("table_metrics"))
+
+    filename = str(dataset_payload.get("filename") or "선택 데이터셋")
+    row_count = dataset_payload.get("row_count_total")
+    column_count = dataset_payload.get("column_count")
+    analysis_summary = str(analysis_payload.get("summary") or "").strip()
+    purpose = str(question or "").strip() or "선택 데이터셋의 품질 현황을 요약합니다."
+
+    metric_source = raw_metrics or primary_metrics
+    metric_json = json.dumps(metric_source, ensure_ascii=False, default=str)
+    table_json = json.dumps(table_metrics.get("preview_rows", []), ensure_ascii=False, default=str)
+
+    return "\n".join(
+        [
+            "# 품질 현황 리포트",
+            "",
+            "## 분석 목적",
+            purpose,
+            "",
+            "## 데이터 개요",
+            f"- 파일: {filename}",
+            f"- 행 수: {row_count if row_count not in (None, '') else '확인 불가'}",
+            f"- 컬럼 수: {column_count if column_count not in (None, '') else '확인 불가'}",
+            "",
+            "## 핵심 요약",
+            f"- {analysis_summary or '계산된 분석 결과를 기준으로 품질 현황을 요약했습니다.'}",
+            "",
+            "## 주요 지표",
+            f"- `{metric_json}`",
+            "",
+            "## 분석 결과",
+            f"- 표 미리보기: `{table_json}`",
+            "",
+            "## 한계 및 주의사항",
+            "- 이 리포트는 현재 계산된 분석 결과와 데이터셋 메타정보에 근거한 자동 요약입니다.",
+            "",
+            "## 권고사항",
+            "- 제품, 불량 사유, 설비 등 기준 축을 지정하면 원인 후보를 더 좁힐 수 있습니다.",
+        ]
+    )
