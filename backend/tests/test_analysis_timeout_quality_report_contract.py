@@ -7,6 +7,7 @@ from backend.app.core.ai import llm_gateway
 from backend.app.modules.analysis.processor import AnalysisProcessor
 from backend.app.modules.analysis.sandbox import AnalysisSandbox
 from backend.app.modules.analysis.schemas import (
+    AnalysisExecutionResult,
     AnalysisPlan,
     ExpectedOutputSpec,
     MetadataSnapshot,
@@ -19,6 +20,7 @@ from backend.app.modules.planner.service import PlannerService
 from backend.app.modules.profiling.schemas import DatasetContext
 from backend.app.modules.reports import service as report_service_module
 from backend.app.modules.reports.service import ReportService
+from backend.app.modules.visualization.processor import VisualizationProcessor
 
 
 def _write_preprocessed_moldset_fixture(path: Path) -> None:
@@ -254,6 +256,34 @@ def _dataset_context() -> DatasetContext:
     )
 
 
+def _defect_impact_dataset_context() -> DatasetContext:
+    columns = [
+        "PassOrFail",
+        "Max_Injection_Pressure",
+        "EQUIP_CD",
+        "PART_NO_86131AA000",
+        "PART_NO_86141AA000",
+        "PART_NO_86141T1000",
+    ]
+    return DatasetContext(
+        source_id="moldset_labeled_전처리_4",
+        filename="moldset_preprocessed.csv",
+        available=True,
+        row_count_total=52,
+        column_count=len(columns),
+        columns=columns,
+        dtypes={column: "int64" for column in columns},
+        numeric_columns=[
+            "PassOrFail",
+            "Max_Injection_Pressure",
+            "PART_NO_86131AA000",
+            "PART_NO_86141AA000",
+            "PART_NO_86141T1000",
+        ],
+        categorical_columns=["EQUIP_CD"],
+    )
+
+
 class _UnusedDatasetContextService:
     def build_context(self, _: str) -> DatasetContext:
         raise AssertionError("dataset context should be provided by the caller")
@@ -311,6 +341,126 @@ def test_part_no_count_planning_is_deterministic_without_llm() -> None:
         "PART_NO_86141AA000",
         "PART_NO_86141T1000",
     ]
+
+
+def test_defect_impact_comparison_planning_is_deterministic_without_llm() -> None:
+    result = _planner_service().plan(
+        user_input=(
+            "PassOrFail을 기준으로 양품과 불량을 나누고, "
+            "Max_Injection_Pressure, EQUIP_CD, PART_NO가 불량에 어떤 영향을 주는지 비교해줘."
+        ),
+        request_context=None,
+        source_id="moldset_labeled_전처리_4",
+        dataset_context=_defect_impact_dataset_context(),
+        guideline_context=None,
+        model_id=None,
+    )
+
+    assert result.route == "analysis"
+    assert result.analysis_plan is not None
+    assert result.analysis_plan.analysis_type == "defect_impact_comparison"
+    assert result.analysis_plan.group_by == [
+        "PassOrFail",
+        "EQUIP_CD",
+        "PART_NO_86131AA000",
+        "PART_NO_86141AA000",
+        "PART_NO_86141T1000",
+    ]
+    assert result.analysis_plan.required_columns == [
+        "PassOrFail",
+        "EQUIP_CD",
+        "PART_NO_86131AA000",
+        "PART_NO_86141AA000",
+        "PART_NO_86141T1000",
+        "Max_Injection_Pressure",
+    ]
+    assert [
+        metric.alias for metric in result.analysis_plan.metrics
+    ] == ["defect_rate_by_group", "avg_Max_Injection_Pressure"]
+
+
+def test_defect_rate_by_group_does_not_split_by_passorfail_unless_requested() -> None:
+    result = _planner_service().plan(
+        user_input="EQUIP_CD별 불량률을 비교해줘.",
+        request_context=None,
+        source_id="moldset_labeled_전처리_4",
+        dataset_context=_defect_impact_dataset_context(),
+        guideline_context=None,
+        model_id=None,
+    )
+
+    assert result.route == "analysis"
+    assert result.analysis_plan is not None
+    assert result.analysis_plan.analysis_type == "defect_impact_comparison"
+    assert result.analysis_plan.group_by == ["EQUIP_CD"]
+    assert result.analysis_plan.required_columns == ["PassOrFail", "EQUIP_CD"]
+    assert [
+        metric.alias for metric in result.analysis_plan.metrics
+    ] == ["defect_rate_by_group"]
+
+
+def test_defect_rate_visualization_uses_defect_rate_metric_as_y_axis() -> None:
+    result = _planner_service().plan(
+        user_input=(
+            "PassOrFail을 기준으로 양품과 불량을 나누고, "
+            "Max_Injection_Pressure, EQUIP_CD, PART_NO가 불량에 어떤 영향을 "
+            "주는지 그래프로 비교해줘."
+        ),
+        request_context=None,
+        source_id="moldset_labeled_전처리_4",
+        dataset_context=_defect_impact_dataset_context(),
+        guideline_context=None,
+        model_id=None,
+    )
+
+    assert result.need_visualization is True
+    assert result.analysis_plan is not None
+    plan = result.analysis_plan
+    assert plan.visualization_hint.preferred_chart == "bar"
+    assert plan.visualization_hint.x == "EQUIP_CD"
+    assert plan.visualization_hint.y == "defect_rate_by_group"
+    assert plan.visualization_hint.series == "PassOrFail"
+
+    visualization = VisualizationProcessor().build_from_analysis_result(
+        analysis_plan=plan,
+        analysis_result=AnalysisExecutionResult(
+            execution_status="success",
+            summary="그룹별 불량률을 계산했습니다.",
+            table=[
+                {
+                    "PassOrFail": 0,
+                    "EQUIP_CD": "EQ1",
+                    "PART_NO_86131AA000": 1,
+                    "PART_NO_86141AA000": 0,
+                    "PART_NO_86141T1000": 0,
+                    "defect_rate_by_group": 0.25,
+                    "avg_Max_Injection_Pressure": 100.0,
+                },
+                {
+                    "PassOrFail": 1,
+                    "EQUIP_CD": "EQ1",
+                    "PART_NO_86131AA000": 1,
+                    "PART_NO_86141AA000": 0,
+                    "PART_NO_86141T1000": 0,
+                    "defect_rate_by_group": 0.75,
+                    "avg_Max_Injection_Pressure": 110.0,
+                },
+            ],
+            quality_status="complete",
+        ),
+    )
+
+    assert visualization.status == "generated"
+    assert visualization.chart_data is not None
+    assert visualization.chart_data.chart_type == "bar"
+    assert visualization.chart_data.x == ["EQ1"]
+    flattened_y = [
+        value
+        for series in visualization.chart_data.series
+        for value in series.y
+        if value is not None
+    ]
+    assert flattened_y == [0.25, 0.75]
 
 
 def test_report_draft_falls_back_to_deterministic_markdown_on_timeout(

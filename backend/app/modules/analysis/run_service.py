@@ -8,6 +8,7 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from ...core.ai import LLMGateway, PromptRegistry
+from .deterministic_grouped_metrics import build_grouped_metric_code
 from .deterministic_quality import (
     build_logical_group_count_code,
     build_quality_status_summary_code,
@@ -296,6 +297,9 @@ def build_deterministic_analysis_code(plan: AnalysisPlan) -> str | None:
     outlier_code = build_numeric_outlier_code(plan)
     if outlier_code is not None:
         return outlier_code
+    grouped_metric_code = build_grouped_metric_code(plan)
+    if grouped_metric_code is not None:
+        return grouped_metric_code
     quality_code = build_quality_status_summary_code(plan)
     if quality_code is not None:
         return quality_code
@@ -374,6 +378,8 @@ def _build_time_bucket_aggregation_code(plan: AnalysisPlan) -> str | None:
 
 
 def _build_simple_group_by_metric_code(plan: AnalysisPlan) -> str | None:
+    if plan.time_context is not None or plan.expected_output.require_time_axis:
+        return None
     if len(plan.group_by) != 1 or len(plan.metrics) != 1:
         return None
     group_column = plan.group_by[0]

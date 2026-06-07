@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Sequence
 from typing import Any, Mapping
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -163,6 +164,14 @@ class PlannerService:
             return deterministic_result
 
         deterministic_result = self._try_plan_product_count(
+            user_input=user_input,
+            dataset_context=context,
+            guideline_context=guideline_context,
+        )
+        if deterministic_result is not None:
+            return deterministic_result
+
+        deterministic_result = self._try_plan_defect_impact_comparison(
             user_input=user_input,
             dataset_context=context,
             guideline_context=guideline_context,
@@ -480,6 +489,100 @@ class PlannerService:
             guideline_context_used=bool((guideline_context or {}).get("has_evidence", False)),
         )
 
+    def _try_plan_defect_impact_comparison(
+        self,
+        *,
+        user_input: str,
+        dataset_context: DatasetContext,
+        guideline_context: Mapping[str, Any] | None,
+    ) -> PlanningResult | None:
+        if not _is_defect_impact_comparison_request(user_input):
+            return None
+        metadata = self._build_metadata_snapshot(dataset_context)
+        defect_column = _resolve_defect_indicator_column(metadata)
+        if defect_column is None:
+            return None
+
+        group_by = _select_defect_impact_group_columns(
+            user_input=user_input,
+            columns=dataset_context.columns,
+            defect_column=defect_column,
+        )
+        metric_columns = _select_defect_impact_numeric_columns(
+            user_input=user_input,
+            dataset_context=dataset_context,
+            defect_column=defect_column,
+        )
+        if not group_by:
+            return None
+
+        metrics = [
+            MetricSpec(
+                name="defect_rate_by_group",
+                aggregation="rate",
+                column=defect_column,
+                positive_value=1,
+                alias="defect_rate_by_group",
+            )
+        ]
+        metrics.extend(
+            MetricSpec(
+                name=f"avg_{column}",
+                aggregation="avg",
+                column=column,
+                alias=f"avg_{column}",
+            )
+            for column in metric_columns
+        )
+        required_columns = _unique_columns(
+            [defect_column, *group_by, *metric_columns]
+        )
+        table_columns = _unique_columns(
+            [*group_by, *(metric.alias for metric in metrics)]
+        )
+        wants_visualization = _contains_any(user_input, _VISUALIZATION_INTENT_TERMS)
+        analysis_plan = AnalysisPlan(
+            analysis_type="defect_impact_comparison",
+            objective=(
+                f"{defect_column}=1을 불량으로 보고 요청된 그룹 축별 불량률과 "
+                "수치 지표 평균을 결정적으로 비교합니다."
+            ),
+            required_columns=required_columns,
+            used_columns=required_columns,
+            filters=[],
+            group_by=group_by,
+            metrics=metrics,
+            derived_columns=[],
+            sort_by=[],
+            time_context=None,
+            expected_output=ExpectedOutputSpec(
+                require_summary=True,
+                require_table=True,
+                require_raw_metrics=True,
+                expected_table_columns=table_columns,
+                allow_empty_table=False,
+                minimum_rows=1,
+                require_group_axis=True,
+            ),
+            visualization_hint=_build_defect_impact_visualization_hint(
+                group_by=group_by,
+                defect_column=defect_column,
+                wants_visualization=wants_visualization,
+            ),
+            empty_result_policy="success_with_empty_summary",
+            metadata_snapshot=metadata,
+            codegen_strategy="llm_codegen",
+        )
+        return PlanningResult(
+            route="analysis",
+            ask_analysis=True,
+            preprocess_required=False,
+            analysis_plan=analysis_plan,
+            need_visualization=wants_visualization,
+            need_report=_contains_any(user_input, _REPORT_INTENT_TERMS),
+            guideline_context_used=bool((guideline_context or {}).get("has_evidence", False)),
+        )
+
     def _ensure_dataset_context(
         self,
         *,
@@ -683,6 +786,112 @@ def _select_product_axis(user_input: str, columns: list[str]) -> str | None:
     return None
 
 
+def _is_defect_impact_comparison_request(user_input: str) -> bool:
+    text = str(user_input or "").lower()
+    defect_terms = ("불량", "defect", "failure", "fail")
+    comparison_terms = (
+        "영향",
+        "비교",
+        "차이",
+        "관계",
+        "impact",
+        "compare",
+        "effect",
+        "influence",
+    )
+    return (
+        any(term in text for term in defect_terms)
+        and any(term in text for term in comparison_terms)
+    )
+
+
+def _select_defect_impact_group_columns(
+    *,
+    user_input: str,
+    columns: list[str],
+    defect_column: str,
+) -> list[str]:
+    selected: list[str] = []
+    if _pass_fail_split_requested(user_input, defect_column):
+        selected.append(defect_column)
+
+    for axis in ("EQUIP_CD", "EQUIP_NAME", "PART_NO", "PART_NAME", "Reason"):
+        if _logical_axis_requested(user_input, axis):
+            selected.extend(_columns_for_logical_axis(columns, axis))
+    return _unique_columns([column for column in selected if column in columns])
+
+
+def _pass_fail_split_requested(user_input: str, defect_column: str) -> bool:
+    text = str(user_input or "").lower()
+    loose_text = _normalize_loose_identifier(user_input)
+    loose_defect_column = _normalize_loose_identifier(defect_column)
+    split_terms = ("양품", "정상", "pass/fail", "pass fail")
+    return (
+        loose_defect_column in loose_text
+        or any(term in text for term in split_terms)
+    )
+
+
+def _select_defect_impact_numeric_columns(
+    *,
+    user_input: str,
+    dataset_context: DatasetContext,
+    defect_column: str,
+) -> list[str]:
+    selected: list[str] = []
+    loose_text = _normalize_loose_identifier(user_input)
+    for column in dataset_context.numeric_columns:
+        if column == defect_column:
+            continue
+        loose_column = _normalize_loose_identifier(column)
+        if loose_column and loose_column in loose_text:
+            selected.append(column)
+    return _unique_columns(selected)
+
+
+def _build_defect_impact_visualization_hint(
+    *,
+    group_by: list[str],
+    defect_column: str,
+    wants_visualization: bool,
+) -> VisualizationHint:
+    if not wants_visualization:
+        return VisualizationHint(preferred_chart="none")
+
+    non_defect_axes = [column for column in group_by if column != defect_column]
+    x_axis = (
+        non_defect_axes[0]
+        if non_defect_axes
+        else (group_by[0] if group_by else None)
+    )
+    series_axis = None
+    if defect_column in group_by and x_axis != defect_column:
+        series_axis = defect_column
+    elif len(non_defect_axes) > 1:
+        series_axis = non_defect_axes[1]
+
+    return VisualizationHint(
+        preferred_chart="bar",
+        x=x_axis,
+        y="defect_rate_by_group",
+        series=series_axis,
+    )
+
+
+def _logical_axis_requested(user_input: str, logical_axis: str) -> bool:
+    text = str(user_input or "").lower()
+    loose_text = _normalize_loose_identifier(user_input)
+    terms_by_axis = {
+        "EQUIP_CD": ("equipcd", "equipment", "설비", "장비"),
+        "EQUIP_NAME": ("equipname", "equipment", "설비명", "설비", "장비"),
+        "PART_NO": ("partno", "part", "제품", "품번"),
+        "PART_NAME": ("partname", "product", "제품명", "제품"),
+        "Reason": ("reason", "원인", "사유"),
+    }
+    terms = terms_by_axis.get(logical_axis, ())
+    return any(term in text or term in loose_text for term in terms)
+
+
 def _columns_for_logical_axis(columns: list[str], logical_axis: str) -> list[str]:
     if logical_axis in columns:
         return [logical_axis]
@@ -770,7 +979,7 @@ def _looks_like_encoded_indicator_column(column: str) -> bool:
     )
 
 
-def _unique_columns(values: list[str | None]) -> list[str]:
+def _unique_columns(values: Sequence[str | None]) -> list[str]:
     columns: list[str] = []
     for value in values:
         column = str(value or "").strip()
