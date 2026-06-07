@@ -27,6 +27,7 @@ import {
   type EvidencePackagePayload,
   type GuidelineResponse,
   type PendingApprovalPayload,
+  type PublicErrorPayload,
   type ThoughtStepPayload,
 } from "../../lib/api";
 import {
@@ -1507,6 +1508,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
           const terminalStatus = pickString(record.status);
           const evidencePackage = pickRecordFromDone(record, "evidence_package");
           const answerQuality = pickRecordFromDone(record, "answer_quality");
+          const publicError = asRecord(record.public_error);
           const answerQualityStatus = answerQuality ? pickString(answerQuality.status) : null;
           const errorStage = pickString(record.error_stage);
           const outputContent = outputRecord ? pickString(outputRecord.content) : null;
@@ -1571,6 +1573,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
               error_stage: errorStage,
               error_message: errorMessage,
               retryable: typeof record.retryable === "boolean" ? record.retryable : undefined,
+              public_error: (publicError as PublicErrorPayload | null) ?? undefined,
               evidence_package: (evidencePackage as EvidencePackagePayload | null) ?? undefined,
               answer_quality: (answerQuality as AnswerQualityPayload | null) ?? undefined,
             });
@@ -1650,6 +1653,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
             (outputRecord ? pickString(outputRecord.type) : null);
           const evidencePackage = pickRecordFromDone(record, "evidence_package");
           const answerQuality = pickRecordFromDone(record, "answer_quality");
+          const publicError = asRecord(record.public_error);
           const errorStage = pickString(record.stage) ?? pickString(record.error_stage);
           const errorCode = pickString(record.error_code);
           const message = pickString(record.message) ?? "스트리밍 처리 중 오류가 발생했습니다.";
@@ -1695,6 +1699,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
                 error_stage: errorStage,
                 error_message: message,
                 retryable: typeof record.retryable === "boolean" ? record.retryable : undefined,
+                public_error: (publicError as PublicErrorPayload | null) ?? undefined,
                 evidence_package: (evidencePackage as EvidencePackagePayload | null) ?? undefined,
                 answer_quality: (answerQuality as AnswerQualityPayload | null) ?? undefined,
               });

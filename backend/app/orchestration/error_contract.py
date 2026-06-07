@@ -11,6 +11,20 @@ ANALYSIS_REPAIR_FAILED_MESSAGE = (
     "질문 범위나 기준 컬럼을 좁혀 다시 실행해 주세요."
 )
 _INTERNAL_ANALYSIS_STAGES = {"code_validation"}
+_ACTIONABLE_ANALYSIS_STAGES = {
+    "planning_failed",
+    "plan_validation",
+    "sandbox_execution",
+    "result_validation",
+    ANALYSIS_REPAIR_FAILED_STAGE,
+}
+_PUBLIC_DETAIL_KEYS = {
+    "stage_label",
+    "failed_column",
+    "operation",
+    "reason_summary",
+    "suggested_action",
+}
 
 _STAGE_PUBLIC_MESSAGES: dict[str, str] = {
     "question_understanding": "질문을 이해하는 중 오류가 발생했습니다. 질문을 조금 더 구체적으로 다시 입력해 주세요.",
@@ -122,7 +136,18 @@ def to_public_error(workflow_error: Mapping[str, Any] | None) -> Dict[str, Any]:
             stage,
             safe_message=workflow_error.get("safe_message") if isinstance(workflow_error.get("safe_message"), str) else None,
         )
-    return {
+    details = workflow_error.get("details")
+    public_details = _safe_public_error_details(
+        details if isinstance(details, Mapping) else {}
+    )
+    if public_details and public_stage in _ACTIONABLE_ANALYSIS_STAGES:
+        safe_message = _actionable_analysis_message(
+            stage=public_stage,
+            fallback_message=safe_message,
+            details=public_details,
+        )
+
+    public_error = {
         "stage": public_stage,
         "error_stage": public_stage,
         "error_code": public_error_code,
@@ -132,6 +157,8 @@ def to_public_error(workflow_error: Mapping[str, Any] | None) -> Dict[str, Any]:
         "error_message": safe_message,
         "output_type": str(workflow_error.get("output_type") or "error"),
     }
+    public_error.update(public_details)
+    return public_error
 
 
 def build_failure_output(workflow_error: Mapping[str, Any]) -> Dict[str, Any]:
@@ -214,3 +241,45 @@ def _looks_internal_error_text(text: str) -> bool:
     if "validation error" in text.lower() and _SCHEMA_NAME_RE.search(text):
         return True
     return False
+
+
+def _safe_public_error_details(details: Mapping[str, Any]) -> Dict[str, str]:
+    safe_details: Dict[str, str] = {}
+    for key in _PUBLIC_DETAIL_KEYS:
+        value = details.get(key)
+        if not isinstance(value, str):
+            continue
+        cleaned = value.strip()
+        if not cleaned or _looks_internal_error_text(cleaned):
+            continue
+        safe_details[key] = cleaned[:300]
+    return safe_details
+
+
+def _actionable_analysis_message(
+    *,
+    stage: str,
+    fallback_message: str,
+    details: Mapping[str, str],
+) -> str:
+    failed_column = details.get("failed_column")
+    operation = details.get("operation")
+    reason_summary = details.get("reason_summary")
+    suggested_action = details.get("suggested_action")
+    stage_label = details.get("stage_label") or stage
+
+    if not (failed_column or operation or reason_summary or suggested_action):
+        return fallback_message
+
+    target = failed_column or "요청한 분석 대상"
+    action = operation or "분석"
+    reason = reason_summary or "현재 데이터 조건이 분석 결과 계약과 맞지 않습니다."
+    suggestion = (
+        suggested_action
+        or "대상 컬럼과 기준 컬럼을 확인한 뒤 질문 범위를 좁혀 다시 실행해 주세요."
+    )
+    message = (
+        f"{target} {action}을 {stage_label} 단계에서 완료하지 못했습니다. "
+        f"{reason} {suggestion}"
+    )
+    return sanitize_public_message(message, fallback_message=fallback_message)

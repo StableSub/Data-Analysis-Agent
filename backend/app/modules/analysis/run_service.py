@@ -8,6 +8,7 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from ...core.ai import LLMGateway, PromptRegistry
+from .deterministic_outlier import build_numeric_outlier_code
 from .schemas import (
     AnalysisError,
     AnalysisPlan,
@@ -288,6 +289,9 @@ def _is_json_payload_only(code: str) -> bool:
 
 
 def build_deterministic_analysis_code(plan: AnalysisPlan) -> str | None:
+    outlier_code = build_numeric_outlier_code(plan)
+    if outlier_code is not None:
+        return outlier_code
     time_bucket_code = _build_time_bucket_aggregation_code(plan)
     if time_bucket_code is not None:
         return time_bucket_code

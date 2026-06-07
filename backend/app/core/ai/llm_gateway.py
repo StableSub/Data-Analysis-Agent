@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 import inspect
+import os
 from time import perf_counter
 from typing import Any
 
@@ -23,7 +24,12 @@ class LLMGateway:
         temperature: float,
     ):
         model_name = model_id or self.default_model
-        return init_chat_model(model_name, temperature=temperature)
+        return init_chat_model(
+            model_name,
+            temperature=temperature,
+            timeout=_llm_timeout_seconds(),
+            max_retries=_llm_max_retries(),
+        )
 
     def invoke(
         self,
@@ -184,3 +190,21 @@ class LLMGateway:
                 return "".join(parts)
 
         return ""
+
+
+def _llm_timeout_seconds() -> float:
+    raw_value = os.getenv("LLM_TIMEOUT_SECONDS", "45")
+    try:
+        timeout = float(raw_value)
+    except ValueError:
+        return 45.0
+    return max(1.0, timeout)
+
+
+def _llm_max_retries() -> int:
+    raw_value = os.getenv("LLM_MAX_RETRIES", "1")
+    try:
+        retries = int(raw_value)
+    except ValueError:
+        return 1
+    return max(0, retries)

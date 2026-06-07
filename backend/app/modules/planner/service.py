@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Mapping
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -9,7 +10,9 @@ from pydantic import BaseModel
 from ...core.ai import LLMGateway, PromptRegistry
 from ..analysis.processor import AnalysisProcessor
 from ..analysis.schemas import (
+    AnalysisPlan,
     AnalysisPlanDraft,
+    ExpectedOutputSpec,
     FilterCondition,
     MetadataSnapshot,
     MetricSpec,
@@ -22,6 +25,12 @@ from ..profiling.schemas import DatasetContext
 from ..profiling.prompt_context import trim_fast_path_bulk_context_fields
 from ..profiling.service import DatasetContextService
 from .schemas import PlannerDecision, PlanningResult, PlanningRoute
+
+_EXACT_COLUMN_RE = re.compile(r"[`'\"]([^`'\"]+)[`'\"]")
+_OUTLIER_INTENT_TERMS = ("이상치", "outlier", "anomaly", "abnormal")
+_ROOT_CAUSE_INTENT_TERMS = ("원인", "cause", "reason")
+_VISUALIZATION_INTENT_TERMS = ("시각화", "그래프", "차트", "visualize", "chart", "graph")
+_REPORT_INTENT_TERMS = ("리포트", "보고서", "report")
 
 PROMPTS = PromptRegistry(
     {
@@ -122,6 +131,14 @@ class PlannerService:
         if not context.available:
             raise FileNotFoundError(f"dataset context unavailable: {normalized_source_id}")
 
+        deterministic_result = self._try_plan_explicit_outlier(
+            user_input=user_input,
+            dataset_context=context,
+            guideline_context=guideline_context,
+        )
+        if deterministic_result is not None:
+            return deterministic_result
+
         decision = self._build_decision(
             user_input=user_input,
             request_context=request_context,
@@ -181,6 +198,7 @@ class PlannerService:
         column_grounding = self.analysis_processor.ground_columns(
             question_understanding=understanding,
             dataset_meta=metadata,
+            raw_question=user_input,
         )
         plan_draft = self._build_analysis_plan_draft(
             user_input=user_input,
@@ -315,6 +333,133 @@ class PlannerService:
             return DatasetContext.model_validate(dataset_context)
         return self.dataset_context_service.build_context(source_id)
 
+    def _try_plan_explicit_outlier(
+        self,
+        *,
+        user_input: str,
+        dataset_context: DatasetContext,
+        guideline_context: Mapping[str, Any] | None,
+    ) -> PlanningResult | None:
+        if not _contains_any(user_input, _OUTLIER_INTENT_TERMS):
+            return None
+        target_column = _find_explicit_column(user_input, dataset_context.columns)
+        if target_column is None:
+            return None
+
+        metadata = self._build_metadata_snapshot(dataset_context)
+        group_by = _select_outlier_context_columns(
+            dataset_context=dataset_context,
+            target_column=target_column,
+        )
+        time_column = (
+            dataset_context.datetime_columns[0]
+            if dataset_context.datetime_columns
+            else None
+        )
+        metrics = [
+            MetricSpec(
+                name="outlier_target_avg",
+                aggregation="avg",
+                column=target_column,
+                alias=f"{target_column}_avg",
+            ),
+            MetricSpec(
+                name="outlier_target_min",
+                aggregation="min",
+                column=target_column,
+                alias=f"{target_column}_min",
+            ),
+            MetricSpec(
+                name="outlier_target_max",
+                aggregation="max",
+                column=target_column,
+                alias=f"{target_column}_max",
+            ),
+        ]
+        if "PassOrFail" in dataset_context.columns and target_column != "PassOrFail":
+            metrics.append(
+                MetricSpec(
+                    name="defect_rate",
+                    aggregation="rate",
+                    column="PassOrFail",
+                    positive_value=1,
+                    alias="defect_rate",
+                )
+            )
+
+        used_columns = _unique_columns(
+            [
+                target_column,
+                *group_by,
+                time_column,
+                *(metric.column for metric in metrics),
+            ]
+        )
+        table_columns = _unique_columns(
+            [
+                *group_by,
+                time_column,
+                target_column,
+                *(metric.alias for metric in metrics),
+                "outlier_reason",
+            ]
+        )
+        wants_visualization = _contains_any(user_input, _VISUALIZATION_INTENT_TERMS)
+        objective = f"{target_column} 컬럼의 이상치를 탐지하고 관련 원인 후보를 추정합니다."
+        if _contains_any(user_input, _ROOT_CAUSE_INTENT_TERMS):
+            objective += " 주변 범주형 컬럼별 이상치 집중도를 함께 비교합니다."
+
+        analysis_plan = AnalysisPlan(
+            analysis_type="outlier_detection_and_root_cause_inference",
+            objective=objective,
+            required_columns=used_columns,
+            used_columns=used_columns,
+            filters=[],
+            group_by=group_by,
+            metrics=metrics,
+            derived_columns=[],
+            sort_by=[],
+            time_context=TimeContext(
+                time_column=time_column,
+                range_type="none",
+                grain=None,
+            )
+            if time_column
+            else None,
+            expected_output=ExpectedOutputSpec(
+                require_summary=True,
+                require_table=True,
+                require_raw_metrics=True,
+                expected_table_columns=table_columns,
+                allow_empty_table=True,
+                minimum_rows=0,
+                require_group_axis=bool(group_by),
+                require_time_axis=False,
+                require_outlier_info=True,
+            ),
+            visualization_hint=VisualizationHint(
+                preferred_chart="bar" if wants_visualization else "none",
+                x=group_by[0] if wants_visualization and group_by else None,
+                y="defect_rate"
+                if any(metric.alias == "defect_rate" for metric in metrics)
+                else metrics[0].alias,
+                series=None,
+                caption="이상치 원인 후보 비교" if group_by else None,
+            ),
+            empty_result_policy="success_with_empty_summary",
+            metadata_snapshot=metadata,
+            codegen_strategy="llm_codegen",
+        )
+        return PlanningResult(
+            route="analysis",
+            ask_analysis=True,
+            preprocess_required=False,
+            analysis_plan=analysis_plan,
+            need_visualization=wants_visualization,
+            need_report=_contains_any(user_input, _REPORT_INTENT_TERMS),
+            guideline_context_used=bool((guideline_context or {}).get("has_evidence", False)),
+        )
+
     @staticmethod
     def _resolve_route(decision: PlannerDecision) -> PlanningRoute:
         if decision.is_general_question:
@@ -342,6 +487,104 @@ class PlannerService:
     @staticmethod
     def _to_json(payload: Mapping[str, Any]) -> str:
         return json.dumps(dict(payload), ensure_ascii=False, default=str)
+
+
+def _contains_any(text: str, terms: tuple[str, ...]) -> bool:
+    normalized = str(text or "").lower()
+    return any(term.lower() in normalized for term in terms)
+
+
+def _find_explicit_column(user_input: str, columns: list[str]) -> str | None:
+    by_exact = {column: column for column in columns}
+    by_lower = {column.lower(): column for column in columns}
+    by_loose = {_normalize_loose_identifier(column): column for column in columns}
+
+    for match in _EXACT_COLUMN_RE.finditer(str(user_input or "")):
+        term = match.group(1).strip()
+        if not term:
+            continue
+        if term in by_exact:
+            return by_exact[term]
+        lower_term = term.lower()
+        if lower_term in by_lower:
+            return by_lower[lower_term]
+        loose_term = _normalize_loose_identifier(term)
+        if loose_term in by_loose:
+            return by_loose[loose_term]
+
+    loose_question = _normalize_loose_identifier(user_input)
+    for column in sorted(columns, key=len, reverse=True):
+        loose_column = _normalize_loose_identifier(column)
+        if loose_column and loose_column in loose_question:
+            return column
+    return None
+
+
+def _select_outlier_context_columns(
+    *,
+    dataset_context: DatasetContext,
+    target_column: str,
+) -> list[str]:
+    preferred_columns = (
+        "EQUIP_CD",
+        "EQUIP_NAME",
+        "PART_NAME",
+        "PART_NO",
+        "Reason",
+        "PassOrFail",
+    )
+    candidates = [
+        *preferred_columns,
+        *dataset_context.group_key_columns,
+        *dataset_context.categorical_columns,
+    ]
+    selected: list[str] = []
+    available = set(dataset_context.columns)
+    for column in candidates:
+        if column == target_column or column not in available or column in selected:
+            continue
+        if column not in preferred_columns and (
+            _looks_like_row_identifier(column)
+            or _looks_like_encoded_indicator_column(column)
+        ):
+            continue
+        selected.append(column)
+        if len(selected) >= 4:
+            break
+    return selected
+
+
+def _looks_like_row_identifier(column: str) -> bool:
+    normalized = _normalize_loose_identifier(column)
+    return normalized in {"id", "index", "unnamed0"} or normalized.endswith("id")
+
+
+def _looks_like_encoded_indicator_column(column: str) -> bool:
+    return (
+        len(column) > 48
+        or bool(re.search(r"\d{4}[-_]\d{1,2}", column))
+        or bool(re.search(r"_[A-Z0-9_-]*\d[A-Z0-9_-]*$", column))
+        or ":" in column
+        or "오전" in column
+        or "오후" in column
+        or any(
+            column.startswith(f"{base}_")
+            for base in ("PART_NO", "PART_NAME", "EQUIP_CD", "EQUIP_NAME", "Reason")
+        )
+    )
+
+
+def _unique_columns(values: list[str | None]) -> list[str]:
+    columns: list[str] = []
+    for value in values:
+        column = str(value or "").strip()
+        if column and column not in columns:
+            columns.append(column)
+    return columns
+
+
+def _normalize_loose_identifier(value: str) -> str:
+    return re.sub(r"[^a-zA-Z0-9]+", "", str(value or "").lower())
 
 
 def _should_force_skip_preprocess_for_analysis_request(user_input: str) -> bool:

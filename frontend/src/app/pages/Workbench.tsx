@@ -184,6 +184,11 @@ const buildRepairGuidance = (
   const group = profile?.groupKeyColumns[0] ?? profile?.categoricalColumns[0] ?? null;
   const missing = profile?.topMissingColumns[0]?.column ?? null;
   const availableColumns = profile?.columns.slice(0, 6).join(", ") ?? "";
+  const publicError = response?.public_error;
+  const failedColumn = publicError?.failed_column?.trim() || metric;
+  const failedOperation = publicError?.operation?.trim() || "분석";
+  const reasonSummary = publicError?.reason_summary?.trim();
+  const suggestedAction = publicError?.suggested_action?.trim();
   const actions: RepairGuidance["actions"] = [];
 
   if (isFailure && isPlanValidationFailure) {
@@ -225,36 +230,36 @@ const buildRepairGuidance = (
   if (isFailure && isAnalysisRepairFailure) {
     actions.push({
       label: "질문 범위 좁히기",
-      description: availableColumns
-        ? `사용 가능 컬럼: ${availableColumns}`
-        : "분석 기준과 대상을 더 작게 잡습니다.",
-      prompt: availableColumns
-        ? `사용 가능한 컬럼(${availableColumns}) 중 1~2개 기준만 사용해서 다시 실행할 분석 질문을 작성해줘.`
-        : "분석 기준과 대상 컬럼을 1~2개로 좁혀 다시 실행할 질문을 작성해줘.",
+      description: reasonSummary ?? `${failedOperation}에 필요한 컬럼 상태를 확인합니다.`,
+      prompt: `'${failedColumn}' 컬럼의 타입, 결측값, 숫자 변환 가능 여부를 요약해줘.`,
     });
 
     actions.push({
       label: "기준 컬럼 다시 선택",
       description: group
-        ? `${group} 기준을 우선 확인합니다.`
-        : "분석 기준으로 쓸 컬럼을 다시 고릅니다.",
+        ? `${group} 기준과 ${failedColumn}만 사용합니다.`
+        : `${failedColumn} 중심으로 질문 범위를 줄입니다.`,
       prompt: group
-        ? `'${group}'를 기준 컬럼으로 사용해서 답할 수 있는 분석 질문을 다시 작성해줘.`
-        : "현재 데이터에서 기준 컬럼으로 쓸 만한 컬럼을 골라 분석 질문을 다시 작성해줘.",
+        ? `'${failedColumn}' 컬럼을 '${group}' 기준으로만 다시 분석해줘.`
+        : `'${failedColumn}' 컬럼만 사용해서 다시 답할 수 있는 분석 질문을 작성해줘.`,
     });
 
     actions.push({
       label: "원본 데이터 상태 확인",
-      description: missing
-        ? `${missing} 결측 상태를 먼저 확인합니다.`
-        : "컬럼 타입과 결측 상태를 먼저 확인합니다.",
+      description: suggestedAction ?? (
+        missing
+          ? `${missing} 결측 상태를 먼저 확인합니다.`
+          : "컬럼 타입과 결측 상태를 먼저 확인합니다."
+      ),
       prompt: missing
         ? `'${missing}' 결측치와 주요 컬럼 타입을 먼저 요약해줘.`
         : "원본 데이터의 주요 컬럼 타입과 결측 상태를 요약해줘.",
     });
 
     return {
-      title: "분석 실행 오류 해결",
+      title: publicError?.stage || response?.error_stage
+        ? `분석 실행 오류 해결 (${publicError?.stage ?? response?.error_stage} 단계)`
+        : "분석 실행 오류 해결",
       message: response?.error_message
         ?? "자동 코드 수정으로도 실행 가능한 분석을 만들지 못했습니다. 분석 범위나 기준 컬럼을 좁혀 다시 실행해 주세요.",
       actions: actions.slice(0, 3),

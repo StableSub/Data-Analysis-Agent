@@ -161,11 +161,22 @@ class AnalysisService:
         validated_code = ""
         sandbox_result = None
         analysis_error = None
+        deterministic_fallback_attempted = False
         execution_result = AnalysisExecutionResult(
             execution_status="fail",
             error_stage="code_generation",
             error_message="analysis execution did not start",
         )
+        deterministic_bundle = self._try_deterministic_fallback(
+            dataset=dataset,
+            analysis_plan=analysis_plan,
+            attempt=0,
+            trigger_stage="deterministic_codegen",
+            original_execution_result=None,
+        )
+        if deterministic_bundle is not None:
+            return deterministic_bundle
+
         for attempt in range(self.max_retries + 1):
             try:
                 # 첫 시도에서는 plan 기반으로 신규 분석 코드를 생성한다.
@@ -214,21 +225,38 @@ class AnalysisService:
                         "deterministic_fallback_used": False,
                     }
 
+                if not deterministic_fallback_attempted:
+                    deterministic_fallback_attempted = True
+                    fallback_bundle = self._try_deterministic_fallback(
+                        dataset=dataset,
+                        analysis_plan=analysis_plan,
+                        attempt=attempt,
+                        trigger_stage=execution_result.error_stage or "result_validation",
+                        original_execution_result=execution_result,
+                    )
+                    if fallback_bundle is not None:
+                        return fallback_bundle
+
                 analysis_error = self.processor.build_error(
                     execution_result.error_stage or "result_validation",
                     execution_result.error_message or "analysis execution failed",
                     detail=self._build_analysis_error_detail(
                         attempt=attempt + 1,
                         execution_result=execution_result,
+                        analysis_plan=analysis_plan,
+                        trigger_stage=execution_result.error_stage,
                     ),
                 )
             except Exception as exc:
                 stage = "code_generation" if not generated_code else "code_validation"
-                if stage == "code_validation":
+                if stage == "code_validation" and not deterministic_fallback_attempted:
+                    deterministic_fallback_attempted = True
                     fallback_bundle = self._try_deterministic_fallback(
                         dataset=dataset,
                         analysis_plan=analysis_plan,
                         attempt=attempt,
+                        trigger_stage=stage,
+                        original_execution_result=execution_result,
                     )
                     if fallback_bundle is not None:
                         return fallback_bundle
@@ -272,6 +300,8 @@ class AnalysisService:
         dataset: Dataset,
         analysis_plan: AnalysisPlan,
         attempt: int,
+        trigger_stage: str,
+        original_execution_result: AnalysisExecutionResult | None = None,
     ) -> dict[str, Any] | None:
         fallback_code = build_deterministic_analysis_code(analysis_plan)
         if not fallback_code:
@@ -289,7 +319,7 @@ class AnalysisService:
                 sandbox_result=sandbox_result,
                 analysis_plan=analysis_plan,
             )
-        except Exception:
+        except (OSError, ValueError):
             return None
 
         if execution_result.execution_status == "success":
@@ -302,6 +332,8 @@ class AnalysisService:
                 "final_status": "success",
                 "retry_count": attempt,
                 "deterministic_fallback_used": True,
+                "deterministic_fallback_attempted": True,
+                "fallback_trigger_stage": trigger_stage,
             }
 
         analysis_error = self.processor.build_error(
@@ -310,6 +342,9 @@ class AnalysisService:
             detail=self._build_analysis_error_detail(
                 attempt=attempt + 1,
                 execution_result=execution_result,
+                analysis_plan=analysis_plan,
+                trigger_stage=trigger_stage,
+                original_execution_result=original_execution_result,
             ),
         )
         return {
@@ -321,6 +356,8 @@ class AnalysisService:
             "final_status": "fail",
             "retry_count": attempt,
             "deterministic_fallback_used": True,
+            "deterministic_fallback_attempted": True,
+            "fallback_trigger_stage": trigger_stage,
         }
 
     @staticmethod
@@ -328,18 +365,27 @@ class AnalysisService:
         *,
         attempt: int,
         execution_result: AnalysisExecutionResult,
+        analysis_plan: AnalysisPlan | None = None,
+        trigger_stage: str | None = None,
+        original_execution_result: AnalysisExecutionResult | None = None,
     ) -> dict[str, Any]:
         detail: dict[str, Any] = {"attempt": attempt}
+        if trigger_stage:
+            detail["fallback_trigger_stage"] = trigger_stage
         if execution_result.quality_status:
             detail["quality_status"] = execution_result.quality_status
         if execution_result.quality_reason:
             detail["quality_reason"] = execution_result.quality_reason
         if execution_result.diagnostic_message:
             detail["diagnostic_message"] = execution_result.diagnostic_message
+        if original_execution_result and original_execution_result.error_stage:
+            detail["original_internal_stage"] = original_execution_result.error_stage
         if execution_result.warnings:
             detail["warnings"] = [
                 warning.model_dump() for warning in execution_result.warnings
             ]
+        if analysis_plan is not None:
+            detail.update(_build_safe_failure_context(analysis_plan, execution_result))
         return detail
 
     # 질문이나 plan 초안이 모호할 때 needs_clarification 응답 payload를 만든다.
@@ -446,3 +492,82 @@ class AnalysisService:
             categorical_columns=dataset_context.categorical_columns,
             row_count=dataset_context.row_count_total,
         )
+
+
+def _build_safe_failure_context(
+    analysis_plan: AnalysisPlan,
+    execution_result: AnalysisExecutionResult,
+) -> dict[str, str]:
+    failed_column = _infer_failed_column(analysis_plan)
+    reason_summary = _safe_reason_summary(execution_result)
+    return {
+        "internal_stage": execution_result.error_stage or "result_validation",
+        "failed_column": failed_column,
+        "operation": _infer_operation(analysis_plan),
+        "reason_summary": reason_summary,
+        "suggested_action": _suggested_action(failed_column, reason_summary),
+    }
+
+
+def _infer_failed_column(analysis_plan: AnalysisPlan) -> str:
+    if _infer_operation(analysis_plan) == "numeric outlier detection":
+        for metric in analysis_plan.metrics:
+            if (
+                metric.column
+                and "outlier_target" in f"{metric.name} {metric.alias}".lower()
+            ):
+                return metric.column
+        for metric in analysis_plan.metrics:
+            if metric.column and _column_is_named_in_plan(analysis_plan, metric.column):
+                return metric.column
+    numeric_columns = set(analysis_plan.metadata_snapshot.numeric_columns)
+    for metric in analysis_plan.metrics:
+        if metric.column and metric.column in numeric_columns:
+            return metric.column
+    for column in analysis_plan.used_columns:
+        if column in numeric_columns:
+            return column
+    return analysis_plan.used_columns[0] if analysis_plan.used_columns else "분석 대상 컬럼"
+
+
+def _column_is_named_in_plan(analysis_plan: AnalysisPlan, column: str) -> bool:
+    haystack = f"{analysis_plan.analysis_type} {analysis_plan.objective}".lower()
+    return column.lower() in haystack
+
+
+def _infer_operation(analysis_plan: AnalysisPlan) -> str:
+    haystack = f"{analysis_plan.analysis_type} {analysis_plan.objective}".lower()
+    if any(token in haystack for token in ("outlier", "anomaly", "이상치")):
+        return "numeric outlier detection"
+    if analysis_plan.metrics:
+        return "analysis metric calculation"
+    return "analysis execution"
+
+
+def _safe_reason_summary(execution_result: AnalysisExecutionResult) -> str:
+    reason = (
+        execution_result.error_message
+        or execution_result.quality_reason
+        or "analysis result did not satisfy the expected output contract"
+    )
+    if reason == "outlier information is required":
+        return "이상치 분석 결과에 필요한 outliers 지표가 없습니다."
+    if reason == "target column has no numeric values for outlier detection":
+        return "대상 컬럼에 이상치 계산에 사용할 수 있는 숫자 값이 없습니다."
+    if reason == "analysis execution failed":
+        return "분석 코드 실행이 완료되지 않았습니다."
+    return str(reason)[:240]
+
+
+def _suggested_action(failed_column: str, reason_summary: str) -> str:
+    if "숫자" in reason_summary or "numeric" in reason_summary:
+        return f"{failed_column} 컬럼의 숫자 형식과 결측값을 확인해 주세요."
+    if "outlier" in reason_summary or "이상치" in reason_summary:
+        return (
+            f"{failed_column} 컬럼을 기준으로 이상치 지표가 생성되도록 "
+            "질문 범위나 기준 컬럼을 줄여 다시 실행해 주세요."
+        )
+    return (
+        f"{failed_column} 컬럼의 값과 분석 기준을 확인한 뒤 "
+        "질문 범위를 좁혀 다시 실행해 주세요."
+    )

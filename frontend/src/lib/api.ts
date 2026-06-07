@@ -112,6 +112,11 @@ export interface PublicErrorPayload {
   message: string;
   error_message: string;
   output_type: string;
+  stage_label?: string;
+  failed_column?: string;
+  operation?: string;
+  reason_summary?: string;
+  suggested_action?: string;
 }
 
 export interface ThoughtStepPayload {

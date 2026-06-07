@@ -8,6 +8,7 @@ from .sandbox import validate_analysis_source_code
 from .schemas import (
     AnalysisError,
     AnalysisExecutionResult,
+    AnalysisOutputPayload,
     AnalysisPlan,
     AnalysisPlanDraft,
     AnalysisWarning,
@@ -39,6 +40,7 @@ _PRELOADED_IMPORT_ALIASES = {
     "pandas": "pd",
 }
 _IDENTIFIER_RE = re.compile(r"[^a-zA-Z0-9_]+")
+_QUOTED_IDENTIFIER_RE = re.compile(r"[`'\"]([^`'\"]+)[`'\"]")
 _SYNTHETIC_DIMENSION_TOKENS = {
     "column",
     "columns",
@@ -174,15 +176,18 @@ class AnalysisProcessor:
         self,
         question_understanding: QuestionUnderstanding | dict[str, Any],
         dataset_meta: MetadataSnapshot | dict[str, Any],
+        raw_question: str | None = None,
     ) -> ColumnGroundingResult:
         understanding = self._ensure_question_understanding(question_understanding)
         metadata = self._ensure_metadata_snapshot(dataset_meta)
         columns = metadata.columns
         resolved: dict[str, str] = {}
         unresolved: list[str] = []
+        resolved_loose_identifiers: set[str] = set()
 
         # metric/group/filter/time 관련 용어를 컬럼 후보로 수집한다.
-        terms = list(understanding.metric_keywords) + list(understanding.group_keywords)
+        exact_terms = self._extract_exact_column_terms(raw_question)
+        terms = [*exact_terms, *understanding.metric_keywords, *understanding.group_keywords]
         if understanding.time_context and understanding.time_context.time_column:
             terms.append(understanding.time_context.time_column)
         for condition in understanding.filter_conditions:
@@ -194,11 +199,15 @@ class AnalysisProcessor:
             cleaned = str(term or "").strip()
             if not cleaned or cleaned in seen:
                 continue
-            seen.add(cleaned)
             matched = self._match_column(cleaned, columns)
             if matched:
+                seen.add(cleaned)
                 resolved[cleaned] = matched
+                resolved_loose_identifiers.add(self._normalize_loose_identifier(matched))
             else:
+                if self._normalize_loose_identifier(cleaned) in resolved_loose_identifiers:
+                    continue
+                seen.add(cleaned)
                 unresolved.append(cleaned)
 
         # 시간 컬럼이 명시되지 않았다면 기본 datetime 컬럼을 보완한다.
@@ -558,6 +567,10 @@ class AnalysisProcessor:
                 f"table must contain at least {plan.expected_output.minimum_rows} rows"
             )
 
+        outlier_issue = self._validate_outlier_payload(payload=payload, plan=plan)
+        if outlier_issue is not None:
+            return outlier_issue
+
         if not table:
             return None
 
@@ -587,11 +600,22 @@ class AnalysisProcessor:
             if not any(column in columns for column in group_columns):
                 return "group axis column is missing"
 
-        if (
-            plan.expected_output.require_outlier_info
-            and "outliers" not in payload.raw_metrics
-        ):
+        return None
+
+    def _validate_outlier_payload(
+        self,
+        *,
+        payload: AnalysisOutputPayload,
+        plan: AnalysisPlan,
+    ) -> str | None:
+        if not plan.expected_output.require_outlier_info:
+            return None
+        outliers = payload.raw_metrics.get("outliers")
+        if not isinstance(outliers, dict):
             return "outlier information is required"
+        valid_count = outliers.get("valid_count")
+        if isinstance(valid_count, (int, float)) and valid_count <= 0:
+            return "target column has no numeric values for outlier detection"
         return None
 
     # plan에서 실제 필요한 source column을 계산한다.
@@ -1039,6 +1063,19 @@ class AnalysisProcessor:
 
     def _normalize_identifier(self, value: str) -> str:
         return _IDENTIFIER_RE.sub("", str(value or "").lower())
+
+    def _normalize_loose_identifier(self, value: str) -> str:
+        return re.sub(r"[^a-zA-Z0-9]+", "", str(value or "").lower())
+
+    def _extract_exact_column_terms(self, raw_question: str | None) -> list[str]:
+        if raw_question is None:
+            return []
+        terms: list[str] = []
+        for match in _QUOTED_IDENTIFIER_RE.finditer(str(raw_question)):
+            term = match.group(1).strip()
+            if term and term not in terms:
+                terms.append(term)
+        return terms
 
     def _time_axis_output_column(self, time_context: TimeContext | None) -> str | None:
         if not time_context or not time_context.grain:
