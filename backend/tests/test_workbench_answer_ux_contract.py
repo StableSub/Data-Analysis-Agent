@@ -31,18 +31,37 @@ def test_final_assistant_answers_use_canvas_layout_without_height_cap() -> None:
     assert "maxBodyHeight={null}" in ai_answer_block
 
 
-def test_non_answer_surfaces_keep_default_card_layout() -> None:
+def test_analysis_answer_states_use_canvas_layout_without_height_cap() -> None:
     assistant_source = _read(ASSISTANT_PATH)
     workbench_source = _read(WORKBENCH_PATH)
 
     assert 'layout = "card"' in assistant_source
     assert 'const isCanvas = layout === "canvas";' in assistant_source
     assert 'data-answer-layout={layout}' in assistant_source
+    assert '"max-w-none rounded-lg shadow-sm"' in assistant_source
+
+    running_index = workbench_source.index("/* RUNNING */")
+    running_block = workbench_source[running_index : running_index + 720]
+    assert 'layout="canvas"' in running_block
+    assert "maxBodyHeight={null}" in running_block
+
+    needs_user_index = workbench_source.index("/* NEEDS-USER */")
+    needs_user_block = workbench_source[needs_user_index : needs_user_index + 1040]
+    assert 'layout="canvas"' in needs_user_block
+    assert "maxBodyHeight={null}" in needs_user_block
 
     assert 'variant="error"' in workbench_source
     error_index = workbench_source.index('variant="error"')
-    next_error_block = workbench_source[error_index : error_index + 360]
-    assert 'layout="canvas"' not in next_error_block
+    next_error_block = workbench_source[error_index : error_index + 420]
+    assert 'layout="canvas"' in next_error_block
+    assert "maxBodyHeight={null}" in next_error_block
+
+
+def test_non_answer_pre_eda_surface_keeps_default_card_layout() -> None:
+    assistant_source = _read(ASSISTANT_PATH)
+    workbench_source = _read(WORKBENCH_PATH)
+
+    assert 'layout = "card"' in assistant_source
 
     assert 'title="Pre-EDA Summary"' in workbench_source
     pre_eda_index = workbench_source.index('title="Pre-EDA Summary"')

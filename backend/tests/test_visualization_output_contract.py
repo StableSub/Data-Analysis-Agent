@@ -98,6 +98,34 @@ def test_analysis_visualization_result_includes_canonical_charts_list() -> None:
     assert payload.charts[0] == payload.chart_data
 
 
+def test_analysis_visualization_summary_teaches_how_to_read_chart() -> None:
+    service = VisualizationService(
+        repository=None,  # type: ignore[arg-type]
+        reader=None,  # type: ignore[arg-type]
+        processor=_FakeVisualizationProcessor(),  # type: ignore[arg-type]
+    )
+
+    result = service.build_from_analysis_result(
+        source_id="benchmark-moldset-labeled",
+        analysis_plan=_analysis_plan(),
+        analysis_result=AnalysisExecutionResult(
+            execution_status="success",
+            summary="양품/불량 분포입니다.",
+            table=[{"PassOrFail": "0", "PassOrFail_count": 2555}],
+            raw_metrics={"total_count": 2607},
+            used_columns=["PassOrFail"],
+        ),
+    )
+
+    summary = VisualizationResultPayload.model_validate(result).summary
+    assert "bar" in summary
+    assert "x축" in summary
+    assert "PassOrFail" in summary
+    assert "값" in summary
+    assert "비교" in summary
+    assert "읽으면" in summary or "보면" in summary
+
+
 def test_unavailable_visualization_result_matches_result_contract() -> None:
     result = _build_unavailable_result(source_id="source-1", summary="데이터 없음")
 

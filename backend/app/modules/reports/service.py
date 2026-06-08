@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from typing import Any, Dict, List, Mapping
 
 from .ai import draft_report
@@ -32,6 +31,51 @@ def _build_table_metrics(table: list[Dict[str, Any]]) -> Dict[str, Any]:
         "columns": columns,
         "preview_rows": table[:5],
     }
+
+
+def _format_metric_lines(metrics: Mapping[str, Any]) -> list[str]:
+    if not metrics:
+        return ["- 확인 가능한 주요 지표가 없습니다."]
+    return [
+        f"- {key}: {_format_report_value(value)}"
+        for key, value in metrics.items()
+    ]
+
+
+def _format_table_preview(rows: list[Any]) -> list[str]:
+    table_rows = [row for row in rows if isinstance(row, dict)]
+    if not table_rows:
+        return ["- 표 미리보기가 없습니다."]
+
+    columns = list(table_rows[0].keys())
+    if not columns:
+        return ["- 표 미리보기가 없습니다."]
+
+    header = "| " + " | ".join(str(column) for column in columns) + " |"
+    separator = "| " + " | ".join("---" for _ in columns) + " |"
+    body = [
+        "| "
+        + " | ".join(_format_table_cell(row.get(column)) for column in columns)
+        + " |"
+        for row in table_rows[:5]
+    ]
+    return [header, separator, *body]
+
+
+def _format_report_value(value: Any) -> str:
+    if isinstance(value, float):
+        return f"{value:.4g}"
+    if isinstance(value, (str, int, bool)) or value is None:
+        return str(value)
+    if isinstance(value, list):
+        return f"{len(value)}개 항목"
+    if isinstance(value, dict):
+        return f"{len(value)}개 하위 항목"
+    return str(value)
+
+
+def _format_table_cell(value: Any) -> str:
+    return _format_report_value(value).replace("|", "\\|")
 
 
 class ReportService:
@@ -216,8 +260,8 @@ def _build_deterministic_report_text(
     purpose = str(question or "").strip() or "선택 데이터셋의 품질 현황을 요약합니다."
 
     metric_source = raw_metrics or primary_metrics
-    metric_json = json.dumps(metric_source, ensure_ascii=False, default=str)
-    table_json = json.dumps(table_metrics.get("preview_rows", []), ensure_ascii=False, default=str)
+    metric_lines = _format_metric_lines(metric_source)
+    table_lines = _format_table_preview(_as_list(table_metrics.get("preview_rows")))
 
     return "\n".join(
         [
@@ -235,10 +279,10 @@ def _build_deterministic_report_text(
             f"- {analysis_summary or '계산된 분석 결과를 기준으로 품질 현황을 요약했습니다.'}",
             "",
             "## 주요 지표",
-            f"- `{metric_json}`",
+            *metric_lines,
             "",
             "## 분석 결과",
-            f"- 표 미리보기: `{table_json}`",
+            *table_lines,
             "",
             "## 한계 및 주의사항",
             "- 이 리포트는 현재 계산된 분석 결과와 데이터셋 메타정보에 근거한 자동 요약입니다.",

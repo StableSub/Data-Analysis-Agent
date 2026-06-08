@@ -752,6 +752,15 @@ function parsePendingApproval(payload: unknown): PendingApprovalPayload | null {
         (item): item is string => typeof item === "string" && item.trim().length > 0,
       )
     : [];
+  const rawGuidance = plan.guidance;
+  const guidanceRecord = asRecord(rawGuidance);
+  const guidance = guidanceRecord
+    ? {
+        why_this_matters: pickString(guidanceRecord.why_this_matters) ?? undefined,
+        expected_impact: pickString(guidanceRecord.expected_impact) ?? undefined,
+        skip_risk: pickString(guidanceRecord.skip_risk) ?? undefined,
+      }
+    : undefined;
 
   const operations = Array.isArray(plan.operations)
     ? plan.operations.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
@@ -774,6 +783,7 @@ function parsePendingApproval(payload: unknown): PendingApprovalPayload | null {
           : undefined,
       top_missing_columns: topMissingColumns,
       affected_columns: affectedColumns,
+      guidance: guidance,
       row_count: typeof plan.row_count === "number" ? plan.row_count : null,
     },
   };

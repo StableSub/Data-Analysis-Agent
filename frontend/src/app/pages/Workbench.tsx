@@ -169,8 +169,18 @@ const buildPendingApprovalChanges = (
     pendingApproval.plan.operations.length > 0
       ? pendingApproval.plan.operations.map((operation) => formatPendingOperation(operation))
       : ["제안된 전처리 operation 없음"];
+  const guidance = pendingApproval.plan.guidance;
 
   return [
+    ...(guidance?.why_this_matters
+      ? [`왜 중요한가: ${guidance.why_this_matters}`]
+      : []),
+    ...(guidance?.expected_impact
+      ? [`예상 효과: ${guidance.expected_impact}`]
+      : []),
+    ...(guidance?.skip_risk
+      ? [`건너뛰면: ${guidance.skip_risk}`]
+      : []),
     ...(pendingApproval.plan.planner_comment
       ? [`planner comment: ${pendingApproval.plan.planner_comment}`]
       : []),
@@ -181,7 +191,7 @@ const buildPendingApprovalChanges = (
     ...(typeof pendingApproval.plan.row_count === "number"
       ? [`profile sample rows: ${pendingApproval.plan.row_count.toLocaleString()}`]
       : []),
-  ].slice(0, 6);
+  ].slice(0, 8);
 };
 
 const buildPendingApprovalPreview = (
@@ -201,6 +211,10 @@ const buildPendingApprovalPreview = (
       return undefined;
     }
     return compactPendingText(JSON.stringify(previewRows.slice(0, 3), null, 2), 600);
+  }
+
+  if (pendingApproval.plan.guidance?.why_this_matters) {
+    return compactPendingText(pendingApproval.plan.guidance.why_this_matters, 360);
   }
 
   return pendingApproval.plan.planner_comment
@@ -1683,7 +1697,8 @@ export default function Workbench() {
                           subtitle={hasDatasetContext ? selectedDataset?.fileName || fileName : "AI가 답변을 생성하고 있습니다."}
                           timestamp="Now"
                           sections={reportSections}
-                          maxBodyHeight={300}
+                          layout="canvas"
+                          maxBodyHeight={null}
                           evidence={evidence}
                         />
                         {lastRunningTool && (
@@ -1801,7 +1816,8 @@ export default function Workbench() {
                 subtitle={hasDatasetContext ? selectedDataset?.fileName || fileName : "AI가 답변을 생성하고 있습니다."}
                 timestamp="Now"
                 sections={reportSections}
-                maxBodyHeight={300}
+                layout="canvas"
+                maxBodyHeight={null}
                 evidence={evidence}
                 repairGuidance={repairGuidance}
                 onRepairAction={handleUseSuggestedQuestion}
@@ -1837,7 +1853,8 @@ export default function Workbench() {
                 }
                 timestamp="Now"
                 sections={reportSections}
-                maxBodyHeight={300}
+                layout="canvas"
+                maxBodyHeight={null}
                 evidence={evidence}
                 repairGuidance={repairGuidance}
                 onRepairAction={handleUseSuggestedQuestion}
@@ -1852,6 +1869,8 @@ export default function Workbench() {
                 variant="error"
                 title="Analysis Failed"
                 sections={reportSections}
+                layout="canvas"
+                maxBodyHeight={null}
                 evidence={evidence}
                 repairGuidance={repairGuidance}
                 onRepairAction={handleUseSuggestedQuestion}

@@ -318,7 +318,10 @@ export function AssistantReportMessage({
       <div
         data-answer-layout={layout}
         className={cn(
-          "w-full max-w-[860px] mx-auto rounded-xl border bg-[var(--genui-card)] shadow-[var(--genui-shadow-sm)] overflow-hidden",
+          "w-full mx-auto border bg-[var(--genui-card)] overflow-hidden",
+          isCanvas
+            ? "max-w-none rounded-lg shadow-sm"
+            : "max-w-[860px] rounded-xl shadow-[var(--genui-shadow-sm)]",
           "border-[var(--genui-error)]/30",
           className
         )}

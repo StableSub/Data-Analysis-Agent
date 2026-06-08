@@ -232,11 +232,18 @@ export interface PendingApprovalColumnSummary {
   missing_rate: number;
 }
 
+export interface PreprocessPendingApprovalGuidance {
+  why_this_matters?: string;
+  expected_impact?: string;
+  skip_risk?: string;
+}
+
 export interface PreprocessPendingApprovalPlan {
   operations: Record<string, unknown>[];
   planner_comment?: string;
   top_missing_columns?: PendingApprovalColumnSummary[];
   affected_columns?: string[];
+  guidance?: PreprocessPendingApprovalGuidance;
   row_count?: number | null;
 }
 

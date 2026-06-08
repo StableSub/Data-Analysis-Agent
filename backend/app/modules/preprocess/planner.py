@@ -375,6 +375,14 @@ def build_preprocess_review_payload(
         or "전처리 계획을 검토한 뒤 승인 여부를 결정해 주세요."
     )
     row_count = dataset_profile.get("sample_row_count")
+    affected_columns = _collect_affected_columns(plan.operations)
+    guidance = _build_preprocess_guidance(
+        affected_columns=affected_columns,
+        planner_comment=planner_comment,
+        reason_summary=reason_summary,
+        top_missing_columns=top_missing_columns,
+        top_recommendations=top_recommendations,
+    )
 
     return {
         "stage": "preprocess",
@@ -387,10 +395,75 @@ def build_preprocess_review_payload(
             "planner_comment": planner_comment,
             "top_missing_columns": top_missing_columns,
             "top_recommendations": top_recommendations,
-            "affected_columns": _collect_affected_columns(plan.operations),
+            "affected_columns": affected_columns,
+            "guidance": guidance,
             "row_count": int(row_count) if isinstance(row_count, int) else None,
         },
     }
+
+
+def _build_preprocess_guidance(
+    *,
+    affected_columns: list[str],
+    planner_comment: str,
+    reason_summary: str,
+    top_missing_columns: list[dict[str, Any]],
+    top_recommendations: list[dict[str, Any]],
+) -> dict[str, str]:
+    columns_label = _format_column_label(affected_columns)
+    missing_columns = [
+        str(item.get("column") or "").strip()
+        for item in top_missing_columns
+        if str(item.get("column") or "").strip()
+    ]
+    recommendation_reasons = [
+        str(item.get("reason") or "").strip()
+        for item in top_recommendations
+        if str(item.get("reason") or "").strip()
+    ]
+
+    why_source = (
+        reason_summary.strip()
+        or planner_comment
+        or (recommendation_reasons[0] if recommendation_reasons else "")
+    )
+    if missing_columns:
+        why_this_matters = (
+            f"{columns_label} 컬럼에 결측치가 있어 분석 기준이나 집계 대상에서 "
+            "빠지는 행이 생길 수 있습니다."
+        )
+    elif why_source:
+        why_this_matters = f"{columns_label} 컬럼 전처리가 필요한 이유: {why_source}"
+    else:
+        why_this_matters = (
+            f"{columns_label} 컬럼을 정리하면 같은 의미의 값이 하나의 기준으로 계산됩니다."
+        )
+
+    expected_impact = (
+        f"{columns_label} 기준 분석에서 비어 있거나 형식이 다른 값을 줄여 "
+        "양품/불량 비율, 불량 사유, 제품별 생산량 같은 결과를 더 안정적으로 계산합니다."
+    )
+    skip_risk = (
+        f"건너뛰면 {columns_label} 값이 비어 있거나 섞인 상태로 남아 "
+        "일부 행이 집계에서 누락되거나 잘못된 그룹으로 계산될 수 있습니다."
+    )
+    return {
+        "why_this_matters": why_this_matters,
+        "expected_impact": expected_impact,
+        "skip_risk": skip_risk,
+    }
+
+
+def _format_column_label(columns: list[str]) -> str:
+    cleaned = [column for column in columns if column.strip()]
+    if not cleaned:
+        return "선택된"
+    if len(cleaned) == 1:
+        return cleaned[0]
+    preview = ", ".join(cleaned[:3])
+    if len(cleaned) <= 3:
+        return preview
+    return f"{preview} 외 {len(cleaned) - 3}개"
 
 
 def _collect_affected_columns(operations: list[PreprocessOperation]) -> list[str]:

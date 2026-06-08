@@ -169,8 +169,32 @@ class VisualizationService:
     ) -> str:
         if status == "generated" and chart_data:
             chart_type = chart_data.get("chart_type") or "chart"
-            return f"analysis 결과를 바탕으로 {chart_type} 시각화를 생성했습니다."
+            x_values = chart_data.get("x")
+            series_raw = chart_data.get("series")
+            series_names = [
+                str(item.get("name") or "").strip()
+                for item in series_raw
+                if isinstance(item, dict) and str(item.get("name") or "").strip()
+            ] if isinstance(series_raw, list) else []
+            y_label = ", ".join(series_names) if series_names else "값"
+            x_label = _infer_x_axis_label(series_names)
+            point_count = len(x_values) if isinstance(x_values, list) else 0
+            return (
+                f"{chart_type} 시각화입니다. x축은 {x_label} 범주를, y값은 {y_label}을 "
+                f"나타냅니다. {point_count}개 항목을 비교해 큰 차이가 나는 구간을 "
+                "보면 분석 결과를 빠르게 읽을 수 있습니다."
+            )
         if status == "fallback":
             row_count = len(fallback_table or [])
-            return f"차트 대신 결과 표를 반환합니다. rows={row_count}"
-        return "analysis 결과에서 시각화 가능한 차트를 만들지 못했습니다."
+            return (
+                f"차트 대신 결과 표를 반환합니다. 표의 {row_count}개 행을 기준으로 "
+                "값이 큰 항목과 작은 항목을 비교해 보세요."
+            )
+        return "analysis 결과에서 시각화 가능한 차트를 만들지 못했습니다. 표 결과를 먼저 확인해 주세요."
+
+
+def _infer_x_axis_label(series_names: list[str]) -> str:
+    for name in series_names:
+        if name.endswith("_count") and len(name) > len("_count"):
+            return name[: -len("_count")]
+    return "분석 기준"

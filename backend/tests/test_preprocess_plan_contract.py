@@ -6,6 +6,7 @@ from pydantic import ValidationError
 from backend.app.modules.preprocess.planner import (
     PROMPTS,
     PreprocessPlan,
+    build_preprocess_review_payload,
     build_preprocess_plan_from_recommendations,
 )
 
@@ -126,3 +127,44 @@ def test_recommendation_plan_normalizer_filters_removed_columns() -> None:
     assert dumped_operations[0]["columns"] == ["Injection_Time", "Max_Injection_Speed"]
     assert dumped_operations[1]["columns"] == ["Clamp_Open_Position"]
     assert dumped_operations[2]["columns"] == ["Average_Back_Pressure"]
+
+
+def test_preprocess_review_payload_teaches_non_experts_why_impact_and_skip_risk() -> None:
+    plan = PreprocessPlan.model_validate(
+        {
+            "operations": [
+                {
+                    "op": "impute",
+                    "columns": ["Reason"],
+                    "method": "mode",
+                    "value": None,
+                }
+            ],
+            "planner_comment": "Reason 결측치를 최빈값으로 채워 불량 사유 집계 누락을 줄입니다.",
+        }
+    )
+
+    payload = build_preprocess_review_payload(
+        source_id="source-1",
+        dataset_profile={
+            "sample_row_count": 120,
+            "missing_rates": {"Reason": 0.35},
+            "preprocess_recommendations": [
+                {
+                    "op": "impute",
+                    "target_columns": ["Reason"],
+                    "reason": "불량 사유 분석에 필요한 값이 비어 있습니다.",
+                }
+            ],
+        },
+        plan=plan,
+        reason_summary="결측치가 분석 결과를 왜곡할 수 있습니다.",
+    )
+
+    guidance = payload["plan"]["guidance"]
+    assert guidance["why_this_matters"]
+    assert guidance["expected_impact"]
+    assert guidance["skip_risk"]
+    assert "Reason" in guidance["why_this_matters"]
+    assert "불량" in guidance["expected_impact"]
+    assert "누락" in guidance["skip_risk"]

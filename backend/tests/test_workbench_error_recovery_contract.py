@@ -125,3 +125,26 @@ def test_frontend_prefers_backend_query_feedback_over_template_guidance() -> Non
     assert template_metric_index >= 0
     assert backend_feedback_index < template_metric_index
     assert "return backendFeedback;" in guidance_body
+
+
+def test_preprocess_approval_surfaces_nonexpert_guidance_fields() -> None:
+    api_source = _source(API_PATH)
+    pipeline_source = _source(PIPELINE_PATH)
+    workbench_source = _source(WORKBENCH_PATH)
+
+    assert "why_this_matters" in api_source
+    assert "expected_impact" in api_source
+    assert "skip_risk" in api_source
+
+    assert "guidance:" in pipeline_source
+    assert "why_this_matters" in pipeline_source
+    assert "expected_impact" in pipeline_source
+    assert "skip_risk" in pipeline_source
+
+    pending_changes_body = _extract_function_body(workbench_source, "buildPendingApprovalChanges")
+    assert "왜 중요한가" in pending_changes_body
+    assert "예상 효과" in pending_changes_body
+    assert "건너뛰면" in pending_changes_body
+
+    pending_preview_body = _extract_function_body(workbench_source, "buildPendingApprovalPreview")
+    assert "why_this_matters" in pending_preview_body
