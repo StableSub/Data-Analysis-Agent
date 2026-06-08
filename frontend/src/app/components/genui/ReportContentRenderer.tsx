@@ -20,6 +20,11 @@ type TextBlock =
   | { type: "text"; content: string }
   | { type: "code"; content: string; language?: string };
 
+interface MarkdownTable {
+  headers: string[];
+  rows: string[][];
+}
+
 function splitLabelAndBody(text: string): { label: string; body: string } | null {
   const match = text.match(/^\s*([^:\n]{1,80}?)\s*[:：]\s+(.+)$/);
   if (!match) {
@@ -87,7 +92,7 @@ function parseTextBlocks(content: string): TextBlock[] {
 
 function renderInlineContent(text: string, keyPrefix: string): React.ReactNode[] {
   const nodes: React.ReactNode[] = [];
-  const pattern = /(\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|`([^`]+)`|(https?:\/\/[^\s<]+))/g;
+  const pattern = /(\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|`([^`]+)`|\*\*([^*]+)\*\*|\*([^*]+)\*|(https?:\/\/[^\s<]+))/g;
   let lastIndex = 0;
   let tokenIndex = 0;
   let match: RegExpExecArray | null;
@@ -97,7 +102,7 @@ function renderInlineContent(text: string, keyPrefix: string): React.ReactNode[]
       nodes.push(text.slice(lastIndex, match.index));
     }
 
-    const [, , linkText, linkUrl, codeText, rawUrl] = match;
+    const [, , linkText, linkUrl, codeText, strongText, emphasisText, rawUrl] = match;
     const key = `${keyPrefix}-${tokenIndex}`;
 
     if (linkText && linkUrl) {
@@ -120,6 +125,18 @@ function renderInlineContent(text: string, keyPrefix: string): React.ReactNode[]
         >
           {codeText}
         </code>,
+      );
+    } else if (strongText) {
+      nodes.push(
+        <strong key={key} className="font-semibold text-[var(--genui-text)]">
+          {strongText}
+        </strong>,
+      );
+    } else if (emphasisText) {
+      nodes.push(
+        <em key={key} className="text-[var(--genui-text)]">
+          {emphasisText}
+        </em>,
       );
     } else if (rawUrl) {
       nodes.push(
@@ -146,6 +163,88 @@ function renderInlineContent(text: string, keyPrefix: string): React.ReactNode[]
   return nodes;
 }
 
+function splitMarkdownTableRow(line: string): string[] {
+  return line
+    .trim()
+    .replace(/^\|/, "")
+    .replace(/\|$/, "")
+    .split("|")
+    .map((cell) => cell.trim());
+}
+
+function parseMarkdownTable(lines: string[]): MarkdownTable | null {
+  if (lines.length < 2) {
+    return null;
+  }
+
+  const headers = splitMarkdownTableRow(lines[0]);
+  const separator = splitMarkdownTableRow(lines[1]);
+  if (headers.length < 2 || separator.length !== headers.length) {
+    return null;
+  }
+  if (!separator.every((cell) => /^:?-{3,}:?$/.test(cell))) {
+    return null;
+  }
+
+  const rows = lines.slice(2).map(splitMarkdownTableRow);
+  if (rows.length === 0 || rows.some((row) => row.length !== headers.length)) {
+    return null;
+  }
+
+  return { headers, rows };
+}
+
+function renderMarkdownTable(table: MarkdownTable, keyPrefix: string): React.ReactNode {
+  return (
+    <div key={keyPrefix} className="my-3 overflow-x-auto rounded-md border border-[var(--genui-border)] bg-[var(--genui-surface)]">
+      <table className="min-w-full border-collapse text-left text-xs text-[var(--genui-text)]">
+        <thead className="bg-[var(--genui-panel)]">
+          <tr>
+            {table.headers.map((header, index) => (
+              <th
+                key={`${keyPrefix}-head-${index}`}
+                className="border-b border-[var(--genui-border)] px-3 py-2 font-semibold [overflow-wrap:anywhere]"
+              >
+                {renderInlineContent(header, `${keyPrefix}-head-${index}`)}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {table.rows.map((row, rowIndex) => (
+            <tr key={`${keyPrefix}-row-${rowIndex}`} className="border-t border-[var(--genui-border)]/70">
+              {row.map((cell, cellIndex) => (
+                <td
+                  key={`${keyPrefix}-cell-${rowIndex}-${cellIndex}`}
+                  className="px-3 py-2 align-top leading-relaxed [overflow-wrap:anywhere]"
+                >
+                  {renderInlineContent(cell, `${keyPrefix}-cell-${rowIndex}-${cellIndex}`)}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function renderMarkdownBlockquote(lines: string[], keyPrefix: string): React.ReactNode {
+  const quote = lines
+    .map((line) => line.replace(/^>\s?/, "").trim())
+    .filter(Boolean)
+    .join("\n");
+
+  return (
+    <blockquote
+      key={keyPrefix}
+      className="my-3 border-l-2 border-[var(--genui-running)]/50 bg-[var(--genui-running)]/8 px-3 py-2 text-sm leading-relaxed text-[var(--genui-text)] [overflow-wrap:anywhere]"
+    >
+      {renderParagraphLines(quote, `${keyPrefix}-quote`)}
+    </blockquote>
+  );
+}
+
 function renderParagraphLines(text: string, keyPrefix: string) {
   return text.split("\n").map((line, index, lines) => (
     <Fragment key={`${keyPrefix}-line-${index}`}>
@@ -160,6 +259,16 @@ function renderMarkdownParagraph(paragraph: string, keyPrefix: string): React.Re
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean);
+
+  const table = parseMarkdownTable(lines);
+  if (table) {
+    return renderMarkdownTable(table, keyPrefix);
+  }
+
+  const quoteItems = lines.map((line) => line.match(/^>\s?(.+)$/)?.[1]?.trim() ?? null);
+  if (quoteItems.length > 0 && quoteItems.every((item): item is string => Boolean(item))) {
+    return renderMarkdownBlockquote(lines, keyPrefix);
+  }
 
   const headingMatch = lines.length === 1 ? lines[0].match(/^(#{1,3})\s+(.+)$/) : null;
   if (headingMatch) {

@@ -24,6 +24,21 @@ def test_report_content_renderer_handles_markdown_headings_and_lists() -> None:
     assert "# {보고서 제목}" not in source
 
 
+def test_report_content_renderer_supports_tables_quotes_and_emphasis() -> None:
+    source = RENDERER_PATH.read_text(encoding="utf-8")
+
+    assert "renderMarkdownTable" in source
+    assert "parseMarkdownTable" in source
+    assert "<table" in source
+    assert "<thead" in source
+    assert "<tbody" in source
+    assert "renderMarkdownBlockquote" in source
+    assert "<blockquote" in source
+    assert "<strong" in source
+    assert "<em" in source
+    assert "overflow-wrap:anywhere" in source
+
+
 def test_workbench_sessions_use_canonical_backend_identity_for_merge_and_delete() -> None:
     store_source = SESSION_STORE_PATH.read_text(encoding="utf-8")
     workbench_source = WORKBENCH_PATH.read_text(encoding="utf-8")

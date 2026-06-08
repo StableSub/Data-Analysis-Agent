@@ -1,12 +1,19 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
+from typing import Protocol, cast
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
 from ..core.ai import LLMGateway, PromptRegistry
 from ..modules.profiling.prompt_context import trim_merged_context_fast_path_fields
+
+
+class _MessageWithContent(Protocol):
+    content: object
+
 
 PROMPTS = PromptRegistry(
     {
@@ -22,13 +29,19 @@ PROMPTS = PromptRegistry(
             "명시적 데이터 정제 요청이 없고 원본 데이터로 바로 집계/분석이 가능하면 ask_preprocess는 false로 두어라. "
             "관계 분석 질문(X와 Y의 관계, scatter)은 기본적으로 원시 관측치 기반 분석이며, 평균이나 그룹 집계를 명시적으로 요구하지 않았다면 ask_preprocess를 true로 두지 마라."
         ),
-        "general.system": "사용자 질문에 간결하고 정확하게 답하라.",
+        "general.system": (
+            "사용자 질문에 간결하고 정확하게 답하라. "
+            "답변은 Markdown 형식으로 작성하라. 핵심 결론은 먼저 쓰고, 필요한 경우 `##` 섹션 제목, bullet 목록, "
+            "비교나 지표가 있으면 Markdown 표를 사용하라."
+        ),
         "data_qa.system": (
             "주어진 evidence_package, answer_quality, merged_context만 근거로 사용자 데이터 질문에 답하라. "
             "answer_quality.answerable이 false이면 abstain_reason을 중심으로 답하고, 근거 밖의 숫자/컬럼/결론을 만들지 마라. "
             "evidence_package.analysis_metrics, analysis_table, used_columns를 우선 근거로 사용하라. "
             "이미 제공된 analysis_result, rag_result, guideline_result, visualization_result 안에서만 답하라. "
-            "실제 결과와 해석을 먼저 직접적으로 제시하라. 방법 설명이나 일반론은 필요할 때만 최소한으로 덧붙여라."
+            "실제 결과와 해석을 먼저 직접적으로 제시하라. 방법 설명이나 일반론은 필요할 때만 최소한으로 덧붙여라. "
+            "답변은 Markdown 형식으로 구성하라. `##` 섹션 제목, bullet 목록, 짧은 요약 문단을 적극 사용하고, "
+            "metrics나 analysis_table처럼 비교 가능한 값이 있으면 Markdown 표로 정리하라."
         ),
     }
 )
@@ -49,13 +62,16 @@ def analyze_intent(
     default_model: str,
 ) -> IntentDecision:
     llm = LLMGateway(default_model=default_model)
-    return llm.invoke_structured(
-        schema=IntentDecision,
-        model_id=model_id,
-        messages=[
-            SystemMessage(content=PROMPTS.load_prompt("intent.system")),
-            HumanMessage(content=user_input),
-        ],
+    return cast(
+        IntentDecision,
+        llm.invoke_structured(
+            schema=IntentDecision,
+            model_id=model_id,
+            messages=[
+                SystemMessage(content=PROMPTS.load_prompt("intent.system")),
+                HumanMessage(content=user_input),
+            ],
+        ),
     )
 
 
@@ -70,39 +86,47 @@ def answer_general_question(
     content = user_input
     if isinstance(request_context, str) and request_context.strip():
         content = f"question:\n{user_input}\n\nrequest_context:\n{request_context.strip()}"
-    result = llm.invoke(
-        model_id=model_id,
-        messages=[
-            SystemMessage(content=PROMPTS.load_prompt("general.system")),
-            HumanMessage(content=content),
-        ],
+    result = cast(
+        _MessageWithContent,
+        llm.invoke(
+            model_id=model_id,
+            messages=[
+                SystemMessage(content=PROMPTS.load_prompt("general.system")),
+                HumanMessage(content=content),
+            ],
+        ),
     )
-    return result.content if isinstance(result.content, str) else str(result.content)
+    result_content: object = result.content
+    return result_content if isinstance(result_content, str) else str(result_content)
 
 
 def answer_data_question(
     *,
     user_input: str,
-    merged_context: dict,
-    evidence_package: dict,
-    answer_quality: dict,
+    merged_context: Mapping[str, object],
+    evidence_package: Mapping[str, object],
+    answer_quality: Mapping[str, object],
     model_id: str | None,
     default_model: str,
 ) -> str:
     llm = LLMGateway(default_model=default_model)
-    prompt_merged_context = trim_merged_context_fast_path_fields(merged_context)
-    result = llm.invoke(
-        model_id=model_id,
-        messages=[
-            SystemMessage(content=PROMPTS.load_prompt("data_qa.system")),
-            HumanMessage(
-                content=(
-                    f"question:\n{user_input}\n\n"
-                    f"evidence_package:\n{json.dumps(evidence_package, ensure_ascii=False)}\n\n"
-                    f"answer_quality:\n{json.dumps(answer_quality, ensure_ascii=False)}\n\n"
-                    f"merged_context:\n{json.dumps(prompt_merged_context, ensure_ascii=False)}"
-                )
-            ),
-        ],
+    prompt_merged_context: object = trim_merged_context_fast_path_fields(merged_context)
+    result = cast(
+        _MessageWithContent,
+        llm.invoke(
+            model_id=model_id,
+            messages=[
+                SystemMessage(content=PROMPTS.load_prompt("data_qa.system")),
+                HumanMessage(
+                    content=(
+                        f"question:\n{user_input}\n\n"
+                        f"evidence_package:\n{json.dumps(evidence_package, ensure_ascii=False)}\n\n"
+                        f"answer_quality:\n{json.dumps(answer_quality, ensure_ascii=False)}\n\n"
+                        f"merged_context:\n{json.dumps(prompt_merged_context, ensure_ascii=False)}"
+                    )
+                ),
+            ],
+        ),
     )
-    return result.content if isinstance(result.content, str) else str(result.content)
+    result_content: object = result.content
+    return result_content if isinstance(result_content, str) else str(result_content)

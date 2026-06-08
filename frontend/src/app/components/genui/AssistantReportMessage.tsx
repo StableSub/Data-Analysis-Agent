@@ -21,6 +21,7 @@ import {
 export type ReportVariant = "final" | "streaming" | "error";
 /** Controls the card's accent border colour without overriding the variant */
 export type ReportAccent = "default" | "needs-user" | "running";
+export type ReportLayout = "card" | "canvas";
 
 export interface ReportSection {
   type: "heading" | "paragraph" | "numbered-list" | "checklist" | "code" | "spacer";
@@ -53,6 +54,7 @@ export interface AssistantReportMessageProps {
   collapsedSections?: number;
   /** px cap for body scroll area when expanded (default: 320). null disables the explicit cap. */
   maxBodyHeight?: number | null;
+  layout?: "card" | "canvas";
   className?: string;
   /**
    * Accent border override for non-error states.
@@ -270,6 +272,7 @@ export function AssistantReportMessage({
   sections,
   collapsedSections = 1,
   maxBodyHeight = 320,
+  layout = "card",
   className,
   accentVariant = "default",
   onReviewDetails,
@@ -285,6 +288,7 @@ export function AssistantReportMessage({
 
   const isStreaming = variant === "streaming";
   const isError = variant === "error";
+  const isCanvas = layout === "canvas";
 
   // Detect scroll overflow for the gradient indicator
   const checkOverflow = useCallback(() => {
@@ -312,6 +316,7 @@ export function AssistantReportMessage({
   if (isError) {
     return (
       <div
+        data-answer-layout={layout}
         className={cn(
           "w-full max-w-[860px] mx-auto rounded-xl border bg-[var(--genui-card)] shadow-[var(--genui-shadow-sm)] overflow-hidden",
           "border-[var(--genui-error)]/30",
@@ -377,8 +382,12 @@ export function AssistantReportMessage({
 
   return (
     <div
-        className={cn(
-        "mx-auto flex min-h-0 w-full max-w-[860px] flex-col overflow-hidden rounded-xl border bg-[var(--genui-card)] shadow-[var(--genui-shadow-sm)] transition-all duration-300",
+      data-answer-layout={layout}
+      className={cn(
+        "mx-auto flex min-h-0 w-full flex-col overflow-hidden border bg-[var(--genui-card)] transition-all duration-300",
+        isCanvas
+          ? "max-w-none rounded-lg shadow-sm"
+          : "max-w-[860px] rounded-xl shadow-[var(--genui-shadow-sm)]",
         accentBorder,
         className
       )}
@@ -450,7 +459,8 @@ export function AssistantReportMessage({
         <div
           ref={bodyRef}
           className={cn(
-            "min-h-0 flex-1 overflow-y-auto scroll-smooth px-5 py-4",
+            "min-h-0 flex-1 overflow-y-auto scroll-smooth",
+            isCanvas ? "px-6 py-5 sm:px-7" : "px-5 py-4",
             // Only cap height when not collapsed (collapsed = naturally short)
             !collapsed && "overflow-y-auto"
           )}
@@ -498,7 +508,12 @@ export function AssistantReportMessage({
 
       {/* ── Footer meta (final only) ── */}
       {!isStreaming && !collapsed && !hideFooter && (
-        <div className="px-5 py-2.5 border-t border-[var(--genui-border)] bg-[var(--genui-panel)] flex items-center justify-between gap-4">
+        <div
+          className={cn(
+            "border-t border-[var(--genui-border)] bg-[var(--genui-panel)] py-2.5 flex items-center justify-between gap-4",
+            isCanvas ? "px-6 sm:px-7" : "px-5",
+          )}
+        >
           <span className="text-[10px] text-[var(--genui-muted)] flex-shrink-0">
             {sections.filter((s) => s.type !== "spacer" && s.type !== "heading").length} content blocks
           </span>

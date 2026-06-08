@@ -1301,7 +1301,7 @@ export default function Workbench() {
   ];
 
   const chatThreadWidthClassName = "mx-auto w-full max-w-[1320px]";
-  const assistantChatCardClassName = "mx-0 w-full max-w-[1120px]";
+  const assistantChatCardClassName = "mx-0 w-full max-w-[1320px]";
 
   const preEdaUnavailableCard = selectedDataset?.preEdaStatus === "unavailable" ? (
     <CardShell status="needs-user" className="max-w-none mx-0">
@@ -1656,7 +1656,8 @@ export default function Workbench() {
                             title="AI 답변"
                             timestamp={messageTime}
                             sections={[{ type: "paragraph", content: msg.content }]}
-                            maxBodyHeight={400}
+                            layout="canvas"
+                            maxBodyHeight={null}
                             evidence={isLatestAssistantResponse ? evidence : undefined}
                             repairGuidance={isLatestAssistantResponse ? repairGuidance : undefined}
                             onRepairAction={handleUseSuggestedQuestion}
@@ -1701,7 +1702,8 @@ export default function Workbench() {
                   title={hasFailedAnalysis ? "Analysis Failed" : "Analysis 결과"}
                   subtitle={hasDatasetContext ? currentDatasetLabel : undefined}
                   sections={reportSections}
-                  maxBodyHeight={600}
+                  layout="canvas"
+                  maxBodyHeight={null}
                   evidence={evidence}
                   repairGuidance={repairGuidance}
                   onRepairAction={handleUseSuggestedQuestion}
@@ -1739,7 +1741,8 @@ export default function Workbench() {
                   title="Analysis 결과"
                   subtitle={hasDatasetContext ? currentDatasetLabel : undefined}
                   sections={reportSections}
-                  maxBodyHeight={600}
+                  layout="canvas"
+                  maxBodyHeight={null}
                   evidence={evidence}
                   repairGuidance={repairGuidance}
                   onRepairAction={handleUseSuggestedQuestion}
@@ -1863,7 +1866,8 @@ export default function Workbench() {
                 title="Analysis 결과"
                 subtitle={hasDatasetContext ? currentDatasetLabel : undefined}
                 sections={reportSections}
-                maxBodyHeight={400}
+                layout="canvas"
+                maxBodyHeight={null}
                 evidence={evidence}
                 repairGuidance={repairGuidance}
                 onRepairAction={handleUseSuggestedQuestion}

@@ -62,8 +62,10 @@ backend/tests/*
 !backend/tests/test_preprocess_plan_contract.py
 !backend/tests/test_rag_dependencies.py
 !backend/tests/test_chat_stream_guideline_e2e.py
+!backend/tests/test_ai_answer_markdown_prompt_contract.py
 !backend/tests/test_main_workflow_planner_error_contract.py
 !backend/tests/test_query_feedback_contract.py
+!backend/tests/test_workbench_answer_ux_contract.py
 !backend/tests/test_preprocess_workflow_error_handling.py
 !backend/tests/test_report_prompt_contract.py
 !backend/tests/test_visualization_result_contract.py
