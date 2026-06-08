@@ -14,8 +14,14 @@ from ..trace_logging import get_trace_context, log_trace
 
 
 class LLMGateway:
-    def __init__(self, *, default_model: str = "gpt-5-nano") -> None:
+    def __init__(
+        self,
+        *,
+        default_model: str = "gpt-5-nano",
+        timeout_seconds: float | None = None,
+    ) -> None:
         self.default_model = default_model
+        self.timeout_seconds = timeout_seconds
 
     def _build_model(
         self,
@@ -28,7 +34,7 @@ class LLMGateway:
             "temperature": temperature,
             "max_retries": _llm_max_retries(),
         }
-        timeout = _llm_timeout_seconds()
+        timeout = self.timeout_seconds if self.timeout_seconds is not None else _llm_timeout_seconds()
         if timeout is not None:
             kwargs["timeout"] = timeout
         return init_chat_model(model_name, **kwargs)

@@ -32,7 +32,7 @@ export interface ReportSection {
 export interface GuidedRepairAction {
   label: string;
   description: string;
-  prompt: string;
+  prompt?: string;
 }
 
 export interface RepairGuidance {
@@ -210,22 +210,49 @@ function GuidedRepairCard({
     <div className="mt-3 rounded-md border border-[var(--genui-needs-user)]/35 bg-[var(--genui-needs-user)]/8 px-3 py-2.5">
       <p className="text-[12px] font-semibold text-[var(--genui-text)]">{guidance.title}</p>
       <p className="mt-1 text-[11px] leading-relaxed text-[var(--genui-muted)]">{guidance.message}</p>
-      <div className="mt-2 grid gap-2 sm:grid-cols-2">
-        {guidance.actions.map((action) => (
-          <button
-            key={action.prompt}
-            type="button"
-            onClick={() => onRepairAction?.(action.prompt)}
-            className="min-h-[64px] rounded-md border border-[var(--genui-border)] bg-[var(--genui-surface)] px-3 py-2 text-left transition-colors hover:border-[var(--genui-needs-user)]/50 hover:bg-[var(--genui-needs-user)]/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--genui-needs-user)]"
-          >
-            <span className="block text-[12px] font-semibold text-[var(--genui-text)]">
-              {action.label}
-            </span>
-            <span className="mt-1 block text-[11px] leading-snug text-[var(--genui-muted)]">
-              {action.description}
-            </span>
-          </button>
-        ))}
+      <div className="mt-2 grid gap-2 sm:grid-cols-2" role="list">
+        {guidance.actions.map((action) => {
+          const canRunAction = Boolean(action.prompt && onRepairAction);
+          const itemClassName = cn(
+            "min-h-[64px] rounded-md border border-[var(--genui-border)] bg-[var(--genui-surface)] px-3 py-2 text-left",
+            canRunAction
+              ? "transition-colors hover:border-[var(--genui-needs-user)]/50 hover:bg-[var(--genui-needs-user)]/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--genui-needs-user)]"
+              : "cursor-default",
+          );
+          const itemContent = (
+            <>
+              <span className="block text-[12px] font-semibold text-[var(--genui-text)]">
+                {action.label}
+              </span>
+              <span className="mt-1 block text-[11px] leading-snug text-[var(--genui-muted)]">
+                {action.description}
+              </span>
+            </>
+          );
+
+          return canRunAction ? (
+            <button
+              key={`${action.label}-${action.description}`}
+              type="button"
+              onClick={() => {
+                if (action.prompt) {
+                  onRepairAction?.(action.prompt);
+                }
+              }}
+              className={itemClassName}
+            >
+              {itemContent}
+            </button>
+          ) : (
+            <div
+              key={`${action.label}-${action.description}`}
+              className={itemClassName}
+              role="listitem"
+            >
+              {itemContent}
+            </div>
+          );
+        })}
       </div>
     </div>
   );

@@ -249,11 +249,15 @@ def build_main_workflow(
     def clarification_terminal(state: MainWorkflowState) -> Dict[str, Any]:
         set_trace_stage("clarification")
         clarification_question = str(state.get("clarification_question", "")).strip()
+        output: Dict[str, Any] = {
+            "type": "clarification",
+            "content": clarification_question,
+        }
+        query_feedback = state.get("query_feedback")
+        if isinstance(query_feedback, dict):
+            output["query_feedback"] = query_feedback
         return {
-            "output": {
-                "type": "clarification",
-                "content": clarification_question,
-            }
+            "output": output,
         }
 
     def merge_context_node(state: MainWorkflowState) -> Dict[str, Any]:
@@ -448,11 +452,19 @@ def build_main_workflow(
                 "output": build_failure_output(workflow_error),
             }
 
-        return {
+        query_feedback = (
+            planning_result.query_feedback.model_dump(exclude_none=True)
+            if planning_result.query_feedback is not None
+            else None
+        )
+        result: Dict[str, Any] = {
             "planning_result": planning_result.model_dump(),
             "handoff": build_handoff_from_planning_result(planning_result),
             "clarification_question": planning_result.clarification_question,
         }
+        if query_feedback is not None:
+            result["query_feedback"] = query_feedback
+        return result
 
     def data_qa_terminal(state: MainWorkflowState) -> Dict[str, Any]:
         set_trace_stage("data_qa")

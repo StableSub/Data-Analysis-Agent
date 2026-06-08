@@ -248,19 +248,20 @@ evidence.
 - `thought_steps`
 - `output_type`
 - `output`: `final_state["output"]`이 dict일 때만 포함된다.
+- `query_feedback`: `output.query_feedback`이 dict일 때 top-level에도 포함된다.
 - `evidence_package`: `final_state["evidence_package"]`가 dict일 때만 포함된다.
 - `answer_quality`: `final_state["answer_quality"]`가 dict일 때만 포함된다.
 - `preprocess_result`: `final_state["preprocess_result"]`가 dict일 때만 포함된다.
 - `visualization_result`는 status가 `generated`일 때만 포함된다. 주요 shape는 canonical `charts`, legacy `chart/chart_data`, PNG `artifact`, `fallback_table`이다.
 - `analysis_result`, `report_result`: 각 final state 값이 dict일 때만 포함된다.
 
-`AgentClient`는 `final_status="fail"`, 실패한 analysis/report result, invalid/empty analysis quality 같은 상태를 실패 workflow state로 보고 내부 `error` event를 만든다. `workflow_error`가 있으면 내부 `diagnostic_message`/`details`는 공개하지 않고 `public_error`, `stage`, `error_code`, `retryable`, `answer`, `output_type`만 안전 문구로 투영한다. final state에 있던 `output`, `evidence_package`, `answer_quality`도 가능한 경우 보존된다.
+`AgentClient`는 `final_status="fail"`, 실패한 analysis/report result, invalid/empty analysis quality 같은 상태를 실패 workflow state로 보고 내부 `error` event를 만든다. `workflow_error`가 있으면 내부 `diagnostic_message`/`details`는 공개하지 않고 `public_error`, `stage`, `error_code`, `retryable`, `answer`, `output_type`만 안전 문구로 투영한다. 공개 오류/사용자 질문 맥락으로 backend `query_feedback`을 만들 수 있으면 top-level과 `output.query_feedback`에 함께 싣는다. final state에 있던 `output`, `evidence_package`, `answer_quality`도 가능한 경우 보존된다.
 
-`ChatService._relay_agent_events()`는 내부 event를 SSE response data로 바꾼다. 최종 SSE `done` data에는 항상 `answer`, `session_id`, `run_id`, `trace_id`, `thought_steps`, `preprocess_result`, `status` key가 있으며, `preprocess_result` 값은 내부 event에서 dict가 오지 않으면 `None`일 수 있다. `output_type`, `output`, `analysis_result`, `visualization_result`, `report_result`, `evidence_package`, `answer_quality`는 값이 있을 때만 추가된다.
+`ChatService._relay_agent_events()`는 내부 event를 SSE response data로 바꾼다. 최종 SSE `done` data에는 항상 `answer`, `session_id`, `run_id`, `trace_id`, `thought_steps`, `preprocess_result`, `status` key가 있으며, `preprocess_result` 값은 내부 event에서 dict가 오지 않으면 `None`일 수 있다. `output_type`, `output`, `query_feedback`, `analysis_result`, `visualization_result`, `report_result`, `evidence_package`, `answer_quality`는 값이 있을 때만 추가된다.
 
 `done.status`는 `ChatService`가 `output_type`, preprocess/analysis/visualization/report result, `answer_quality.status`를 보고 계산한다. 값은 `success`, `limited`, `unanswerable`, `failed`, `cancelled` 중 하나다. 실패/취소 성격이면 `error_stage`, `error_message`, `error_type`, `retryable`이 함께 붙을 수 있다.
 
-SSE `error` data에는 `run_id`, `trace_id`, `thought_steps`, `answer`, `message`, `stage`, `error_code`, `retryable`, `output_type`이 들어간다. session이 확정된 실패에는 `session_id`도 포함된다. workflow error에는 `public_error`가 추가될 수 있고, `output`, `evidence_package`, `answer_quality`가 있으면 top-level error payload에도 유지된다. router-level exception도 사용자 안전 문구를 `message`로 내려주므로 frontend는 `message`를 기본 표시값으로 유지한다.
+SSE `error` data에는 `run_id`, `trace_id`, `thought_steps`, `answer`, `message`, `stage`, `error_code`, `retryable`, `output_type`이 들어간다. session이 확정된 실패에는 `session_id`도 포함된다. workflow error에는 `public_error`가 추가될 수 있고, `query_feedback`, `output`, `evidence_package`, `answer_quality`가 있으면 top-level error payload에도 유지된다. router-level exception도 사용자 안전 문구를 `message`로 내려주므로 frontend는 `message`를 기본 표시값으로 유지한다.
 
 ## 발견한 문제점 / 확인 필요 사항
 

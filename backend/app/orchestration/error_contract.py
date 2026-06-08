@@ -25,6 +25,20 @@ _PUBLIC_DETAIL_KEYS = {
     "reason_summary",
     "suggested_action",
 }
+_DEFAULT_ACTIONABLE_ANALYSIS_DETAILS: dict[str, dict[str, str]] = {
+    "sandbox_execution": {
+        "stage_label": "분석 코드 실행",
+        "operation": "분석",
+        "reason_summary": "생성된 분석 코드가 현재 데이터 조건이나 실행 환경에서 정상 종료되지 않았습니다.",
+        "suggested_action": "대상 컬럼, 결측값, 숫자/날짜 형식을 확인해 주세요.",
+    },
+    "result_validation": {
+        "stage_label": "분석 결과 검증",
+        "operation": "분석 결과 검증",
+        "reason_summary": "실행 결과가 분석 응답 계약과 맞지 않아 답변으로 확정할 수 없습니다.",
+        "suggested_action": "대상 컬럼, 집계 기준, 결측값/숫자 형식을 확인해 주세요.",
+    },
+}
 
 _STAGE_PUBLIC_MESSAGES: dict[str, str] = {
     "question_understanding": "질문을 이해하는 중 오류가 발생했습니다. 질문을 조금 더 구체적으로 다시 입력해 주세요.",
@@ -140,6 +154,8 @@ def to_public_error(workflow_error: Mapping[str, Any] | None) -> Dict[str, Any]:
     public_details = _safe_public_error_details(
         details if isinstance(details, Mapping) else {}
     )
+    if not public_details:
+        public_details = _default_actionable_analysis_details(public_stage)
     if public_details and public_stage in _ACTIONABLE_ANALYSIS_STAGES:
         safe_message = _actionable_analysis_message(
             stage=public_stage,
@@ -254,6 +270,10 @@ def _safe_public_error_details(details: Mapping[str, Any]) -> Dict[str, str]:
             continue
         safe_details[key] = cleaned[:300]
     return safe_details
+
+
+def _default_actionable_analysis_details(stage: str) -> dict[str, str]:
+    return dict(_DEFAULT_ACTIONABLE_ANALYSIS_DETAILS.get(stage, {}))
 
 
 def _actionable_analysis_message(

@@ -123,7 +123,22 @@ data: <json>
   "preprocess_result": {},
   "visualization_result": {},
   "output_type": "...",
-  "output": {},
+  "output": {
+    "query_feedback": {
+      "title": "...",
+      "message": "...",
+      "actions": [
+        {"label": "...", "description": "..."}
+      ]
+    }
+  },
+  "query_feedback": {
+    "title": "...",
+    "message": "...",
+    "actions": [
+      {"label": "...", "description": "..."}
+    ]
+  },
   "status": "success|limited|unanswerable|failed|cancelled",
   "error_stage": "preprocess",
   "error_message": "오류 메시지",
@@ -151,6 +166,7 @@ data: <json>
 - `output_type`은 사용자-facing terminal type이다. fast path로 계산되더라도 최상위 done event는 `data_qa`로 정규화하고, 내부 fast-path 세부 타입은 `output.type`에 남길 수 있다.
 - `visualization_result`는 status가 `generated`일 때만 포함될 수 있다.
 - `output`은 orchestration 최종 payload를 전달할 때만 포함된다.
+- `query_feedback`은 backend가 사용자 질문 또는 오류 맥락을 바탕으로 만든 질문 개선 피드백이다. clarification/error 성격의 payload에서 top-level 또는 `output.query_feedback`으로 포함될 수 있으며, 프론트엔드는 이를 로컬 템플릿보다 우선 표시한다.
 - `status`는 `ChatService`가 최종 payload에서 계산하는 terminal 상태다. 성공은 `success`, 근거 제한은 `limited`/`unanswerable`, 실패/취소는 `failed`/`cancelled`로 표현한다.
 - `error_stage`, `error_message`, `retryable`은 실패 또는 취소 성격의 `done` payload에서만 포함될 수 있다.
 - `evidence_package`, `answer_quality`는 optional metadata다. 같은 값이 `output.evidence_package`, `output.answer_quality`에도 들어갈 수 있다.
@@ -181,7 +197,22 @@ data: <json>
     "output_type": "analysis_failed"
   },
   "output_type": "analysis_failed",
-  "output": {},
+  "query_feedback": {
+    "title": "...",
+    "message": "...",
+    "actions": [
+      {"label": "...", "description": "..."}
+    ]
+  },
+  "output": {
+    "query_feedback": {
+      "title": "...",
+      "message": "...",
+      "actions": [
+        {"label": "...", "description": "..."}
+      ]
+    }
+  },
   "evidence_package": {},
   "answer_quality": {}
 }
@@ -194,6 +225,7 @@ data: <json>
 - `stage`는 기존 호환 alias이며, 새 클라이언트는 `error_stage`를 우선 사용할 수 있다.
 - workflow 내부 진단은 `workflow_error.diagnostic_message`와 `workflow_error.details`에만 남긴다. SSE에는 `public_error`와 안전한 `message`/`error_message`만 노출하며, Pydantic schema명, 누락 field명, stack trace, file path 같은 내부 진단 문자열은 포함하지 않는다.
 - analysis code validation은 내부 안전 gate다. 내부 `workflow_error.stage` 또는 `workflow_error.details.internal_stage`가 `code_validation`일 수 있지만, public SSE의 `stage`, `error_stage`, `error_code`, `message`, `public_error`는 `analysis_repair_failed`로 정규화한다.
+- `query_feedback`은 `public_error`와 사용자 질문을 기반으로 생성되며, 내부 진단 문자열을 노출하지 않는다. action은 피드백 항목이며 자동 재실행용 `prompt`를 포함하지 않는다.
 - `evidence_package`, `answer_quality`가 workflow final state 또는 `output`에 있으면 `error` payload에도 보존된다.
 - 존재하지 않는 `source_id`를 새 채팅에서 요청한 경우 `session_id` 없이 `error_code="invalid_source_id"`를 반환할 수 있다.
 - router 단계 예외처럼 workflow 밖에서 발생한 오류는 `message` 중심의 단순 `error` payload로 떨어질 수 있으므로, 프론트엔드는 `message`를 계속 기본 표시값으로 사용한다.

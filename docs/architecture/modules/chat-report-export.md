@@ -83,13 +83,14 @@ FastAPI route와 SSE formatting을 담당한다. `ask_chat_stream()`과 `resume_
 - `thought`: `{phase, message, status}`.
 - `approval_required`: `{session_id, run_id, pending_approval, thought_steps}`.
 - `chunk`: `{delta}`.
-- `done`: `{answer, session_id, run_id, trace_id, thought_steps, preprocess_result, status, analysis_result?, visualization_result?, report_result?, output_type?, output?, evidence_package?, answer_quality?}`.
+- `done`: `{answer, session_id, run_id, trace_id, thought_steps, preprocess_result, status, analysis_result?, visualization_result?, report_result?, output_type?, output?, query_feedback?, evidence_package?, answer_quality?}`.
 
 ### 주의점
 
 - `done` payload에는 `preprocess_result` key가 항상 포함되며 값이 `None`일 수 있다.
 - `output_type`은 사용자-facing terminal type이다. fast path로 계산되더라도 최상위 done event는 `data_qa`로 정규화하고, 내부 fast-path 세부 타입은 `output.type`에 남길 수 있다.
-- `analysis_result`, `visualization_result`, `report_result`, `output`, `evidence_package`, `answer_quality`는 agent done event에 있을 때만 추가된다.
+- `analysis_result`, `visualization_result`, `report_result`, `output`, `query_feedback`, `evidence_package`, `answer_quality`는 agent done event에 있을 때만 추가된다.
+- `query_feedback`은 backend가 사용자 질문/오류 맥락을 LLM에 전달해 생성한 질문 개선 피드백이며, 프론트엔드는 로컬 복구 템플릿보다 우선 표시한다.
 - assistant message 저장은 stream이 끝난 뒤 final answer 기준으로 수행된다.
 
 ## Hotspot: `backend/app/modules/reports/service.py`

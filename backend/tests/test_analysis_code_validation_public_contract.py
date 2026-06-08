@@ -156,11 +156,46 @@ def _make_agent(snapshots: list[dict[str, Any]]) -> AgentClient:
     return AgentClient(workflow_runtime_factory=fake_runtime)
 
 
-def test_existing_sandbox_execution_public_message_contract_is_preserved() -> None:
-    assert (
-        public_message_for_stage("sandbox_execution")
-        == "분석 코드를 실행하는 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요."
+def test_sandbox_execution_failure_without_detail_uses_actionable_public_message() -> None:
+    workflow_error = build_workflow_error(
+        stage="sandbox_execution",
+        error_code="analysis_execution_failed",
+        source="analysis_validation",
+        output_type="analysis_failed",
+        retryable=True,
+        diagnostic_message="Traceback (most recent call last): generated code failed",
+        details={"diagnostic_message": "Traceback (most recent call last): generated code failed"},
     )
+
+    public_error = to_public_error(workflow_error)
+
+    assert public_error["stage"] == "sandbox_execution"
+    assert "잠시 후 다시 시도" not in public_error["message"]
+    assert "분석 코드 실행 단계" in public_error["message"]
+    assert "현재 데이터" in public_error["message"]
+    assert "대상 컬럼" in public_error["message"]
+    assert "Traceback" not in public_error["message"]
+
+
+def test_result_validation_failure_without_detail_uses_actionable_public_message() -> None:
+    workflow_error = build_workflow_error(
+        stage="result_validation",
+        error_code="analysis_validation_failed",
+        source="analysis_validation",
+        output_type="analysis_failed",
+        retryable=False,
+        diagnostic_message="validation error for AnalysisExecutionResult",
+        details={"schema_name": "AnalysisExecutionResult"},
+    )
+
+    public_error = to_public_error(workflow_error)
+
+    assert public_error["stage"] == "result_validation"
+    assert "잠시 후 다시 시도" not in public_error["message"]
+    assert "분석 결과 검증 단계" in public_error["message"]
+    assert "응답 계약" in public_error["message"]
+    assert "집계 기준" in public_error["message"]
+    assert "AnalysisExecutionResult" not in public_error["message"]
 
 
 def test_retry_exhausted_code_validation_maps_to_public_analysis_repair_failed(

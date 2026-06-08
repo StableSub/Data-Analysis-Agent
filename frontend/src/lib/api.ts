@@ -100,8 +100,21 @@ export interface ChatResponse {
   message?: string | null;
   retryable?: boolean;
   public_error?: PublicErrorPayload;
+  query_feedback?: QueryFeedbackPayload;
   evidence_package?: EvidencePackagePayload;
   answer_quality?: AnswerQualityPayload;
+}
+
+export interface QueryFeedbackActionPayload {
+  label: string;
+  description: string;
+  prompt?: string;
+}
+
+export interface QueryFeedbackPayload {
+  title: string;
+  message: string;
+  actions: QueryFeedbackActionPayload[];
 }
 
 export interface PublicErrorPayload {

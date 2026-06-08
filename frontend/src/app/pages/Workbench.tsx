@@ -215,6 +215,16 @@ const buildRepairGuidance = (
   response: ChatResponse | null,
   state: ReturnType<typeof useAnalysisPipeline>["state"],
 ): RepairGuidance | undefined => {
+  const backendFeedback = response?.query_feedback;
+  if (
+    backendFeedback
+    && backendFeedback.title.trim()
+    && backendFeedback.message.trim()
+    && backendFeedback.actions.length > 0
+  ) {
+    return backendFeedback;
+  }
+
   const outputType = response?.output_type ?? "";
   const status = response?.status ?? "";
   const isPlanValidationFailure =
@@ -244,67 +254,53 @@ const buildRepairGuidance = (
 
   if (isFailure && isPlanValidationFailure) {
     actions.push({
-      label: "지표와 기준 컬럼 지정",
+      label: "없는 컬럼은 실제 컬럼명으로 바꾸기",
       description: availableColumns
-        ? `사용 가능 컬럼: ${availableColumns}`
-        : "분석 목표와 기준 컬럼을 먼저 정합니다.",
-      prompt: availableColumns
-        ? `사용 가능한 컬럼(${availableColumns}) 중에서 분석 목표, 기준 컬럼, 집계 지표를 정해 다시 실행할 질문을 작성해줘.`
-        : "분석 목표, 기준 컬럼, 집계 지표를 정해 다시 실행할 질문을 작성해줘.",
+        ? `오류를 피하려면 데이터에 있는 컬럼명을 그대로 사용해 주세요. 사용 가능 컬럼: ${availableColumns}`
+        : "오류를 피하려면 질문에 쓴 컬럼명이 현재 데이터에 실제로 있는지 먼저 확인해 주세요.",
     });
 
     if (missing) {
       actions.push({
-        label: "전처리 결과 확인",
-        description: `${missing} 처리 상태를 먼저 확인합니다.`,
-        prompt: `전처리 결과와 '${missing}' 결측 처리 상태를 요약해줘.`,
+        label: "결측 조건을 질문에 반영하기",
+        description: `'${missing}' 값이 비어 있다면 평균/비율/원인 추정 전에 결측을 제외할지, 결측 자체를 볼지 적어 주세요.`,
       });
     }
 
     actions.push({
-      label: "답 가능한 질문 추천",
-      description: availableColumns
-        ? `사용 가능 컬럼: ${availableColumns}`
-        : "현재 데이터로 가능한 질문을 다시 고릅니다.",
-      prompt: availableColumns
-        ? `사용 가능한 컬럼(${availableColumns})을 기준으로 바로 답할 수 있는 분석 질문 3개를 추천해줘.`
-        : "이 데이터에서 바로 답할 수 있는 분석 질문 3개를 추천해줘.",
+      label: "계산 방식까지 한 문장에 쓰기",
+      description: "건수, 비율, 평균, 합계, 이상치 확인처럼 원하는 결과 형태와 기준 컬럼을 함께 적으면 계획 오류를 줄일 수 있습니다.",
     });
 
     return {
-      title: "분석 계획 오류 해결",
-      message: response?.error_message ?? "분석 목표, 기준 컬럼, 집계 기준이 현재 데이터와 맞지 않습니다.",
+      title: "질문을 실행 가능한 형태로 다듬어 보세요",
+      message: response?.error_message
+        ?? "분석 목표, 기준 컬럼, 집계 방식 중 일부가 현재 데이터와 맞지 않습니다. 아래 항목을 보완해 질문을 다시 작성해 보세요.",
       actions: actions.slice(0, 3),
     };
   }
 
   if (isFailure && isAnalysisRepairFailure) {
     actions.push({
-      label: "질문 범위 좁히기",
-      description: reasonSummary ?? `${failedOperation}에 필요한 컬럼 상태를 확인합니다.`,
-      prompt: `'${failedColumn}' 컬럼의 타입, 결측값, 숫자 변환 가능 여부를 요약해줘.`,
+      label: "컬럼 타입에 맞는 연산 쓰기",
+      description: reasonSummary
+        ?? `'${failedColumn}'에 ${failedOperation}을 적용하려면 숫자, 날짜, 범주 같은 데이터 타입이 연산과 맞아야 합니다.`,
     });
 
     actions.push({
-      label: "기준 컬럼 다시 선택",
-      description: group
-        ? `${group} 기준과 ${failedColumn}만 사용합니다.`
-        : `${failedColumn} 중심으로 질문 범위를 줄입니다.`,
-      prompt: group
-        ? `'${failedColumn}' 컬럼을 '${group}' 기준으로만 다시 분석해줘.`
-        : `'${failedColumn}' 컬럼만 사용해서 다시 답할 수 있는 분석 질문을 작성해줘.`,
-    });
-
-    actions.push({
-      label: "원본 데이터 상태 확인",
+      label: "데이터 조건을 질문에 명시하기",
       description: suggestedAction ?? (
         missing
-          ? `${missing} 결측 상태를 먼저 확인합니다.`
-          : "컬럼 타입과 결측 상태를 먼저 확인합니다."
+          ? `'${missing}' 결측이 많다면 결측을 제외할지, 결측 원인을 먼저 볼지 질문에 적어 주세요.`
+          : "오류를 피하려면 숫자 변환, 날짜 형식, 결측 제외 같은 데이터 조건을 질문에 함께 적어 주세요."
       ),
-      prompt: missing
-        ? `'${missing}' 결측치와 주요 컬럼 타입을 먼저 요약해줘.`
-        : "원본 데이터의 주요 컬럼 타입과 결측 상태를 요약해줘.",
+    });
+
+    actions.push({
+      label: "한 번에 한 목적만 묻기",
+      description: group
+        ? `예: '${group}' 기준의 ${failedOperation}처럼 대상 컬럼, 기준, 연산을 하나씩 맞춰 질문해 주세요.`
+        : "리포트, 원인 추정, 제품별 집계를 한 번에 섞기보다 먼저 핵심 계산 하나를 명확히 요청해 주세요.",
     });
 
     return {
@@ -312,41 +308,43 @@ const buildRepairGuidance = (
         ? `분석 실행 오류 해결 (${publicError?.stage ?? response?.error_stage} 단계)`
         : "분석 실행 오류 해결",
       message: response?.error_message
-        ?? "자동 코드 수정으로도 실행 가능한 분석을 만들지 못했습니다. 분석 범위나 기준 컬럼을 좁혀 다시 실행해 주세요.",
+        ?? "자동 코드 수정으로도 실행 가능한 분석을 만들지 못했습니다. 오류를 피하려면 컬럼 타입, 결측 조건, 원하는 연산을 더 구체적으로 적어 주세요.",
       actions: actions.slice(0, 3),
     };
   }
 
+  actions.push({
+    label: "무엇을 계산할지 쓰기",
+    description: "건수, 비율, 평균, 합계, 이상치 여부, 원인 추정처럼 원하는 결과 형태를 먼저 적어 주세요.",
+  });
+
   if (group) {
     actions.push({
-      label: "그룹 기준으로 좁히기",
-      description: `${group}별 ${metric} 차이를 먼저 확인합니다.`,
-      prompt: `'${group}'별 '${metric}' 차이를 비교해줘.`,
+      label: "대상 컬럼과 기준을 함께 쓰기",
+      description: `예: '${group}'별 '${metric}' 평균처럼 대상 컬럼과 그룹 기준을 한 문장에 같이 적어 주세요.`,
     });
-  }
-
-  if (missing) {
+  } else {
     actions.push({
-      label: "결측치부터 확인",
-      description: `${missing} 값이 빠진 이유와 영향을 먼저 봅니다.`,
-      prompt: `'${missing}' 결측치가 분석 결과에 어떤 영향을 주는지 설명해줘.`,
+      label: "대상 컬럼과 기준을 함께 쓰기",
+      description: `예: '${metric}' 평균, 날짜별 건수처럼 분석 대상과 기준을 한 문장에 같이 적어 주세요.`,
     });
   }
 
   actions.push({
-    label: "질문 다시 쓰기",
-    description: availableColumns ? `사용 가능 컬럼: ${availableColumns}` : "데이터 구조를 기준으로 다시 시작합니다.",
-    prompt: availableColumns
-      ? `사용 가능한 컬럼(${availableColumns})을 기준으로 답할 수 있는 분석 질문 3개를 추천해줘.`
-      : "이 데이터에서 처음 물어볼 만한 분석 질문 3개를 추천해줘.",
+    label: "실제 컬럼명 그대로 쓰기",
+    description: missing
+      ? `'${missing}' 결측 조건과 함께, 오타나 없는 컬럼 대신 사용 가능 컬럼 중 이름을 그대로 적어 주세요${availableColumns ? `: ${availableColumns}` : "."}`
+      : availableColumns
+        ? `오류를 피하려면 오타나 없는 컬럼 대신 사용 가능 컬럼 중 이름을 그대로 적어 주세요: ${availableColumns}`
+        : "오류를 피하려면 질문에 쓴 컬럼명이 현재 데이터에 있는지 확인해 주세요.",
   });
 
   return {
-    title: isFailure ? "다시 시도하기 전에 선택하세요" : "질문을 조금 더 구체화하세요",
+    title: isFailure ? "오류를 피하도록 질문을 조정하세요" : "좋은 분석 질문으로 바꾸는 방법",
     message: response?.error_message ?? (
       isFailure
-        ? "오류가 난 단계를 줄이거나 컬럼 범위를 좁혀 다시 실행할 수 있습니다."
-        : "분석 기준이나 대상 컬럼을 지정하면 바로 다음 실행으로 이어집니다."
+        ? "오류가 난 질문은 바로 다시 실행하기보다 컬럼, 기준, 연산 조건을 먼저 점검해 보세요."
+        : "현재 질문은 분석 기준이나 대상 컬럼이 부족합니다. 아래 요소를 채워 질문을 다시 작성해 보세요."
     ),
     actions: actions.slice(0, 3),
   };

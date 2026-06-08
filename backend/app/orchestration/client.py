@@ -20,6 +20,7 @@ from .error_contract import (
     to_public_error,
 )
 from .state_view import build_approval_wait_step, collect_thought_steps, make_thought_step
+from ..modules.query_feedback import QueryFeedbackContext, QueryFeedbackGenerator
 
 
 class AgentClient:
@@ -28,9 +29,13 @@ class AgentClient:
         *,
         workflow_runtime_factory: Any,
         default_model: str = "gpt-5-nano",
+        query_feedback_generator: QueryFeedbackGenerator | None = None,
     ) -> None:
         self.default_model = default_model
         self._workflow_runtime_factory = workflow_runtime_factory
+        self.query_feedback_generator = query_feedback_generator or QueryFeedbackGenerator(
+            default_model=default_model,
+        )
 
     async def astream_with_trace(
         self,
@@ -186,6 +191,22 @@ class AgentClient:
                     )
                     if isinstance(step, dict)
                 ]
+                query_feedback = self._build_error_query_feedback(
+                    final_state=final_state,
+                    public_error={
+                        **public_error,
+                        "stage": error_stage,
+                        "message": error_message if isinstance(error_message, str) else answer,
+                    },
+                    output_payload=output_payload,
+                    fallback_message=fallback_message,
+                    model_id=model_id,
+                )
+                if isinstance(output_payload, dict) and query_feedback is not None:
+                    output_payload = {
+                        **output_payload,
+                        "query_feedback": query_feedback,
+                    }
                 error_event: Dict[str, Any] = {
                     "type": "error",
                     "status": "failed",
@@ -205,6 +226,8 @@ class AgentClient:
                     "thought_steps": thought_steps,
                     "output_type": public_error["output_type"] if has_workflow_error else self._extract_output_type(final_state),
                 }
+                if query_feedback is not None:
+                    error_event["query_feedback"] = query_feedback
                 if has_workflow_error:
                     error_event["message"] = public_error["message"]
                     error_event["public_error"] = public_error
@@ -240,6 +263,9 @@ class AgentClient:
             output = final_state.get("output")
             if isinstance(output, dict):
                 done_event["output"] = output
+                query_feedback = output.get("query_feedback")
+                if isinstance(query_feedback, dict):
+                    done_event["query_feedback"] = query_feedback
 
             # optional metadata
             evidence_package = final_state.get("evidence_package")
@@ -344,6 +370,38 @@ class AgentClient:
                     return "data_qa"
                 return output_type
         return ""
+
+    def _build_error_query_feedback(
+        self,
+        *,
+        final_state: Dict[str, Any],
+        public_error: Dict[str, Any],
+        output_payload: Any,
+        fallback_message: str,
+        model_id: str | None,
+    ) -> Dict[str, Any] | None:
+        existing = _extract_query_feedback(output_payload)
+        if existing is not None:
+            return existing
+
+        stage = _pick_string(public_error, "stage") or "workflow"
+        message = _pick_string(public_error, "message") or fallback_message
+        issue_type = "planning_error" if stage in {"plan_validation", "planning_failed"} else "analysis_error"
+        feedback = self.query_feedback_generator.generate(
+            QueryFeedbackContext(
+                user_input=str(final_state.get("user_input") or ""),
+                issue_type=issue_type,
+                stage=stage,
+                message=message,
+                missing_column=_pick_string(public_error, "failed_column"),
+                operation=_pick_string(public_error, "operation"),
+                reason_summary=_pick_string(public_error, "reason_summary"),
+                suggested_action=_pick_string(public_error, "suggested_action"),
+                available_columns=_extract_available_columns(final_state),
+            ),
+            model_id=model_id,
+        )
+        return feedback.model_dump(exclude_none=True)
 
     @staticmethod
     def _extract_interrupt_payload(snapshot: Dict[str, Any]) -> Dict[str, Any] | None:
@@ -586,3 +644,29 @@ class AgentClient:
         )
         if isinstance(final_state, dict):
             yield final_state
+
+
+def _pick_string(payload: Dict[str, Any], key: str) -> str | None:
+    value = payload.get(key)
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def _extract_query_feedback(payload: Any) -> Dict[str, Any] | None:
+    if not isinstance(payload, dict):
+        return None
+    query_feedback = payload.get("query_feedback")
+    if isinstance(query_feedback, dict):
+        return query_feedback
+    return None
+
+
+def _extract_available_columns(final_state: Dict[str, Any]) -> list[str]:
+    dataset_context = final_state.get("dataset_context")
+    if not isinstance(dataset_context, dict):
+        return []
+    columns = dataset_context.get("columns")
+    if not isinstance(columns, list):
+        return []
+    return [column for column in columns if isinstance(column, str)]

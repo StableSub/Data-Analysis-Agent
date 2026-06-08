@@ -5,6 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from ..analysis.schemas import AnalysisPlan
+from ..query_feedback import QueryFeedback
 
 
 PlanningRoute = Literal["general_question", "analysis", "fallback_rag"]
@@ -23,6 +24,7 @@ class PlanningResult(BaseModel):
     route: PlanningRoute
     needs_clarification: bool = False
     clarification_question: str = ""
+    query_feedback: QueryFeedback | None = None
     ask_analysis: bool = False
     preprocess_required: bool = False
     analysis_plan: AnalysisPlan | None = None

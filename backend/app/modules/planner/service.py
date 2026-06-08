@@ -24,6 +24,7 @@ from ..analysis.schemas import (
 )
 from ..profiling.schemas import DatasetContext
 from ..profiling.prompt_context import trim_fast_path_bulk_context_fields
+from ..query_feedback import QueryFeedback, QueryFeedbackContext, QueryFeedbackGenerator
 from .query_validation import (
     find_explicit_column_issue,
     should_preflight_explicit_column_issue,
@@ -133,11 +134,15 @@ class PlannerService:
         dataset_context_service: DatasetContextProvider,
         analysis_processor: AnalysisProcessor,
         default_model: str = "gpt-5-nano",
+        query_feedback_generator: QueryFeedbackGenerator | None = None,
     ) -> None:
         self.dataset_context_service = dataset_context_service
         self.analysis_processor = analysis_processor
         self.default_model = default_model
         self.llm = LLMGateway(default_model=default_model)
+        self.query_feedback_generator = query_feedback_generator or QueryFeedbackGenerator(
+            default_model=default_model,
+        )
 
     def plan(
         self,
@@ -166,10 +171,23 @@ class PlannerService:
                 context.columns,
             )
             if explicit_column_issue is not None:
+                clarification_question = explicit_column_issue.clarification_message()
                 return PlanningResult(
                     route="analysis",
                     needs_clarification=True,
-                    clarification_question=explicit_column_issue.clarification_message(),
+                    clarification_question=clarification_question,
+                    query_feedback=self._build_query_feedback(
+                        QueryFeedbackContext(
+                            user_input=user_input,
+                            issue_type="missing_column",
+                            stage="plan_validation",
+                            message=clarification_question,
+                            missing_column=explicit_column_issue.missing_column,
+                            related_columns=list(explicit_column_issue.related_columns),
+                            available_columns=list(explicit_column_issue.available_columns),
+                        ),
+                        model_id=model_id,
+                    ),
                     ask_analysis=True,
                     preprocess_required=False,
                     need_visualization=_contains_any(
@@ -247,10 +265,23 @@ class PlannerService:
 
         explicit_column_issue = find_explicit_column_issue(user_input, context.columns)
         if explicit_column_issue is not None:
+            clarification_question = explicit_column_issue.clarification_message()
             return PlanningResult(
                 route="analysis",
                 needs_clarification=True,
-                clarification_question=explicit_column_issue.clarification_message(),
+                clarification_question=clarification_question,
+                query_feedback=self._build_query_feedback(
+                    QueryFeedbackContext(
+                        user_input=user_input,
+                        issue_type="missing_column",
+                        stage="plan_validation",
+                        message=clarification_question,
+                        missing_column=explicit_column_issue.missing_column,
+                        related_columns=list(explicit_column_issue.related_columns),
+                        available_columns=list(explicit_column_issue.available_columns),
+                    ),
+                    model_id=model_id,
+                ),
                 ask_analysis=decision.ask_analysis,
                 preprocess_required=decision.preprocess_required,
                 need_visualization=decision.need_visualization,
@@ -272,10 +303,21 @@ class PlannerService:
             dataset_meta=metadata,
         )
         if understanding.ambiguity_status != "clear":
+            clarification_message = understanding.clarification_message
             return PlanningResult(
                 route="analysis",
                 needs_clarification=True,
-                clarification_question=understanding.clarification_message,
+                clarification_question=clarification_message,
+                query_feedback=self._build_query_feedback(
+                    QueryFeedbackContext(
+                        user_input=user_input,
+                        issue_type="clarification",
+                        stage="question_understanding",
+                        message=clarification_message,
+                        available_columns=context.columns,
+                    ),
+                    model_id=model_id,
+                ),
                 ask_analysis=decision.ask_analysis,
                 preprocess_required=decision.preprocess_required,
                 need_visualization=decision.need_visualization,
@@ -310,6 +352,16 @@ class PlannerService:
                 route="analysis",
                 needs_clarification=True,
                 clarification_question=clarification_question,
+                query_feedback=self._build_query_feedback(
+                    QueryFeedbackContext(
+                        user_input=user_input,
+                        issue_type="clarification",
+                        stage="plan_validation",
+                        message=clarification_question,
+                        available_columns=context.columns,
+                    ),
+                    model_id=model_id,
+                ),
                 ask_analysis=decision.ask_analysis,
                 preprocess_required=decision.preprocess_required,
                 need_visualization=decision.need_visualization,
@@ -331,6 +383,14 @@ class PlannerService:
             need_report=decision.need_report,
             guideline_context_used=decision.guideline_context_used,
         )
+
+    def _build_query_feedback(
+        self,
+        context: QueryFeedbackContext,
+        *,
+        model_id: str | None,
+    ) -> QueryFeedback:
+        return self.query_feedback_generator.generate(context, model_id=model_id)
 
     def _build_decision(
         self,

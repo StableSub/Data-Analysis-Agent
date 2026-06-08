@@ -28,6 +28,7 @@ import {
   type GuidelineResponse,
   type PendingApprovalPayload,
   type PublicErrorPayload,
+  type QueryFeedbackPayload,
   type ThoughtStepPayload,
 } from "../../lib/api";
 import {
@@ -1509,6 +1510,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
           const terminalStatus = pickString(record.status);
           const evidencePackage = pickRecordFromDone(record, "evidence_package");
           const answerQuality = pickRecordFromDone(record, "answer_quality");
+          const queryFeedback = pickRecordFromDone(record, "query_feedback");
           const publicError = asRecord(record.public_error);
           const answerQualityStatus = answerQuality ? pickString(answerQuality.status) : null;
           const errorStage = pickString(record.error_stage);
@@ -1575,6 +1577,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
               error_message: errorMessage,
               retryable: typeof record.retryable === "boolean" ? record.retryable : undefined,
               public_error: (publicError as PublicErrorPayload | null) ?? undefined,
+              query_feedback: (queryFeedback as QueryFeedbackPayload | null) ?? undefined,
               evidence_package: (evidencePackage as EvidencePackagePayload | null) ?? undefined,
               answer_quality: (answerQuality as AnswerQualityPayload | null) ?? undefined,
             });
@@ -1654,6 +1657,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
             (outputRecord ? pickString(outputRecord.type) : null);
           const evidencePackage = pickRecordFromDone(record, "evidence_package");
           const answerQuality = pickRecordFromDone(record, "answer_quality");
+          const queryFeedback = pickRecordFromDone(record, "query_feedback");
           const publicError = asRecord(record.public_error);
           const errorStage = pickString(record.stage) ?? pickString(record.error_stage);
           const errorCode = pickString(record.error_code);
@@ -1701,6 +1705,7 @@ export function useAnalysisPipeline(): UseAnalysisPipelineReturn {
                 error_message: message,
                 retryable: typeof record.retryable === "boolean" ? record.retryable : undefined,
                 public_error: (publicError as PublicErrorPayload | null) ?? undefined,
+                query_feedback: (queryFeedback as QueryFeedbackPayload | null) ?? undefined,
                 evidence_package: (evidencePackage as EvidencePackagePayload | null) ?? undefined,
                 answer_quality: (answerQuality as AnswerQualityPayload | null) ?? undefined,
               });

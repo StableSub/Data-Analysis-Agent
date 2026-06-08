@@ -146,10 +146,23 @@ class AnswerQualityPayload(TypedDict, total=False):
     warnings: list[EvidenceWarningPayload]
 
 
+class QueryFeedbackActionPayload(TypedDict, total=False):
+    label: str
+    description: str
+    prompt: str
+
+
+class QueryFeedbackPayload(TypedDict, total=False):
+    title: str
+    message: str
+    actions: list[QueryFeedbackActionPayload]
+
+
 class OutputPayload(TypedDict, total=False):
     type: str
     content: str
     public_error: Dict[str, Any]
+    query_feedback: QueryFeedbackPayload
     evidence_package: EvidencePackagePayload
     answer_quality: AnswerQualityPayload
 
@@ -169,6 +182,7 @@ class PlanningResultPayload(TypedDict, total=False):
     route: str
     needs_clarification: bool
     clarification_question: str
+    query_feedback: QueryFeedbackPayload
     preprocess_required: bool
     analysis_plan: Dict[str, Any] | None
     need_visualization: bool
@@ -203,6 +217,7 @@ class AgentState(TypedDict, total=False):
     analysis_run_id: str
     clarification_question: str
     clarification_answer: str
+    query_feedback: QueryFeedbackPayload
     planning_result: PlanningResultPayload
     dataset_context: DatasetContextPayload
     guideline_context: GuidelineContextPayload
