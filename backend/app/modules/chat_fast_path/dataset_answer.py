@@ -3,13 +3,8 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
 
-
-_MAX_LISTED_COLUMNS = 20
-_MAX_SAMPLE_ROWS = 3
-_MAX_SAMPLE_COLUMNS = 8
-_MAX_MISSING_COLUMNS = 10
+from .dataset_answer_formatter import build_answer_content
 
 _ANALYTIC_KEYWORDS = (
     "평균",
@@ -75,13 +70,13 @@ _COMPLEX_DATASET_LOOKUP_KEYWORDS = (
 
 @dataclass(frozen=True)
 class FastDatasetAnswer:
-    output: dict[str, Any]
-    fast_path_result: dict[str, Any]
+    output: dict[str, object]
+    fast_path_result: dict[str, object]
 
 
 def try_fast_dataset_answer(
     question: str,
-    dataset_context: Mapping[str, Any],
+    dataset_context: Mapping[str, object],
 ) -> FastDatasetAnswer | None:
     """Return a metadata-only answer for simple dataset lookup questions."""
 
@@ -95,7 +90,7 @@ def try_fast_dataset_answer(
     if intent is None:
         return None
 
-    content = _build_answer_content(intent, dataset_context)
+    content = build_answer_content(intent, dataset_context)
     if not content:
         return None
 
@@ -120,6 +115,8 @@ def _normalize_question(question: str) -> str:
 
 def _detect_dataset_lookup_intent(question: str) -> str | None:
     if _has_complex_dataset_lookup_keyword(question):
+        return None
+    if _is_interpretive_column_summary_question(question):
         return None
 
     if _matches_intent(question, "summary"):
@@ -156,6 +153,66 @@ def _detect_dataset_lookup_intent(question: str) -> str | None:
 
 def _has_complex_dataset_lookup_keyword(question: str) -> bool:
     return any(keyword in question for keyword in _COMPLEX_DATASET_LOOKUP_KEYWORDS)
+
+
+def _is_interpretive_column_summary_question(question: str) -> bool:
+    if any(
+        phrase in question
+        for phrase in (
+            "데이터셋 요약",
+            "데이터 요약",
+            "데이터셋 설명",
+            "데이터 설명",
+            "dataset summary",
+            "describe dataset",
+        )
+    ):
+        return True
+
+    has_column = any(
+        keyword in question
+        for keyword in ("컬럼", "열", "변수", "column", "columns", "schema")
+    )
+    if not has_column:
+        return False
+
+    return any(
+        keyword in question
+        for keyword in (
+            "주요",
+            "전체",
+            "모든",
+            "전부",
+            "목록",
+            "리스트",
+            "스키마",
+            "데이터 타입",
+            "자료형",
+            "의미",
+            "뜻",
+            "설명",
+            "해석",
+            "역할",
+            "요약",
+            "정리",
+            "뭔지",
+            "all columns",
+            "every column",
+            "column list",
+            "schema",
+            "dtype",
+            "dtypes",
+            "data type",
+            "data types",
+            "meaning",
+            "describe",
+            "explain",
+            "summarize",
+            "summary",
+            "purpose",
+            "role",
+        )
+    )
 
 
 def _matches_intent(question: str, intent: str) -> bool:
@@ -212,229 +269,3 @@ def _matches_intent(question: str, intent: str) -> bool:
 
 def _english_token_mentioned(*, question: str, token: str) -> bool:
     return re.search(rf"(?<![a-z0-9_]){re.escape(token)}(?![a-z0-9_])", question) is not None
-
-
-def _build_answer_content(intent: str, dataset_context: Mapping[str, Any]) -> str:
-    if intent == "summary":
-        return _format_summary_answer(dataset_context)
-    if intent == "missing":
-        return _format_missing_answer(dataset_context)
-    if intent == "sample_rows":
-        return _format_sample_rows_answer(dataset_context)
-    if intent == "shape":
-        return _format_shape_answer(dataset_context)
-    if intent == "row_count":
-        return _format_row_count_answer(dataset_context)
-    if intent == "column_count":
-        return _format_column_count_answer(dataset_context)
-    if intent in {
-        "numeric_columns",
-        "categorical_columns",
-        "datetime_columns",
-        "boolean_columns",
-        "identifier_columns",
-    }:
-        return _format_typed_columns_answer(intent, dataset_context)
-    if intent == "column_types":
-        return _format_column_types_answer(dataset_context)
-    if intent == "columns":
-        return _format_columns_answer(dataset_context)
-    return ""
-
-
-def _format_summary_answer(dataset_context: Mapping[str, Any]) -> str:
-    filename = _as_text(dataset_context.get("filename")) or "선택된 데이터셋"
-    row_count = _as_int(dataset_context.get("row_count_total"))
-    column_count = _as_int(dataset_context.get("column_count"))
-    columns = _as_text_list(dataset_context.get("columns"))
-    missing_summary = _build_missing_summary(dataset_context)
-
-    lines = [
-        f"{filename} 데이터셋은 {row_count:,}행 {column_count:,}열로 구성되어 있습니다.",
-        _format_column_preview(columns),
-    ]
-    if missing_summary:
-        lines.append(missing_summary)
-    return "\n".join(line for line in lines if line)
-
-
-def _format_columns_answer(dataset_context: Mapping[str, Any]) -> str:
-    columns = _as_text_list(dataset_context.get("columns"))
-    if not columns:
-        return "이 데이터셋에서 확인된 컬럼이 없습니다."
-
-    dtypes = _as_mapping(dataset_context.get("dtypes"))
-    column_items = []
-    for column in columns[:_MAX_LISTED_COLUMNS]:
-        dtype = _as_text(dtypes.get(column))
-        column_items.append(f"{column} ({dtype})" if dtype else column)
-
-    suffix = ""
-    if len(columns) > _MAX_LISTED_COLUMNS:
-        suffix = f"\n외 {len(columns) - _MAX_LISTED_COLUMNS:,}개 컬럼이 더 있습니다."
-    return f"총 {len(columns):,}개 컬럼입니다.\n" + ", ".join(column_items) + suffix
-
-
-def _format_column_types_answer(dataset_context: Mapping[str, Any]) -> str:
-    columns = _as_text_list(dataset_context.get("columns"))
-    dtypes = _as_mapping(dataset_context.get("dtypes"))
-    if not columns or not dtypes:
-        return "데이터 타입 정보를 확인할 수 없습니다."
-
-    type_items = []
-    for column in columns[:_MAX_LISTED_COLUMNS]:
-        dtype = _as_text(dtypes.get(column)) or "unknown"
-        type_items.append(f"{column}: {dtype}")
-
-    suffix = ""
-    if len(columns) > _MAX_LISTED_COLUMNS:
-        suffix = f"\n외 {len(columns) - _MAX_LISTED_COLUMNS:,}개 컬럼의 타입이 더 있습니다."
-    return f"총 {len(columns):,}개 컬럼의 데이터 타입입니다.\n" + ", ".join(type_items) + suffix
-
-
-def _format_typed_columns_answer(intent: str, dataset_context: Mapping[str, Any]) -> str:
-    type_specs = {
-        "numeric_columns": ("숫자형", "numeric_columns"),
-        "categorical_columns": ("범주형", "categorical_columns"),
-        "datetime_columns": ("날짜/시간형", "datetime_columns"),
-        "boolean_columns": ("불리언", "boolean_columns"),
-        "identifier_columns": ("식별자", "identifier_columns"),
-    }
-    label, context_key = type_specs[intent]
-    columns = _as_text_list(dataset_context.get(context_key))
-    if not columns:
-        return f"확인된 {label} 컬럼이 없습니다."
-
-    dtypes = _as_mapping(dataset_context.get("dtypes"))
-    column_items = []
-    for column in columns[:_MAX_LISTED_COLUMNS]:
-        dtype = _as_text(dtypes.get(column))
-        column_items.append(f"{column} ({dtype})" if dtype else column)
-
-    suffix = ""
-    if len(columns) > _MAX_LISTED_COLUMNS:
-        suffix = f"\n외 {len(columns) - _MAX_LISTED_COLUMNS:,}개 {label} 컬럼이 더 있습니다."
-    return f"총 {len(columns):,}개 {label} 컬럼입니다.\n" + ", ".join(column_items) + suffix
-
-
-def _format_sample_rows_answer(dataset_context: Mapping[str, Any]) -> str:
-    sample_rows = _as_records(dataset_context.get("sample_rows"))
-    if not sample_rows:
-        return "표시할 샘플 행이 없습니다."
-
-    columns = list(sample_rows[0].keys())[:_MAX_SAMPLE_COLUMNS]
-    header = " | ".join(columns)
-    separator = " | ".join("---" for _ in columns)
-    rows = [
-        " | ".join(_format_value(row.get(column)) for column in columns)
-        for row in sample_rows[:_MAX_SAMPLE_ROWS]
-    ]
-    return "샘플 행입니다.\n\n" + "\n".join([header, separator, *rows])
-
-
-def _format_shape_answer(dataset_context: Mapping[str, Any]) -> str:
-    row_count = _as_int(dataset_context.get("row_count_total"))
-    column_count = _as_int(dataset_context.get("column_count"))
-    return f"전체 데이터셋은 {row_count:,}행 {column_count:,}열입니다."
-
-
-def _format_row_count_answer(dataset_context: Mapping[str, Any]) -> str:
-    row_count = _as_int(dataset_context.get("row_count_total"))
-    return f"전체 데이터셋은 {row_count:,}행입니다."
-
-
-def _format_column_count_answer(dataset_context: Mapping[str, Any]) -> str:
-    column_count = _as_int(dataset_context.get("column_count"))
-    return f"전체 데이터셋은 {column_count:,}열입니다."
-
-
-def _format_missing_answer(dataset_context: Mapping[str, Any]) -> str:
-    missing_summary = _build_missing_summary(dataset_context)
-    if not missing_summary:
-        return "결측치 요약 정보를 확인할 수 없습니다."
-    return missing_summary
-
-
-def _build_missing_summary(dataset_context: Mapping[str, Any]) -> str:
-    quality_summary = _as_mapping(dataset_context.get("quality_summary"))
-    missing_total = _as_int(quality_summary.get("missing_total"))
-    missing_ratio = _as_float(quality_summary.get("missing_ratio"))
-    top_missing_columns = _as_records(quality_summary.get("top_missing_columns"))
-
-    if missing_total == 0:
-        return "프로파일 기준 확인된 결측치는 없습니다."
-
-    ratio_text = f"{missing_ratio:.2%}" if missing_ratio > 0 else "0.00%"
-    lines = [f"프로파일 기준 결측치는 총 {missing_total:,}개이며, 전체 셀의 {ratio_text}입니다."]
-    if top_missing_columns:
-        items = []
-        for item in top_missing_columns[:_MAX_MISSING_COLUMNS]:
-            column = _as_text(item.get("column"))
-            count = _as_int(item.get("missing_count"))
-            rate = _as_float(item.get("missing_rate"))
-            if column:
-                items.append(f"{column}: {count:,}개 ({rate:.2%})")
-        if items:
-            lines.append("결측치가 많은 컬럼은 " + ", ".join(items) + "입니다.")
-    return "\n".join(lines)
-
-
-def _format_column_preview(columns: list[str]) -> str:
-    if not columns:
-        return ""
-    preview = ", ".join(columns[:_MAX_LISTED_COLUMNS])
-    if len(columns) > _MAX_LISTED_COLUMNS:
-        preview = f"{preview} 외 {len(columns) - _MAX_LISTED_COLUMNS:,}개"
-    return f"컬럼은 총 {len(columns):,}개이며, {preview} 등이 있습니다."
-
-
-def _as_text(value: object) -> str:
-    if value is None:
-        return ""
-    return str(value).strip()
-
-
-def _as_int(value: object) -> int:
-    if isinstance(value, bool):
-        return 0
-    if isinstance(value, int):
-        return value
-    if isinstance(value, float):
-        return int(value)
-    if isinstance(value, str) and value.strip().isdigit():
-        return int(value.strip())
-    return 0
-
-
-def _as_float(value: object) -> float:
-    if isinstance(value, bool):
-        return 0.0
-    if isinstance(value, (int, float)):
-        return float(value)
-    text = str(value or "").strip()
-    if text.replace(".", "", 1).isdigit():
-        return float(text)
-    return 0.0
-
-
-def _as_text_list(value: object) -> list[str]:
-    if not isinstance(value, list):
-        return []
-    return [text for item in value if (text := _as_text(item))]
-
-
-def _as_mapping(value: object) -> Mapping[str, Any]:
-    return value if isinstance(value, Mapping) else {}
-
-
-def _as_records(value: object) -> list[Mapping[str, Any]]:
-    if not isinstance(value, list):
-        return []
-    return [item for item in value if isinstance(item, Mapping)]
-
-
-def _format_value(value: object) -> str:
-    text = _as_text(value)
-    if not text:
-        return ""
-    return text.replace("\n", " ")[:80]

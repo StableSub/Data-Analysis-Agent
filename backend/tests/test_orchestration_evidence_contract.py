@@ -2,25 +2,36 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+from collections.abc import AsyncIterator, Mapping
 from types import SimpleNamespace
 from typing import Any, cast
 
 from backend.app.orchestration import ai, builder
+from backend.app.orchestration.evidence import (
+    build_evidence_contract,
+    is_dataset_metadata_question,
+)
 from backend.app.orchestration.workflows import analysis
-from backend.app.orchestration.evidence import build_evidence_contract
 from backend.app.modules.chat.service import ChatService
 
 
-def _warning_codes(payload: dict) -> set[str]:
-    return {str(warning.get("code")) for warning in payload.get("warnings", [])}
+def _warning_codes(payload: Mapping[str, object]) -> set[str]:
+    warnings = payload.get("warnings", [])
+    if not isinstance(warnings, list):
+        return set()
+    return {
+        str(warning.get("code"))
+        for warning in warnings
+        if isinstance(warning, Mapping)
+    }
 
 
-async def _fake_agent_stream(*events: dict[str, Any]):
+async def _fake_agent_stream(*events: dict[str, Any]) -> AsyncIterator[dict[str, Any]]:
     for event in events:
         yield event
 
 
-async def _collect_events(stream):
+async def _collect_events(stream: AsyncIterator[dict[str, Any]]) -> list[dict[str, Any]]:
     return [event async for event in stream]
 
 
@@ -68,18 +79,18 @@ def test_evidence_contract_prefers_structured_analysis_and_keeps_mild_no_evidenc
         merged_context={"applied_steps": ["preprocess", "analysis", "analysis"]},
     )
 
-    assert evidence_package["source_id"] == "clean-source"
-    assert evidence_package["filename"] == "clean.csv"
-    assert evidence_package["used_columns"] == ["sales", "segment"]
-    assert evidence_package["analysis_status"] == "success"
-    assert evidence_package["analysis_metrics"] == {"avg_sales": 42}
-    assert evidence_package["analysis_table"] == [{"segment": "A", "sales": 42}]
-    assert evidence_package["applied_steps"] == ["preprocess", "analysis"]
+    assert evidence_package.get("source_id") == "clean-source"
+    assert evidence_package.get("filename") == "clean.csv"
+    assert evidence_package.get("used_columns") == ["sales", "segment"]
+    assert evidence_package.get("analysis_status") == "success"
+    assert evidence_package.get("analysis_metrics") == {"avg_sales": 42}
+    assert evidence_package.get("analysis_table") == [{"segment": "A", "sales": 42}]
+    assert evidence_package.get("applied_steps") == ["preprocess", "analysis"]
     assert _warning_codes(evidence_package) == {"rag_no_evidence", "no_active_guideline"}
     assert answer_quality == {
         "answerable": True,
         "status": "answerable",
-        "warnings": evidence_package["warnings"],
+        "warnings": evidence_package.get("warnings"),
     }
 
 
@@ -93,11 +104,69 @@ def test_evidence_contract_marks_requested_missing_analysis_unanswerable() -> No
         merged_context={},
     )
 
-    assert evidence_package["analysis_status"] == "missing"
+    assert evidence_package.get("analysis_status") == "missing"
     assert _warning_codes(evidence_package) == {"analysis_missing", "rag_no_evidence"}
-    assert answer_quality["answerable"] is False
-    assert answer_quality["status"] == "unanswerable"
-    assert "충분하지 않습니다" in answer_quality["abstain_reason"]
+    assert answer_quality.get("answerable") is False
+    assert answer_quality.get("status") == "unanswerable"
+    assert "충분하지 않습니다" in str(answer_quality.get("abstain_reason", ""))
+
+
+def test_evidence_contract_treats_metadata_question_as_answerable_from_dataset_context() -> None:
+    evidence_package, answer_quality = build_evidence_contract(
+        state={
+            "source_id": "source-1",
+            "user_input": "이 데이터셋의 행 수, 컬럼 수, 주요 컬럼을 요약해줘.",
+            "handoff": {"next_step": "fallback_rag", "ask_analysis": False},
+            "dataset_context": {
+                "available": True,
+                "filename": "moldset_labeled.csv",
+                "row_count_total": 2607,
+                "column_count": 57,
+                "columns": ["TimeStamp", "Injection_Time", "PassOrFail"],
+            },
+        },
+        merged_context={"dataset_context": {"columns": ["TimeStamp", "Injection_Time", "PassOrFail"]}},
+    )
+
+    assert evidence_package.get("source_id") == "source-1"
+    assert evidence_package.get("filename") == "moldset_labeled.csv"
+    assert answer_quality.get("answerable") is True
+    assert answer_quality.get("status") == "answerable"
+
+
+def test_evidence_contract_does_not_make_non_metadata_fallback_question_answerable() -> None:
+    _, answer_quality = build_evidence_contract(
+        state={
+            "source_id": "source-1",
+            "user_input": "이 데이터에서 개선해야 할 점을 알려줘.",
+            "handoff": {"next_step": "fallback_rag", "ask_analysis": False},
+            "dataset_context": {
+                "available": True,
+                "filename": "moldset_labeled.csv",
+                "row_count_total": 2607,
+                "column_count": 57,
+                "columns": ["TimeStamp", "Injection_Time", "PassOrFail"],
+            },
+        },
+        merged_context={"dataset_context": {"columns": ["TimeStamp", "Injection_Time", "PassOrFail"]}},
+    )
+
+    assert answer_quality.get("answerable") is False
+    assert answer_quality.get("status") == "unanswerable"
+
+
+def test_dataset_metadata_question_detection_excludes_column_action_requests() -> None:
+    assert is_dataset_metadata_question("이 데이터셋의 행 수, 컬럼 수, 주요 컬럼을 요약해줘.")
+    assert is_dataset_metadata_question("how many rows are in this dataset?")
+    assert is_dataset_metadata_question("show me all columns and data types")
+    assert is_dataset_metadata_question("show me the dataset schema")
+    assert not is_dataset_metadata_question("which columns should I remove before training?")
+    assert not is_dataset_metadata_question("show me rows where PassOrFail equals 1")
+    assert not is_dataset_metadata_question("show me all columns as a chart")
+    assert not is_dataset_metadata_question("전체 컬럼을 보고서로 작성해줘")
+    assert not is_dataset_metadata_question(
+        "analyze whether schema drift explains the defect rate"
+    )
 
 
 def test_evidence_contract_keeps_retrieval_answerable_but_limited_when_analysis_failed() -> None:
@@ -117,11 +186,11 @@ def test_evidence_contract_keeps_retrieval_answerable_but_limited_when_analysis_
         merged_context={},
     )
 
-    assert evidence_package["analysis_status"] == "fail"
-    assert evidence_package["rag_retrieved_count"] == 2
+    assert evidence_package.get("analysis_status") == "fail"
+    assert evidence_package.get("rag_retrieved_count") == 2
     assert {"analysis_failed", "analysis_missing"}.issubset(_warning_codes(evidence_package))
-    assert answer_quality["answerable"] is True
-    assert answer_quality["status"] == "limited"
+    assert answer_quality.get("answerable") is True
+    assert answer_quality.get("status") == "limited"
 
 
 def test_evidence_contract_merges_analysis_quality_warnings() -> None:
@@ -149,15 +218,15 @@ def test_evidence_contract_merges_analysis_quality_warnings() -> None:
         merged_context={"applied_steps": ["analysis"]},
     )
 
-    assert evidence_package["analysis_status"] == "success"
-    assert evidence_package["analysis_quality_status"] == "partial"
-    assert evidence_package["analysis_quality_reason"] == (
+    assert evidence_package.get("analysis_status") == "success"
+    assert evidence_package.get("analysis_quality_status") == "partial"
+    assert evidence_package.get("analysis_quality_reason") == (
         "analysis returned no table rows but raw metrics are available"
     )
-    assert evidence_package["analysis_metrics"] == {"total_sales": 10}
+    assert evidence_package.get("analysis_metrics") == {"total_sales": 10}
     assert _warning_codes(evidence_package) == {"empty_table"}
-    assert answer_quality["answerable"] is True
-    assert answer_quality["status"] == "limited"
+    assert answer_quality.get("answerable") is True
+    assert answer_quality.get("status") == "limited"
 
 
 def test_answer_data_question_serializes_evidence_contract(monkeypatch) -> None:
@@ -176,7 +245,17 @@ def test_answer_data_question_serializes_evidence_contract(monkeypatch) -> None:
 
     answer = ai.answer_data_question(
         user_input="매출 평균은?",
-        merged_context={"analysis_result": {"summary": "42"}},
+        merged_context={
+            "analysis_result": {"summary": "42"},
+            "dataset_context": {
+                "columns": ["TimeStamp", "Injection_Time", "PassOrFail"],
+                "dtypes": {
+                    "TimeStamp": "datetime64[ns]",
+                    "Injection_Time": "float64",
+                    "PassOrFail": "int64",
+                },
+            },
+        },
         evidence_package={"analysis_metrics": {"avg_sales": 42}},
         answer_quality={"answerable": True, "status": "answerable"},
         model_id="test-model",
@@ -192,6 +271,11 @@ def test_answer_data_question_serializes_evidence_contract(monkeypatch) -> None:
     assert "answer_quality" in human_message.content
     assert "avg_sales" in human_message.content
     assert "merged_context" in human_message.content
+    assert "TimeStamp" in human_message.content
+    assert "Injection_Time" in human_message.content
+    system_message = messages[0]
+    assert "사용자 질문의 모든 명시적 요청" in system_message.content
+    assert "그 외 N개" in system_message.content
 
 
 def test_builder_wires_evidence_contract_into_merge_data_qa_and_analysis_fail_paths() -> None:

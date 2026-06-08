@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 from .state import (
     AnswerQualityPayload,
@@ -174,6 +175,11 @@ def build_evidence_contract(
         or _preprocess_has_evidence(preprocess_result)
         or _has_retrieval_evidence(evidence_package)
         or _visualization_has_evidence(visualization_result)
+        or _has_dataset_metadata_evidence(
+            state=state,
+            dataset_context=dataset_context,
+            handoff=handoff,
+        )
     )
     answer_quality: AnswerQualityPayload = {
         "answerable": answerable,
@@ -310,6 +316,137 @@ def _visualization_has_evidence(
     return (
         visualization_result is not None
         and visualization_result.get("status") == "generated"
+    )
+
+
+def _has_dataset_metadata_evidence(
+    *,
+    state: Mapping[str, object],
+    dataset_context: Mapping[str, object] | None,
+    handoff: Mapping[str, object],
+) -> bool:
+    if dataset_context is None or dataset_context.get("available") is not True:
+        return False
+    if any(
+        bool(handoff.get(key, False))
+        for key in ("ask_analysis", "ask_preprocess", "ask_visualization", "ask_report")
+    ):
+        return False
+    if not is_dataset_metadata_question(_as_non_empty_str(state.get("user_input"))):
+        return False
+    return bool(
+        _as_str_list(dataset_context.get("columns"))
+        or _as_int(dataset_context.get("row_count_total")) > 0
+        or _as_int(dataset_context.get("column_count")) > 0
+    )
+
+
+def is_dataset_metadata_question(question: str) -> bool:
+    normalized = " ".join(question.strip().lower().split())
+    if not normalized:
+        return False
+    if any(
+        keyword in normalized
+        for keyword in (
+            " where ",
+            "필터",
+            "조건",
+            "결측",
+            "missing",
+            "분석",
+            "원인",
+            "불량",
+            "영향",
+            "상관",
+            "관계",
+            "analyze",
+            "analysis",
+            "whether",
+            "why",
+            "explains",
+            "explain why",
+            "drift",
+            "defect",
+            "rate",
+            "이상치",
+            "outlier",
+            "차트",
+            "그래프",
+            "시각화",
+            "chart",
+            "graph",
+            "plot",
+            "visualization",
+            "보고서",
+            "리포트",
+            "report",
+            "삭제",
+            "제거",
+            "제외",
+            "학습",
+            "훈련",
+            "모델",
+            "drop",
+            "remove",
+            "delete",
+            "exclude",
+            "train",
+            "training",
+            "model",
+        )
+    ):
+        return False
+    return any(
+        keyword in normalized
+        for keyword in (
+            "행 수",
+            "행수",
+            "row count",
+            "how many rows",
+            "number of rows",
+            "total rows",
+            "rows count",
+            "컬럼 수",
+            "컬럼수",
+            "열 수",
+            "열수",
+            "column count",
+            "all columns",
+            "every column",
+            "column list",
+            "column type",
+            "column types",
+            "data type",
+            "data types",
+            "주요 컬럼",
+            "전체 컬럼",
+            "모든 컬럼",
+            "컬럼 목록",
+            "컬럼 리스트",
+            "컬럼 타입",
+            "데이터 타입",
+            "자료형",
+            "데이터셋 스키마",
+            "데이터 스키마",
+            "테이블 스키마",
+            "스키마 요약",
+            "스키마 알려",
+            "스키마 보여",
+            "dataset schema",
+            "data schema",
+            "table schema",
+            "schema summary",
+            "schema overview",
+            "show schema",
+            "show dtypes",
+            "show me dtypes",
+            "데이터셋 요약",
+            "데이터 요약",
+            "데이터셋 설명",
+            "데이터 설명",
+            "dataset summary",
+            "describe dataset",
+        )
     )
 
 

@@ -47,6 +47,9 @@ backend/tests/*
 !backend/tests/test_eda_service_contract.py
 !backend/tests/test_chat_fast_path_executor.py
 !backend/tests/test_chat_fast_path_defect_reason_counts.py
+!backend/tests/test_chat_fast_path_dataset_answer.py
+!backend/tests/test_chat_fast_path_sse_contract.py
+!backend/tests/test_dataset_metadata_llm_routing.py
 !backend/tests/test_analysis_error_diagnostics.py
 !backend/tests/test_error_traceability_contract.py
 !backend/tests/guideline_first_fakes.py

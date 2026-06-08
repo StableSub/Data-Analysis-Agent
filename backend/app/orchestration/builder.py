@@ -13,8 +13,8 @@ from ..modules.datasets.service import DatasetReadError
 from ..modules.planner.service import build_handoff_from_planning_result
 from .ai import answer_data_question, answer_general_question
 from .error_contract import build_failure_output, build_workflow_error_from_exception
-from .evidence import build_evidence_contract
-from .guideline_routing import route_after_guideline
+from .evidence import build_evidence_contract, is_dataset_metadata_question
+from .guideline_routing import route_after_guideline as route_after_guideline_result
 from .intake_router import build_intake_router_workflow
 from .state import MainWorkflowState
 from .state_view import build_merged_context
@@ -153,6 +153,11 @@ def build_main_workflow(
             return "handled"
         return "skipped"
 
+    def route_after_guideline_node(state: MainWorkflowState) -> str:
+        if is_dataset_metadata_question(str(state.get("user_input", ""))):
+            return "merge_context"
+        return route_after_guideline_result(state)
+
     def route_after_planner(state: MainWorkflowState) -> str:
         if state.get("final_status") == "fail":
             return "fail"
@@ -165,6 +170,8 @@ def build_main_workflow(
         if route == "general_question":
             return "general_question"
         if route == "fallback_rag":
+            if is_dataset_metadata_question(str(state.get("user_input", ""))):
+                return "merge_context"
             return "rag"
         if bool(planning_result.get("preprocess_required", False)):
             return "preprocess"
@@ -614,7 +621,7 @@ def build_main_workflow(
     )
     graph.add_conditional_edges(
         "guideline_flow",
-        route_after_guideline,
+        route_after_guideline_node,
         {
             "merge_context": "merge_context",
             "planner": "planner",
@@ -628,6 +635,7 @@ def build_main_workflow(
             "preprocess": "preprocess_flow",
             "analysis": "analysis_flow",
             "rag": "rag_flow",
+            "merge_context": "merge_context",
             "clarification": "clarification_terminal",
             "fail": END,
         },
