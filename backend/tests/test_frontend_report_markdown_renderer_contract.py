@@ -4,6 +4,9 @@ from pathlib import Path
 
 
 RENDERER_PATH = Path("frontend/src/app/components/genui/ReportContentRenderer.tsx")
+MARKDOWN_RENDERER_PATH = Path("frontend/src/app/components/genui/MarkdownReportRenderer.tsx")
+MARKDOWN_PARSER_PATH = Path("frontend/src/app/components/genui/markdownReportParser.ts")
+MARKDOWN_INLINE_RENDERER_PATH = Path("frontend/src/app/components/genui/MarkdownInlineRenderer.tsx")
 SESSION_STORE_PATH = Path("frontend/src/app/hooks/useWorkbenchSessionStore.ts")
 WORKBENCH_PATH = Path("frontend/src/app/pages/Workbench.tsx")
 API_PATH = Path("frontend/src/lib/api.ts")
@@ -11,31 +14,37 @@ API_PATH = Path("frontend/src/lib/api.ts")
 
 
 def test_report_content_renderer_handles_markdown_headings_and_lists() -> None:
-    source = RENDERER_PATH.read_text(encoding="utf-8")
+    renderer_source = RENDERER_PATH.read_text(encoding="utf-8")
+    source = MARKDOWN_RENDERER_PATH.read_text(encoding="utf-8")
+    parser_source = MARKDOWN_PARSER_PATH.read_text(encoding="utf-8")
 
-    assert "renderMarkdownParagraph" in source
-    assert "headingMatch" in source
-    assert "bulletItems" in source
-    assert "numberedItems" in source
+    assert "renderMarkdownReportContent" in renderer_source
+    assert "splitMarkdownFlowBlocks" in parser_source
+    assert "headingMatch" in parser_source
+    assert "bulletItems" in parser_source
+    assert "numberedItems" in parser_source
     assert "<h2" in source
     assert "<h3" in source
+    assert "data-markdown-heading-level" in source
     assert "<ul" in source
     assert "<ol" in source
     assert "# {보고서 제목}" not in source
 
 
 def test_report_content_renderer_supports_tables_quotes_and_emphasis() -> None:
-    source = RENDERER_PATH.read_text(encoding="utf-8")
+    source = MARKDOWN_RENDERER_PATH.read_text(encoding="utf-8")
+    parser_source = MARKDOWN_PARSER_PATH.read_text(encoding="utf-8")
+    inline_source = MARKDOWN_INLINE_RENDERER_PATH.read_text(encoding="utf-8")
 
     assert "renderMarkdownTable" in source
-    assert "parseMarkdownTable" in source
+    assert "parseMarkdownTable" in parser_source
     assert "<table" in source
     assert "<thead" in source
     assert "<tbody" in source
     assert "renderMarkdownBlockquote" in source
     assert "<blockquote" in source
-    assert "<strong" in source
-    assert "<em" in source
+    assert "<strong" in inline_source
+    assert "<em" in inline_source
     assert "overflow-wrap:anywhere" in source
 
 

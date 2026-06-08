@@ -66,6 +66,7 @@ backend/tests/*
 !backend/tests/test_main_workflow_planner_error_contract.py
 !backend/tests/test_query_feedback_contract.py
 !backend/tests/test_workbench_answer_ux_contract.py
+!backend/tests/test_workbench_markdown_heading_contract.py
 !backend/tests/test_preprocess_workflow_error_handling.py
 !backend/tests/test_report_prompt_contract.py
 !backend/tests/test_visualization_result_contract.py
